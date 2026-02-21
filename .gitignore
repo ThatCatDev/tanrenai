@@ -1,0 +1,34 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go build output
+/server/tanrenai
+/server/tanrenai.exe
+
+# llama.cpp binaries
+shared/bin/
+
+# Model storage
+models/
+*.gguf
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Test output
+coverage.out
+*.test
