@@ -29,7 +29,7 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-load the model if not already loaded or if a different model is requested
 	currentRunner := h.GetRunner()
-	if currentRunner == nil || (req.Model != "" && currentRunner.ModelName() != req.Model) {
+	if currentRunner == nil || (req.Model != "" && normalizeModelName(currentRunner.ModelName()) != normalizeModelName(req.Model)) {
 		if req.Model == "" {
 			writeError(w, http.StatusBadRequest, "invalid_request", "no model specified and no model loaded")
 			return

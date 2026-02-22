@@ -15,7 +15,7 @@ type ListDirTool struct{}
 
 type listDirArgs struct {
 	Path  string `json:"path"`
-	Depth int    `json:"depth"`
+	Depth *int   `json:"depth"`
 }
 
 func (t *ListDirTool) Name() string { return "list_dir" }
@@ -29,7 +29,7 @@ func (t *ListDirTool) Parameters() json.RawMessage {
 		Type: "object",
 		Properties: map[string]SchemaProperty{
 			"path":  {Type: "string", Description: "Absolute or relative path to the directory. Use \".\" for current directory."},
-			"depth": {Type: "integer", Description: "How many levels deep to recurse. 1 = immediate children only (default), 0 = unlimited."},
+			"depth": {Type: "integer", Description: "How many levels deep to recurse. Default: 2. Use 1 for immediate children only, 0 for unlimited."},
 		},
 		Required: []string{"path"},
 	}.MustMarshal()
@@ -46,13 +46,17 @@ func (t *ListDirTool) Execute(_ context.Context, arguments string) (*ToolResult,
 		args.Path = "."
 	}
 
-	// Default depth to 1 (non-recursive) if not specified or negative
-	if args.Depth < 0 {
-		args.Depth = 1
-	}
-	if args.Depth == 0 {
-		// 0 means unlimited; cap at a safe maximum
-		args.Depth = 50
+	// Resolve depth: nil (not specified) → 2 for a useful default.
+	// Explicit 0 means unlimited (capped at 50). Negative → 1.
+	depth := 2
+	if args.Depth != nil {
+		depth = *args.Depth
+		if depth < 0 {
+			depth = 1
+		}
+		if depth == 0 {
+			depth = 50
+		}
 	}
 
 	// If the path doesn't exist and looks like a natural-language placeholder,
@@ -62,7 +66,7 @@ func (t *ListDirTool) Execute(_ context.Context, arguments string) (*ToolResult,
 	}
 
 	var b strings.Builder
-	if err := listDirRecursive(&b, args.Path, "", args.Depth); err != nil {
+	if err := listDirRecursive(&b, args.Path, "", depth); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to read directory: %v", err)), nil
 	}
 

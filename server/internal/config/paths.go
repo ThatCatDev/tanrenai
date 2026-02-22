@@ -38,9 +38,29 @@ func MemoryDir() string {
 	return filepath.Join(DataDir(), "memory")
 }
 
+// TrainingDir returns the base directory for fine-tuning data.
+func TrainingDir() string {
+	return filepath.Join(DataDir(), "training")
+}
+
+// TrainingDatasetsDir returns the directory for exported training datasets.
+func TrainingDatasetsDir() string {
+	return filepath.Join(TrainingDir(), "datasets")
+}
+
+// TrainingRunsDir returns the directory for training run metadata and artifacts.
+func TrainingRunsDir() string {
+	return filepath.Join(TrainingDir(), "runs")
+}
+
+// SidecarDir returns the directory containing the Python training sidecar.
+func SidecarDir() string {
+	return filepath.Join(DataDir(), "sidecar")
+}
+
 // EnsureDirs creates the required directories if they don't exist.
 func EnsureDirs() error {
-	dirs := []string{DataDir(), ModelsDir(), BinDir(), MemoryDir()}
+	dirs := []string{DataDir(), ModelsDir(), BinDir(), MemoryDir(), TrainingDir(), TrainingDatasetsDir(), TrainingRunsDir()}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err

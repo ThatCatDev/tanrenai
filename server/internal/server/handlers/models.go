@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/thatcatdev/tanrenai/server/internal/models"
 	"github.com/thatcatdev/tanrenai/server/pkg/api"
@@ -62,6 +63,12 @@ func (h *LoadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "loaded", "model": req.Model})
+}
+
+// normalizeModelName strips common extensions (.gguf, etc.) for comparison.
+func normalizeModelName(name string) string {
+	name = strings.TrimSuffix(name, ".gguf")
+	return name
 }
 
 func writeError(w http.ResponseWriter, status int, errType, message string) {

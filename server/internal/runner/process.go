@@ -71,7 +71,14 @@ func (r *ProcessRunner) Load(ctx context.Context, modelPath string, opts Options
 
 	args = append(args, "--jinja")
 
-	r.cmd = exec.CommandContext(ctx, binPath, args...)
+	if opts.ChatTemplateFile != "" {
+		args = append(args, "--chat-template-file", opts.ChatTemplateFile)
+	}
+
+	// Use background context for the subprocess — it must outlive the HTTP
+	// request that triggered the load. The caller's ctx is only used for the
+	// health-check wait below.
+	r.cmd = exec.Command(binPath, args...)
 	r.cmd.Stdout = os.Stdout
 	r.cmd.Stderr = os.Stderr
 	r.cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+opts.BinDir)

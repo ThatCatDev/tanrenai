@@ -67,6 +67,9 @@ func DefaultRegistry() *Registry {
 	r.Register(&FileReadTool{})
 	r.Register(&FileWriteTool{})
 	r.Register(&ListDirTool{})
+	r.Register(&FindFilesTool{})
+	r.Register(&GrepSearchTool{})
+	r.Register(&GitInfoTool{})
 	r.Register(&ShellExecTool{})
 	return r
 }

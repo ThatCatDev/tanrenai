@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 )
@@ -16,7 +17,8 @@ type EmbedFunc func(ctx context.Context, text string) ([]float32, error)
 const defaultMaxEmbedTokens = 256
 
 // charsPerToken is a conservative estimate for truncation.
-const charsPerToken = 3.5
+// Using 3.0 instead of 3.5 to avoid overflowing the embedding model's context.
+const charsPerToken = 3.0
 
 // NewLlamaEmbedFunc returns an EmbedFunc that calls a llama-server /v1/embeddings endpoint.
 // maxTokens is the embedding model's context window size (e.g. 256 for MiniLM, 8192 for nomic-embed).
@@ -25,7 +27,8 @@ func NewLlamaEmbedFunc(baseURL string, maxTokens int) EmbedFunc {
 	if maxTokens <= 0 {
 		maxTokens = defaultMaxEmbedTokens
 	}
-	maxChars := int(float64(maxTokens) * charsPerToken)
+	// Use 80% of the context to leave headroom for tokenizer variance
+	maxChars := int(float64(maxTokens) * charsPerToken * 0.8)
 
 	return func(ctx context.Context, text string) ([]float32, error) {
 		if len(text) > maxChars {
@@ -54,7 +57,9 @@ func NewLlamaEmbedFunc(baseURL string, maxTokens int) EmbedFunc {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("embedding server returned %d", resp.StatusCode)
+			var errBody []byte
+			errBody, _ = io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("embedding server returned %d: %s", resp.StatusCode, string(errBody))
 		}
 
 		var result embeddingResponse

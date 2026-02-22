@@ -19,6 +19,10 @@ type Options struct {
 
 	// FlashAttention enables flash attention if supported.
 	FlashAttention bool
+
+	// ChatTemplateFile is an optional path to a Jinja chat template file.
+	// When set, llama-server uses this template instead of the GGUF-embedded one.
+	ChatTemplateFile string
 }
 
 // DefaultOptions returns Options with sensible defaults.

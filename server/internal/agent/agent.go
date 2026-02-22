@@ -25,11 +25,12 @@ type Hooks struct {
 
 // Config configures the agent loop.
 type Config struct {
-	MaxIterations  int
-	Tools          *tools.Registry
-	Hooks          Hooks
-	MaxTokens      int                    // 0 = no limit (backward compatible)
-	TokenEstimator *chatctx.TokenEstimator // nil = no estimation
+	MaxIterations     int
+	Tools             *tools.Registry
+	Hooks             Hooks
+	MaxTokens         int                    // 0 = no limit (backward compatible)
+	MaxResponseTokens int                    // max tokens per generation (0 = default 4096)
+	TokenEstimator    *chatctx.TokenEstimator // nil = no estimation
 }
 
 // StreamingCompletionFunc returns a channel of stream events instead of blocking.
@@ -44,7 +45,11 @@ type StreamingConfig struct {
 	OnContentDelta   func(delta string)
 }
 
-const maxConsecutiveErrors = 3
+const (
+	maxConsecutiveErrors     = 3
+	defaultMaxResponseTokens = 4096 // generous default so tool calls aren't truncated
+	maxNudges                = 3    // max times we'll nudge the model to continue using tools
+)
 
 // toolCallKey returns a string that identifies a tool call by name + arguments,
 // used for detecting repeated identical calls.
@@ -61,9 +66,13 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = 20
 	}
+	if cfg.MaxResponseTokens <= 0 {
+		cfg.MaxResponseTokens = defaultMaxResponseTokens
+	}
 
 	apiTools := cfg.Tools.APITools()
 	errorCounts := make(map[string]int) // track repeated failing calls
+	nudgeCount := 0
 
 	for i := 0; i < cfg.MaxIterations; i++ {
 		// Safety net: truncate large tool results if over token budget
@@ -71,10 +80,12 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
 		}
 
+		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
-			Messages: messages,
-			Stream:   false,
-			Tools:    apiTools,
+			Messages:  messages,
+			Stream:    false,
+			Tools:     apiTools,
+			MaxTokens: &maxTokens,
 		}
 
 		resp, err := complete(ctx, req)
@@ -87,6 +98,10 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 		}
 
 		choice := resp.Choices[0]
+
+		// Strip narration text from messages that also have tool calls
+		stripNarration(&choice.Message)
+
 		messages = append(messages, choice.Message)
 
 		// Notify about assistant text content
@@ -94,8 +109,23 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 			cfg.Hooks.OnAssistantMessage(choice.Message.Content)
 		}
 
-		// If the model didn't make tool calls, we're done
+		// If truncated by max_tokens ("length"), continue so the model can finish
+		if choice.FinishReason == "length" && len(choice.Message.ToolCalls) == 0 {
+			continue
+		}
+
+		// If the model didn't make tool calls, check if it was about to
 		if choice.FinishReason != "tool_calls" || len(choice.Message.ToolCalls) == 0 {
+			// Nudge: if the text looks like the model intended to continue using
+			// tools but stopped, inject a continuation message and keep going.
+			if nudgeCount < maxNudges && looksLikeContinuation(choice.Message.Content) {
+				nudgeCount++
+				messages = append(messages, api.Message{
+					Role:    "user",
+					Content: "Do not guess or speculate. Use your tools to gather the actual information, then answer.",
+				})
+				continue
+			}
 			return messages, nil
 		}
 
@@ -177,9 +207,13 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = 20
 	}
+	if cfg.MaxResponseTokens <= 0 {
+		cfg.MaxResponseTokens = defaultMaxResponseTokens
+	}
 
 	apiTools := cfg.Tools.APITools()
 	errorCounts := make(map[string]int)
+	nudgeCount := 0
 
 	for i := 0; i < cfg.MaxIterations; i++ {
 		if cfg.OnIterationStart != nil {
@@ -190,10 +224,12 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
 		}
 
+		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
-			Messages: messages,
-			Stream:   true,
-			Tools:    apiTools,
+			Messages:  messages,
+			Stream:    true,
+			Tools:     apiTools,
+			MaxTokens: &maxTokens,
 		}
 
 		if cfg.OnThinking != nil {
@@ -218,10 +254,36 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		}
 
 		choice := resp.Choices[0]
+
+		// Strip narration text from messages that also have tool calls.
+		// This saves tokens and sets a cleaner example in the context.
+		stripNarration(&choice.Message)
+
 		messages = append(messages, choice.Message)
 
-		// If the model didn't make tool calls, we're done
+		// If truncated by max_tokens ("length"), continue so the model can finish
+		if choice.FinishReason == "length" && len(choice.Message.ToolCalls) == 0 {
+			if cfg.OnContentDelta != nil {
+				cfg.OnContentDelta("\n[continuing...]\n")
+			}
+			continue
+		}
+
+		// If the model didn't make tool calls, check if it was about to
 		if choice.FinishReason != "tool_calls" || len(choice.Message.ToolCalls) == 0 {
+			// Nudge: if the text looks like the model intended to continue using
+			// tools but stopped, inject a continuation message and keep going.
+			if nudgeCount < maxNudges && looksLikeContinuation(choice.Message.Content) {
+				nudgeCount++
+				if cfg.OnContentDelta != nil {
+					cfg.OnContentDelta("\n[continuing...]\n")
+				}
+				messages = append(messages, api.Message{
+					Role:    "user",
+					Content: "Do not guess or speculate. Use your tools to gather the actual information, then answer.",
+				})
+				continue
+			}
 			return messages, nil
 		}
 
@@ -301,6 +363,7 @@ func accumulateWithCallbacks(events <-chan runner.StreamEvent, cfg *StreamingCon
 		role          string
 		model         string
 		id            string
+		finishReason  string
 		toolCalls     []api.ToolCall
 		toolArgBuf    = make(map[int]*strings.Builder)
 		gotContent    bool
@@ -331,6 +394,10 @@ func accumulateWithCallbacks(events <-chan runner.StreamEvent, cfg *StreamingCon
 		for _, choice := range ev.Chunk.Choices {
 			if choice.Delta.Role != "" {
 				role = choice.Delta.Role
+			}
+			// Capture finish_reason from the stream (set on last chunk)
+			if choice.FinishReason != nil {
+				finishReason = *choice.FinishReason
 			}
 			if choice.Delta.Content != "" {
 				if !thinkingDone && cfg.OnThinkingDone != nil {
@@ -394,9 +461,12 @@ func accumulateWithCallbacks(events <-chan runner.StreamEvent, cfg *StreamingCon
 		msg.ToolCalls = toolCalls
 	}
 
-	finishReason := "stop"
-	if len(toolCalls) > 0 {
-		finishReason = "tool_calls"
+	// Use the actual finish_reason from the stream; fall back to inference
+	if finishReason == "" {
+		finishReason = "stop"
+		if len(toolCalls) > 0 {
+			finishReason = "tool_calls"
+		}
 	}
 
 	return &api.ChatCompletionResponse{
@@ -411,6 +481,52 @@ func accumulateWithCallbacks(events <-chan runner.StreamEvent, cfg *StreamingCon
 			},
 		},
 	}, nil
+}
+
+// looksLikeContinuation checks if the model's text response suggests it intended
+// to take more actions but stopped prematurely. This is general-purpose — it
+// detects both "I'll do X next" narration and speculative answers where the
+// model could have used tools to get real data.
+func looksLikeContinuation(text string) bool {
+	lower := strings.ToLower(text)
+
+	// The model announced it will do something next but didn't call a tool
+	intentPrefixes := []string{
+		"let's ", "let me ", "i'll ", "i will ", "i'm going to ",
+		"next,", "next ", "now,", "now ", "please wait",
+		"here are the function calls", "here are the tool calls",
+	}
+	for _, sig := range intentPrefixes {
+		if strings.Contains(lower, sig) {
+			return true
+		}
+	}
+
+	// The model is speculating/guessing when it could look things up.
+	// Count speculation phrases — 2+ means it's clearly not using tools enough.
+	specSignals := []string{
+		"typically", "likely", "might be", "might contain",
+		"may be", "may contain", "could be", "could contain",
+		"probably", "presumably", "unknown", "unclear",
+		"further investigation", "further exploration",
+		"would need to", "need to check", "need to verify",
+	}
+	specCount := 0
+	for _, sig := range specSignals {
+		if strings.Contains(lower, sig) {
+			specCount++
+		}
+	}
+	return specCount >= 2
+}
+
+// stripNarration removes text content from assistant messages that also have
+// tool calls. This reduces token waste from narration like "Let me read that file"
+// that precedes actual tool calls, and sets a cleaner example in the context.
+func stripNarration(msg *api.Message) {
+	if len(msg.ToolCalls) > 0 && msg.Content != "" {
+		msg.Content = ""
+	}
 }
 
 // truncateToolResults reduces the content of tool result messages (the largest

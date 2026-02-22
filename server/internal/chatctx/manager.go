@@ -10,6 +10,7 @@ import (
 type Config struct {
 	CtxSize        int // total context window in tokens (default 4096)
 	ResponseBudget int // tokens reserved for model output (default 512)
+	ToolsBudget    int // tokens reserved for tool definitions in the prompt (0 = none)
 }
 
 // BudgetInfo contains token budget breakdown information.
@@ -113,7 +114,7 @@ func (m *Manager) Messages() []api.Message {
 	systemMsgs := m.buildSystemMessages()
 	systemTokens := m.estimator.EstimateMessages(systemMsgs)
 
-	available := m.cfg.CtxSize - systemTokens - m.cfg.ResponseBudget
+	available := m.cfg.CtxSize - systemTokens - m.cfg.ResponseBudget - m.cfg.ToolsBudget
 	if available < 0 {
 		available = 0
 	}
@@ -190,7 +191,7 @@ func (m *Manager) buildSystemMessages() []api.Message {
 func (m *Manager) NeedsSummary() bool {
 	systemMsgs := m.buildSystemMessages()
 	systemTokens := m.estimator.EstimateMessages(systemMsgs)
-	available := m.cfg.CtxSize - systemTokens - m.cfg.ResponseBudget
+	available := m.cfg.CtxSize - systemTokens - m.cfg.ResponseBudget - m.cfg.ToolsBudget
 
 	if len(m.memories) > 0 {
 		available -= m.estimator.EstimateMessages(m.memories)
@@ -219,7 +220,7 @@ func (m *Manager) Budget() BudgetInfo {
 	systemMsgs := m.buildSystemMessages()
 	systemTokens := m.estimator.EstimateMessages(systemMsgs)
 
-	available := m.cfg.CtxSize - systemTokens - m.cfg.ResponseBudget
+	available := m.cfg.CtxSize - systemTokens - m.cfg.ResponseBudget - m.cfg.ToolsBudget
 
 	memoryTokens := 0
 	if len(m.memories) > 0 {

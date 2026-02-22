@@ -55,12 +55,13 @@ func ParseSSEStream(r io.Reader) <-chan StreamEvent {
 // It accumulates content and tool call deltas from the stream.
 func AccumulateResponse(events <-chan StreamEvent) (*api.ChatCompletionResponse, error) {
 	var (
-		content    strings.Builder
-		role       string
-		model      string
-		id         string
-		toolCalls  []api.ToolCall
-		toolArgBuf = make(map[int]*strings.Builder) // index -> accumulated arguments
+		content      strings.Builder
+		role         string
+		model        string
+		id           string
+		finishReason string
+		toolCalls    []api.ToolCall
+		toolArgBuf   = make(map[int]*strings.Builder) // index -> accumulated arguments
 	)
 
 	for ev := range events {
@@ -84,6 +85,10 @@ func AccumulateResponse(events <-chan StreamEvent) (*api.ChatCompletionResponse,
 		for _, choice := range ev.Chunk.Choices {
 			if choice.Delta.Role != "" {
 				role = choice.Delta.Role
+			}
+			// Capture finish_reason from the stream (set on last chunk)
+			if choice.FinishReason != nil {
+				finishReason = *choice.FinishReason
 			}
 			if choice.Delta.Content != "" {
 				content.WriteString(choice.Delta.Content)
@@ -134,9 +139,12 @@ func AccumulateResponse(events <-chan StreamEvent) (*api.ChatCompletionResponse,
 		msg.ToolCalls = toolCalls
 	}
 
-	finishReason := "stop"
-	if len(toolCalls) > 0 {
-		finishReason = "tool_calls"
+	// Use the actual finish_reason from the stream; fall back to inference
+	if finishReason == "" {
+		finishReason = "stop"
+		if len(toolCalls) > 0 {
+			finishReason = "tool_calls"
+		}
 	}
 
 	return &api.ChatCompletionResponse{

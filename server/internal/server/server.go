@@ -12,15 +12,17 @@ import (
 	"github.com/thatcatdev/tanrenai/server/internal/models"
 	"github.com/thatcatdev/tanrenai/server/internal/runner"
 	"github.com/thatcatdev/tanrenai/server/internal/tools"
+	"github.com/thatcatdev/tanrenai/server/internal/training"
 )
 
 // Server is the tanrenai HTTP API server.
 type Server struct {
-	cfg          *config.Config
-	http         *http.Server
-	store        *models.Store
-	runner       runner.Runner
-	toolRegistry *tools.Registry
+	cfg             *config.Config
+	http            *http.Server
+	store           *models.Store
+	runner          runner.Runner
+	toolRegistry    *tools.Registry
+	trainingManager *training.Manager
 }
 
 // New creates a new Server.
@@ -75,6 +77,12 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
+// SetTrainingManager sets the training manager for fine-tuning API endpoints.
+// Must be called before Start() for routes to be registered.
+func (s *Server) SetTrainingManager(m *training.Manager) {
+	s.trainingManager = m
+}
+
 // LoadModel loads a model by name into the runner.
 func (s *Server) LoadModel(ctx context.Context, modelName string) error {
 	modelPath, err := s.store.Resolve(modelName)
@@ -93,6 +101,7 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) error {
 	opts.BinDir = s.cfg.BinDir
 	opts.GPULayers = s.cfg.GPULayers
 	opts.CtxSize = s.cfg.CtxSize
+	opts.ChatTemplateFile = s.cfg.ChatTemplateFile
 
 	if err := r.Load(ctx, modelPath, opts); err != nil {
 		return err

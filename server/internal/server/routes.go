@@ -14,6 +14,17 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/agent/completions", s.handleAgentCompletions)
 	mux.HandleFunc("POST /api/load", s.handleLoadModel)
+
+	// Fine-tuning endpoints (only active if training manager is set)
+	if s.trainingManager != nil {
+		ft := &handlers.FinetuneHandler{Manager: s.trainingManager}
+		mux.HandleFunc("POST /v1/finetune/prepare", ft.Prepare)
+		mux.HandleFunc("POST /v1/finetune/train", ft.Train)
+		mux.HandleFunc("GET /v1/finetune/status/", ft.Status)
+		mux.HandleFunc("POST /v1/finetune/merge", ft.Merge)
+		mux.HandleFunc("GET /v1/finetune/runs", ft.ListRuns)
+		mux.HandleFunc("DELETE /v1/finetune/runs/", ft.DeleteRun)
+	}
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {

@@ -6,8 +6,9 @@ type Config struct {
 	Port      int
 	ModelsDir string
 	BinDir    string
-	GPULayers int
-	CtxSize   int
+	GPULayers        int
+	CtxSize          int
+	ChatTemplateFile string // optional Jinja chat template override
 }
 
 // DefaultConfig returns a Config with sensible defaults.
