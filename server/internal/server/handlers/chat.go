@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/thatcatdev/tanrenai/server/internal/runner"
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/internal/runner"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // ChatHandler handles POST /v1/chat/completions.

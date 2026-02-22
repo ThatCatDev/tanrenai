@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/thatcatdev/tanrenai/server/internal/config"
-	"github.com/thatcatdev/tanrenai/server/internal/models"
+	"github.com/ThatCatDev/tanrenai/server/internal/config"
+	"github.com/ThatCatDev/tanrenai/server/internal/models"
 )
 
 var listCmd = &cobra.Command{

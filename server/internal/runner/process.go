@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // ProcessRunner manages a llama-server subprocess for model inference.

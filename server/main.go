@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/thatcatdev/tanrenai/server/cmd"
+	"github.com/ThatCatDev/tanrenai/server/cmd"
 )
 
 func main() {

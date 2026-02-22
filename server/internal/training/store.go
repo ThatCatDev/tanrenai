@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/thatcatdev/tanrenai/server/internal/config"
+	"github.com/ThatCatDev/tanrenai/server/internal/config"
 )
 
 // RunStore persists TrainingRun metadata as JSON files.

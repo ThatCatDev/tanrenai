@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // Runner is the interface for model inference backends.

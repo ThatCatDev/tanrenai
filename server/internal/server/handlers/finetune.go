@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/thatcatdev/tanrenai/server/internal/training"
+	"github.com/ThatCatDev/tanrenai/server/internal/training"
 )
 
 // FinetuneHandler handles fine-tuning API endpoints.

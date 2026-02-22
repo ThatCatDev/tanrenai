@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/thatcatdev/tanrenai/server/internal/config"
-	"github.com/thatcatdev/tanrenai/server/internal/models"
-	"github.com/thatcatdev/tanrenai/server/internal/runner"
-	"github.com/thatcatdev/tanrenai/server/internal/tools"
-	"github.com/thatcatdev/tanrenai/server/internal/training"
+	"github.com/ThatCatDev/tanrenai/server/internal/config"
+	"github.com/ThatCatDev/tanrenai/server/internal/models"
+	"github.com/ThatCatDev/tanrenai/server/internal/runner"
+	"github.com/ThatCatDev/tanrenai/server/internal/tools"
+	"github.com/ThatCatDev/tanrenai/server/internal/training"
 )
 
 // Server is the tanrenai HTTP API server.

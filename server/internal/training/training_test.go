@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thatcatdev/tanrenai/server/internal/memory"
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/internal/memory"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // mockEmbedFunc returns a fixed vector for any input (FNV hash mock).

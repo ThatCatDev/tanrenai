@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // ABResult contains the result of an A/B test between two models.

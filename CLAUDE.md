@@ -76,7 +76,7 @@ OpenAI-compatible request/response schemas. Streaming uses SSE with `ChatComplet
 ## Module Path
 
 ```
-github.com/thatcatdev/tanrenai/server
+github.com/ThatCatDev/tanrenai/server
 ```
 
 Go module is under `server/`, not the repo root.

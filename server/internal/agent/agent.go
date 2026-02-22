@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thatcatdev/tanrenai/server/internal/chatctx"
-	"github.com/thatcatdev/tanrenai/server/internal/runner"
-	"github.com/thatcatdev/tanrenai/server/internal/tools"
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/internal/chatctx"
+	"github.com/ThatCatDev/tanrenai/server/internal/runner"
+	"github.com/ThatCatDev/tanrenai/server/internal/tools"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // CompletionFunc sends a chat completion request and returns the response.

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thatcatdev/tanrenai/server/internal/config"
+	"github.com/ThatCatDev/tanrenai/server/internal/config"
 )
 
 // ScheduleConfig is the schedule.json format for periodic training.

@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // Client is an HTTP client for communicating with a llama-server subprocess.

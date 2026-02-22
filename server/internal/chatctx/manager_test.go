@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 func newTestManager(ctxSize int) *Manager {

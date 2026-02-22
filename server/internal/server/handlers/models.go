@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/thatcatdev/tanrenai/server/internal/models"
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/internal/models"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // ModelsHandler handles GET /v1/models.

@@ -1,4 +1,4 @@
-module github.com/thatcatdev/tanrenai/server
+module github.com/ThatCatDev/tanrenai/server
 
 go 1.25.0
 

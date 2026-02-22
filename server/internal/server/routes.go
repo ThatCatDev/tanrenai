@@ -4,8 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/thatcatdev/tanrenai/server/internal/runner"
-	"github.com/thatcatdev/tanrenai/server/internal/server/handlers"
+	"github.com/ThatCatDev/tanrenai/server/internal/runner"
+	"github.com/ThatCatDev/tanrenai/server/internal/server/handlers"
 )
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {

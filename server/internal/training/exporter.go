@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/thatcatdev/tanrenai/server/internal/config"
-	"github.com/thatcatdev/tanrenai/server/internal/memory"
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/internal/config"
+	"github.com/ThatCatDev/tanrenai/server/internal/memory"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 const minEntryLength = 20

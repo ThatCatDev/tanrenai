@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // StreamEvent represents a parsed SSE event from llama-server.

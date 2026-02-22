@@ -5,7 +5,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 const (

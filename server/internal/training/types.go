@@ -3,7 +3,7 @@ package training
 import (
 	"time"
 
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // RunStatus represents the state of a training run.

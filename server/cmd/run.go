@@ -12,16 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ThatCatDev/tanrenai/server/internal/agent"
+	"github.com/ThatCatDev/tanrenai/server/internal/chatctx"
+	"github.com/ThatCatDev/tanrenai/server/internal/config"
+	"github.com/ThatCatDev/tanrenai/server/internal/memory"
+	"github.com/ThatCatDev/tanrenai/server/internal/models"
+	"github.com/ThatCatDev/tanrenai/server/internal/runner"
+	"github.com/ThatCatDev/tanrenai/server/internal/tools"
+	"github.com/ThatCatDev/tanrenai/server/internal/training"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 	"github.com/spf13/cobra"
-	"github.com/thatcatdev/tanrenai/server/internal/agent"
-	"github.com/thatcatdev/tanrenai/server/internal/chatctx"
-	"github.com/thatcatdev/tanrenai/server/internal/config"
-	"github.com/thatcatdev/tanrenai/server/internal/memory"
-	"github.com/thatcatdev/tanrenai/server/internal/models"
-	"github.com/thatcatdev/tanrenai/server/internal/runner"
-	"github.com/thatcatdev/tanrenai/server/internal/tools"
-	"github.com/thatcatdev/tanrenai/server/internal/training"
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
 )
 
 var runCmd = &cobra.Command{

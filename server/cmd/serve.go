@@ -8,9 +8,9 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"github.com/thatcatdev/tanrenai/server/internal/config"
-	"github.com/thatcatdev/tanrenai/server/internal/runner"
-	"github.com/thatcatdev/tanrenai/server/internal/server"
+	"github.com/ThatCatDev/tanrenai/server/internal/config"
+	"github.com/ThatCatDev/tanrenai/server/internal/runner"
+	"github.com/ThatCatDev/tanrenai/server/internal/server"
 )
 
 var serveCmd = &cobra.Command{

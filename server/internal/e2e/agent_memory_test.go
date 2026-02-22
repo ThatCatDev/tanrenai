@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thatcatdev/tanrenai/server/internal/agent"
-	"github.com/thatcatdev/tanrenai/server/internal/chatctx"
-	"github.com/thatcatdev/tanrenai/server/internal/memory"
-	"github.com/thatcatdev/tanrenai/server/internal/runner"
-	"github.com/thatcatdev/tanrenai/server/internal/tools"
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/internal/agent"
+	"github.com/ThatCatDev/tanrenai/server/internal/chatctx"
+	"github.com/ThatCatDev/tanrenai/server/internal/memory"
+	"github.com/ThatCatDev/tanrenai/server/internal/runner"
+	"github.com/ThatCatDev/tanrenai/server/internal/tools"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // ---------------------------------------------------------------------------

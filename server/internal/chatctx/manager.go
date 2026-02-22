@@ -3,7 +3,7 @@ package chatctx
 import (
 	"fmt"
 
-	"github.com/thatcatdev/tanrenai/server/pkg/api"
+	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // Config configures the context manager.
