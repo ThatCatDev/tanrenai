@@ -69,6 +69,8 @@ func (r *ProcessRunner) Load(ctx context.Context, modelPath string, opts Options
 		args = append(args, "--flash-attn", "on")
 	}
 
+	args = append(args, "--jinja")
+
 	r.cmd = exec.CommandContext(ctx, binPath, args...)
 	r.cmd.Stdout = os.Stdout
 	r.cmd.Stderr = os.Stderr
@@ -137,6 +139,10 @@ func (r *ProcessRunner) ChatCompletion(ctx context.Context, req *api.ChatComplet
 func (r *ProcessRunner) ChatCompletionStream(ctx context.Context, req *api.ChatCompletionRequest, w io.Writer) error {
 	req.Stream = true
 	return r.client.ChatCompletionStream(ctx, req, w)
+}
+
+func (r *ProcessRunner) Tokenize(ctx context.Context, text string) (int, error) {
+	return r.client.Tokenize(ctx, text)
 }
 
 func (r *ProcessRunner) ModelName() string {

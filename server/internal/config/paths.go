@@ -33,9 +33,14 @@ func BinDir() string {
 	return filepath.Join(DataDir(), "bin")
 }
 
+// MemoryDir returns the directory where memory/RAG data is stored.
+func MemoryDir() string {
+	return filepath.Join(DataDir(), "memory")
+}
+
 // EnsureDirs creates the required directories if they don't exist.
 func EnsureDirs() error {
-	dirs := []string{DataDir(), ModelsDir(), BinDir()}
+	dirs := []string{DataDir(), ModelsDir(), BinDir(), MemoryDir()}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err

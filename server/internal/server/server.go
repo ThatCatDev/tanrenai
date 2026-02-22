@@ -11,21 +11,24 @@ import (
 	"github.com/thatcatdev/tanrenai/server/internal/config"
 	"github.com/thatcatdev/tanrenai/server/internal/models"
 	"github.com/thatcatdev/tanrenai/server/internal/runner"
+	"github.com/thatcatdev/tanrenai/server/internal/tools"
 )
 
 // Server is the tanrenai HTTP API server.
 type Server struct {
-	cfg    *config.Config
-	http   *http.Server
-	store  *models.Store
-	runner runner.Runner
+	cfg          *config.Config
+	http         *http.Server
+	store        *models.Store
+	runner       runner.Runner
+	toolRegistry *tools.Registry
 }
 
 // New creates a new Server.
 func New(cfg *config.Config) *Server {
 	s := &Server{
-		cfg:   cfg,
-		store: models.NewStore(cfg.ModelsDir),
+		cfg:          cfg,
+		store:        models.NewStore(cfg.ModelsDir),
+		toolRegistry: tools.DefaultRegistry(),
 	}
 
 	mux := http.NewServeMux()

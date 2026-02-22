@@ -1,9 +1,48 @@
 package api
 
+import "encoding/json"
+
 // Message represents a chat message.
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"`
+}
+
+// Tool represents a tool available for the model to call.
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+// ToolFunction describes a function tool.
+type ToolFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+// ToolCall represents a tool call made by the model.
+type ToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
+}
+
+// ToolCallFunction is the function invocation within a tool call.
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// ToolCallDelta is a streaming delta for a tool call.
+type ToolCallDelta struct {
+	Index    int               `json:"index"`
+	ID       string            `json:"id,omitempty"`
+	Type     string            `json:"type,omitempty"`
+	Function *ToolCallFunction `json:"function,omitempty"`
 }
 
 // ChatCompletionRequest matches the OpenAI chat completions request schema.
@@ -15,6 +54,8 @@ type ChatCompletionRequest struct {
 	MaxTokens   *int      `json:"max_tokens,omitempty"`
 	Stream      bool      `json:"stream,omitempty"`
 	Stop        []string  `json:"stop,omitempty"`
+	Tools       []Tool    `json:"tools,omitempty"`
+	ToolChoice  any       `json:"tool_choice,omitempty"`
 }
 
 // ChatCompletionResponse matches the OpenAI chat completions response schema.
@@ -52,8 +93,9 @@ type ChunkChoice struct {
 
 // MessageDelta is the incremental content in a streaming chunk.
 type MessageDelta struct {
-	Role    string `json:"role,omitempty"`
-	Content string `json:"content,omitempty"`
+	Role      string          `json:"role,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	ToolCalls []ToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 // Usage contains token usage information.

@@ -23,6 +23,9 @@ type Runner interface {
 	// ChatCompletionStream performs a streaming chat completion, writing SSE chunks to the writer.
 	ChatCompletionStream(ctx context.Context, req *api.ChatCompletionRequest, w io.Writer) error
 
+	// Tokenize returns the token count for the given text using the server's tokenizer.
+	Tokenize(ctx context.Context, text string) (int, error)
+
 	// ModelName returns the name/ID of the loaded model.
 	ModelName() string
 
