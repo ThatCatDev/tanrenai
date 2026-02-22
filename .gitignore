@@ -11,8 +11,8 @@
 # llama.cpp binaries
 shared/bin/
 
-# Model storage
-models/
+# Model storage (top-level and data dirs, not the Go package)
+/models/
 *.gguf
 
 # IDE
