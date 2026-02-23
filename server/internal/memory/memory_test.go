@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -423,51 +422,13 @@ func TestNewLlamaEmbedFuncErrors(t *testing.T) {
 	}
 }
 
-func TestEmbeddingRunnerHealthCheck(t *testing.T) {
-	// Mock a healthy server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		http.Error(w, "not found", http.StatusNotFound)
-	}))
-	defer server.Close()
-
+func TestEmbeddingRunnerBaseURL(t *testing.T) {
+	// Verify that BaseURL returns the stored URL.
 	r := &EmbeddingRunner{
-		baseURL: server.URL,
+		baseURL: "http://127.0.0.1:12345",
 	}
-
-	if err := r.healthCheck(context.Background()); err != nil {
-		t.Errorf("healthCheck failed on healthy server: %v", err)
-	}
-
-	if r.BaseURL() != server.URL {
-		t.Errorf("BaseURL() = %q, want %q", r.BaseURL(), server.URL)
-	}
-}
-
-func TestEmbeddingRunnerHealthCheckUnhealthy(t *testing.T) {
-	// Mock an unhealthy server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-
-	r := &EmbeddingRunner{
-		baseURL: server.URL,
-	}
-
-	if err := r.healthCheck(context.Background()); err == nil {
-		t.Error("expected error for unhealthy server")
-	}
-}
-
-func TestEmbeddingRunnerClose(t *testing.T) {
-	// Close on nil process should not panic
-	r := &EmbeddingRunner{}
-	if err := r.Close(); err != nil {
-		t.Errorf("Close on nil runner: %v", err)
+	if r.BaseURL() != "http://127.0.0.1:12345" {
+		t.Errorf("BaseURL() = %q, want %q", r.BaseURL(), "http://127.0.0.1:12345")
 	}
 }
 
@@ -559,83 +520,11 @@ func TestClearEmptyStore(t *testing.T) {
 	}
 }
 
-func TestWaitForHealth(t *testing.T) {
-	callCount := 0
-	// Server that becomes healthy after 2 requests
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		if callCount < 3 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	r := &EmbeddingRunner{
-		baseURL: server.URL,
-	}
-
-	ctx := context.Background()
-	err := r.waitForHealth(ctx, 5*time.Second)
-	if err != nil {
-		t.Fatalf("waitForHealth failed: %v", err)
-	}
-	if callCount < 3 {
-		t.Errorf("expected at least 3 health checks, got %d", callCount)
-	}
-}
-
-func TestWaitForHealthTimeout(t *testing.T) {
-	// Server that is always unhealthy
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-
-	r := &EmbeddingRunner{
-		baseURL: server.URL,
-	}
-
-	ctx := context.Background()
-	err := r.waitForHealth(ctx, 1*time.Second)
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-}
-
-func TestWaitForHealthCancelled(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-
-	r := &EmbeddingRunner{
-		baseURL: server.URL,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	err := r.waitForHealth(ctx, 30*time.Second)
-	if err == nil {
-		t.Fatal("expected context cancelled error")
-	}
-}
-
-func TestCloseWithProcess(t *testing.T) {
-	// Start a real process (sleep) and then close it
-	cmd := exec.Command("sleep", "60")
-	if err := cmd.Start(); err != nil {
-		t.Skipf("cannot start sleep process: %v", err)
-	}
-
-	r := &EmbeddingRunner{
-		cmd: cmd,
-	}
-
+func TestEmbeddingRunnerCloseNil(t *testing.T) {
+	// Close on nil subprocess should not panic.
+	r := &EmbeddingRunner{}
 	if err := r.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
+		t.Fatalf("Close on nil runner: %v", err)
 	}
 }
 

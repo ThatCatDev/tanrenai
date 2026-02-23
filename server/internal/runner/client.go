@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
@@ -17,11 +19,23 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// NewClient creates a new Client for the given base URL.
+// NewClient creates a new Client for the given base URL, optimized for
+// loopback communication with a llama-server subprocess.
 func NewClient(baseURL string) *Client {
 	return &Client{
-		baseURL:    baseURL,
-		httpClient: &http.Client{},
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   5 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          20,
+				MaxIdleConnsPerHost:   10,
+				IdleConnTimeout:       120 * time.Second,
+				ResponseHeaderTimeout: 300 * time.Second,
+			},
+		},
 	}
 }
 

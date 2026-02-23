@@ -1041,7 +1041,7 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("context-file", nil, "files to load into context")
 	cmd.Flags().Bool("memory", false, "enable memory/RAG (requires --agent)")
 	cmd.Flags().String("embedding-model", "all-MiniLM-L6-v2.Q8_0", "embedding model name for memory")
-	cmd.Flags().Int("embedding-port", 18081, "port for embedding server")
+	cmd.Flags().Int("embedding-port", 0, "port for embedding server (0 = auto)")
 	cmd.Flags().Int("embedding-ctx-size", 0, "embedding model context window in tokens (0 = auto-detect from model)")
 	cmd.Flags().Bool("finetune", false, "enable fine-tuning pipeline (requires --memory --agent)")
 	cmd.Flags().String("finetune-schedule", "", "auto-finetune interval (e.g. 24h)")

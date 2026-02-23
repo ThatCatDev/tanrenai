@@ -5,137 +5,178 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
+const maxRestartAttempts = 3
+
 // ProcessRunner manages a llama-server subprocess for model inference.
 type ProcessRunner struct {
-	cmd       *exec.Cmd
+	sub       *Subprocess
 	modelPath string
 	modelName string
 	opts      Options
 	client    *Client
 	baseURL   string
+
+	// Crash detection and auto-restart.
+	mu           sync.Mutex
+	restarts     int
+	crashNotify  chan error // receives an error each time the process crashes
+	stopMonitor  chan struct{}
 }
 
 // NewProcessRunner creates a new ProcessRunner.
 func NewProcessRunner() *ProcessRunner {
-	return &ProcessRunner{}
+	return &ProcessRunner{
+		crashNotify: make(chan error, 4),
+		stopMonitor: make(chan struct{}),
+	}
+}
+
+// CrashNotify returns a channel that receives an error each time the
+// subprocess crashes unexpectedly. The channel is buffered; if the consumer
+// falls behind, notifications are dropped.
+func (r *ProcessRunner) CrashNotify() <-chan error {
+	return r.crashNotify
 }
 
 func (r *ProcessRunner) Load(ctx context.Context, modelPath string, opts Options) error {
 	r.modelPath = modelPath
 	r.modelName = filepath.Base(modelPath)
 	r.opts = opts
-	r.baseURL = fmt.Sprintf("http://127.0.0.1:%d", opts.Port)
+
+	if err := r.startSubprocess(ctx); err != nil {
+		return err
+	}
+
+	// Start crash monitoring goroutine.
+	go r.monitorCrashes()
+
+	return nil
+}
+
+// startSubprocess creates and starts the llama-server subprocess.
+func (r *ProcessRunner) startSubprocess(ctx context.Context) error {
+	args := r.buildArgs()
+
+	healthTimeout := r.opts.HealthTimeout
+	if healthTimeout == 0 {
+		healthTimeout = 120 * time.Second
+	}
+
+	sub, err := NewSubprocess(SubprocessConfig{
+		BinDir:        r.opts.BinDir,
+		Args:          args,
+		Port:          r.opts.Port,
+		Label:         "llama-server",
+		Quiet:         r.opts.Quiet,
+		HealthTimeout: healthTimeout,
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := sub.Start(ctx); err != nil {
+		return err
+	}
+
+	r.sub = sub
+	r.baseURL = sub.BaseURL()
 	r.client = NewClient(r.baseURL)
+	// Update opts.Port so restarts reuse the same allocated port.
+	r.opts.Port = sub.Port()
 
-	binName := "llama-server"
-	if runtime.GOOS == "windows" {
-		binName = "llama-server.exe"
-	}
+	log.Printf("llama-server ready on port %d with model %s", sub.Port(), r.modelName)
+	return nil
+}
 
-	binPath := filepath.Join(opts.BinDir, binName)
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		return fmt.Errorf("llama-server not found at %s — download it with 'tanrenai setup'", binPath)
-	}
-
+func (r *ProcessRunner) buildArgs() []string {
 	args := []string{
-		"--model", modelPath,
-		"--port", strconv.Itoa(opts.Port),
-		"--ctx-size", strconv.Itoa(opts.CtxSize),
+		"--model", r.modelPath,
+		"--ctx-size", strconv.Itoa(r.opts.CtxSize),
 		"--host", "127.0.0.1",
 	}
 
-	if opts.GPULayers >= 0 {
-		args = append(args, "--n-gpu-layers", strconv.Itoa(opts.GPULayers))
+	if r.opts.GPULayers >= 0 {
+		args = append(args, "--n-gpu-layers", strconv.Itoa(r.opts.GPULayers))
 	} else {
 		args = append(args, "--n-gpu-layers", "999")
 	}
 
-	if opts.Threads > 0 {
-		args = append(args, "--threads", strconv.Itoa(opts.Threads))
+	if r.opts.Threads > 0 {
+		args = append(args, "--threads", strconv.Itoa(r.opts.Threads))
 	}
 
-	if opts.FlashAttention {
+	if r.opts.FlashAttention {
 		args = append(args, "--flash-attn", "on")
 	}
 
 	args = append(args, "--jinja")
 
-	if opts.ChatTemplateFile != "" {
-		args = append(args, "--chat-template-file", opts.ChatTemplateFile)
+	if r.opts.ChatTemplateFile != "" {
+		args = append(args, "--chat-template-file", r.opts.ChatTemplateFile)
 	}
 
-	// Use background context for the subprocess — it must outlive the HTTP
-	// request that triggered the load. The caller's ctx is only used for the
-	// health-check wait below.
-	r.cmd = exec.Command(binPath, args...)
-	r.cmd.Stdout = os.Stdout
-	r.cmd.Stderr = os.Stderr
-	r.cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+opts.BinDir)
-
-	log.Printf("Starting llama-server: %s %v", binPath, args)
-
-	if err := r.cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start llama-server: %w", err)
-	}
-
-	// Wait for the server to become healthy
-	if err := r.waitForHealth(ctx, 120*time.Second); err != nil {
-		r.Close()
-		return fmt.Errorf("llama-server failed to start: %w", err)
-	}
-
-	log.Printf("llama-server ready on port %d with model %s", opts.Port, r.modelName)
-	return nil
+	return args
 }
 
-func (r *ProcessRunner) waitForHealth(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
+// monitorCrashes watches for unexpected process exits and restarts.
+func (r *ProcessRunner) monitorCrashes() {
 	for {
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			if time.Now().After(deadline) {
-				return fmt.Errorf("timeout waiting for llama-server to become ready after %s", timeout)
+		case <-r.stopMonitor:
+			return
+		case <-r.sub.Done():
+			if r.sub.WasStopped() {
+				return
 			}
 
-			if err := r.Health(ctx); err == nil {
-				return nil
+			exitCode := r.sub.ExitCode()
+			log.Printf("[llama-server] process crashed (exit code %d)", exitCode)
+
+			r.mu.Lock()
+			r.restarts++
+			attempt := r.restarts
+			r.mu.Unlock()
+
+			crashErr := fmt.Errorf("llama-server crashed (exit code %d, restart %d/%d)", exitCode, attempt, maxRestartAttempts)
+
+			// Notify consumers (non-blocking).
+			select {
+			case r.crashNotify <- crashErr:
+			default:
 			}
+
+			if attempt > maxRestartAttempts {
+				log.Printf("[llama-server] max restart attempts (%d) reached, giving up", maxRestartAttempts)
+				return
+			}
+
+			log.Printf("[llama-server] restarting (attempt %d/%d)...", attempt, maxRestartAttempts)
+			// Use a timeout context for restart health check.
+			restartCtx, cancel := context.WithTimeout(context.Background(), r.sub.healthTimeout)
+			if err := r.startSubprocess(restartCtx); err != nil {
+				log.Printf("[llama-server] restart failed: %v", err)
+				cancel()
+				return
+			}
+			cancel()
+			log.Printf("[llama-server] restart successful")
 		}
 	}
 }
 
 func (r *ProcessRunner) Health(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+"/health", nil)
-	if err != nil {
-		return err
+	if r.sub == nil {
+		return fmt.Errorf("llama-server not started")
 	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check returned %d", resp.StatusCode)
-	}
-	return nil
+	return r.sub.healthCheck(ctx)
 }
 
 func (r *ProcessRunner) ChatCompletion(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
@@ -157,12 +198,16 @@ func (r *ProcessRunner) ModelName() string {
 }
 
 func (r *ProcessRunner) Close() error {
-	if r.cmd != nil && r.cmd.Process != nil {
-		log.Printf("Stopping llama-server (PID %d)", r.cmd.Process.Pid)
-		if err := r.cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("failed to kill llama-server: %w", err)
-		}
-		r.cmd.Wait()
+	// Stop the crash monitor so it doesn't try to restart.
+	select {
+	case <-r.stopMonitor:
+		// Already closed.
+	default:
+		close(r.stopMonitor)
+	}
+
+	if r.sub != nil {
+		return r.sub.GracefulStop()
 	}
 	return nil
 }

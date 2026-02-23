@@ -4,20 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"time"
+
+	"github.com/ThatCatDev/tanrenai/server/internal/runner"
 )
 
 // EmbeddingRunner manages a llama-server subprocess for embedding generation.
 type EmbeddingRunner struct {
-	cmd     *exec.Cmd
-	port    int
+	sub     *runner.Subprocess
 	baseURL string
 }
 
@@ -31,50 +27,36 @@ type EmbeddingRunnerConfig struct {
 
 // NewEmbeddingRunner creates and starts a llama-server for embeddings.
 func NewEmbeddingRunner(ctx context.Context, cfg EmbeddingRunnerConfig) (*EmbeddingRunner, error) {
-	if cfg.Port == 0 {
-		cfg.Port = 18081
-	}
-
-	binName := "llama-server"
-	if runtime.GOOS == "windows" {
-		binName = "llama-server.exe"
-	}
-
-	binPath := filepath.Join(cfg.BinDir, binName)
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("llama-server not found at %s", binPath)
-	}
-
 	args := []string{
 		"--model", cfg.ModelPath,
-		"--port", strconv.Itoa(cfg.Port),
 		"--ctx-size", "512",
 		"--host", "127.0.0.1",
 		"--n-gpu-layers", strconv.Itoa(cfg.GPULayers),
 		"--embeddings",
 	}
 
-	cmd := exec.CommandContext(ctx, binPath, args...)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+cfg.BinDir)
+	healthTimeout := 60 * time.Second
 
-	r := &EmbeddingRunner{
-		cmd:     cmd,
-		port:    cfg.Port,
-		baseURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Port),
+	sub, err := runner.NewSubprocess(runner.SubprocessConfig{
+		BinDir:        cfg.BinDir,
+		Args:          args,
+		Port:          cfg.Port,
+		Label:         "embedding",
+		Quiet:         true,
+		HealthTimeout: healthTimeout,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure embedding server: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start embedding server: %w", err)
+	if err := sub.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start embedding server: %w", err)
 	}
 
-	if err := r.waitForHealth(ctx, 60*time.Second); err != nil {
-		r.Close()
-		return nil, fmt.Errorf("embedding server failed to start: %w", err)
-	}
-
-	return r, nil
+	return &EmbeddingRunner{
+		sub:     sub,
+		baseURL: sub.BaseURL(),
+	}, nil
 }
 
 // BaseURL returns the base URL of the embedding server.
@@ -108,49 +90,10 @@ func (r *EmbeddingRunner) ContextSize(ctx context.Context) int {
 	return props.DefaultGeneration.NCtx
 }
 
-// Close stops the embedding server subprocess.
+// Close stops the embedding server subprocess gracefully.
 func (r *EmbeddingRunner) Close() error {
-	if r.cmd != nil && r.cmd.Process != nil {
-		if err := r.cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("failed to kill embedding server: %w", err)
-		}
-		r.cmd.Wait()
-	}
-	return nil
-}
-
-func (r *EmbeddingRunner) waitForHealth(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			if time.Now().After(deadline) {
-				return fmt.Errorf("timeout waiting for embedding server after %s", timeout)
-			}
-			if r.healthCheck(ctx) == nil {
-				return nil
-			}
-		}
-	}
-}
-
-func (r *EmbeddingRunner) healthCheck(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+"/health", nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check returned %d", resp.StatusCode)
+	if r.sub != nil {
+		return r.sub.GracefulStop()
 	}
 	return nil
 }
