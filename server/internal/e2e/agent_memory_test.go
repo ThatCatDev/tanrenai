@@ -153,7 +153,7 @@ func simulateTurn(
 
 	cfg := agent.StreamingConfig{
 		Config: agent.Config{
-			MaxIterations: 20,
+			MaxIterations: 0, // unlimited
 			Tools:         registry,
 		},
 	}

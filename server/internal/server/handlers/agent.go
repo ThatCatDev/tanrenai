@@ -54,7 +54,7 @@ func (h *AgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := agent.Config{
-		MaxIterations: 20,
+		MaxIterations: 0, // unlimited
 		Tools:         h.Registry,
 	}
 

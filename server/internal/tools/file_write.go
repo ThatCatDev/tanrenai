@@ -19,7 +19,7 @@ type fileWriteArgs struct {
 func (t *FileWriteTool) Name() string { return "file_write" }
 
 func (t *FileWriteTool) Description() string {
-	return "Write content to a file at the given path. Creates the file and any parent directories if they don't exist. Overwrites existing content."
+	return "Create a new file or completely replace an existing file. WARNING: This overwrites the entire file. To edit part of an existing file, use patch_file instead. Creates parent directories if needed."
 }
 
 func (t *FileWriteTool) Parameters() json.RawMessage {

@@ -44,6 +44,7 @@ var runCmd = &cobra.Command{
 		embeddingCtxSize, _ := cmd.Flags().GetInt("embedding-ctx-size")
 		finetuneEnabled, _ := cmd.Flags().GetBool("finetune")
 		finetuneSchedule, _ := cmd.Flags().GetString("finetune-schedule")
+		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 
 		// Read system prompt from file if specified
 		if systemFile != "" {
@@ -125,7 +126,7 @@ var runCmd = &cobra.Command{
 		}
 
 		if agentMode {
-			return agentLoop(baseURL, model, systemPrompt, mgr, memStore, trainMgr)
+			return agentLoop(baseURL, model, systemPrompt, mgr, memStore, trainMgr, maxIterations)
 		}
 		return chatLoop(baseURL, model, systemPrompt, mgr)
 	},
@@ -150,6 +151,7 @@ var chatCmd = &cobra.Command{
 		embeddingCtxSize, _ := cmd.Flags().GetInt("embedding-ctx-size")
 		finetuneEnabled, _ := cmd.Flags().GetBool("finetune")
 		finetuneSchedule, _ := cmd.Flags().GetString("finetune-schedule")
+		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 
 		if model == "" {
 			return fmt.Errorf("specify a model with --model")
@@ -226,7 +228,7 @@ var chatCmd = &cobra.Command{
 		}
 
 		if agentMode {
-			return agentLoop(baseURL, model, systemPrompt, mgr, memStore, trainMgr)
+			return agentLoop(baseURL, model, systemPrompt, mgr, memStore, trainMgr, maxIterations)
 		}
 		return chatLoop(baseURL, model, systemPrompt, mgr)
 	},
@@ -657,7 +659,9 @@ Important rules:
 4. Complete multi-step tasks automatically without stopping for confirmation.
 5. Only use shell_exec when no other tool fits. Prefer file_read, list_dir, grep_search, find_files.
 6. Use "." for the current directory. Never use placeholder names.
-7. If a tool call fails, try different arguments. Never repeat an identical failing call.`
+7. If a tool call fails, try different arguments. Never repeat an identical failing call.
+8. To edit existing files, use patch_file. Only use file_write for creating new files or when you need to rewrite the entire file. Always use file_read first to understand what you're changing.
+9. After making changes, verify your work by building or running tests with shell_exec.`
 
 // wrapStreamWithCleanup wraps a stream event channel, ensuring the HTTP response
 // body is closed when the source channel is drained.
@@ -673,7 +677,7 @@ func wrapStreamWithCleanup(events <-chan runner.StreamEvent, body io.ReadCloser)
 	return out
 }
 
-func agentLoop(baseURL, model, systemPrompt string, mgr *chatctx.Manager, memStore memory.Store, trainMgr *training.Manager) error {
+func agentLoop(baseURL, model, systemPrompt string, mgr *chatctx.Manager, memStore memory.Store, trainMgr *training.Manager, maxIterations int) error {
 	scanner := bufio.NewScanner(os.Stdin)
 
 	// Always inject agent system prompt; append user's system prompt if provided
@@ -747,7 +751,7 @@ func agentLoop(baseURL, model, systemPrompt string, mgr *chatctx.Manager, memSto
 		return wrapStreamWithCleanup(events, resp.Body), nil
 	}
 
-	fmt.Println("Agent mode enabled. Tools: file_read, file_write, list_dir, find_files, grep_search, git_info, shell_exec")
+	fmt.Println("Agent mode enabled. Tools: file_read, file_write, patch_file, list_dir, find_files, grep_search, git_info, shell_exec, web_search")
 	fmt.Println()
 
 	for {
@@ -825,7 +829,7 @@ func agentLoop(baseURL, model, systemPrompt string, mgr *chatctx.Manager, memSto
 
 		cfg := agent.StreamingConfig{
 			Config: agent.Config{
-				MaxIterations: 20,
+				MaxIterations: maxIterations,
 				Tools:         registry,
 				Hooks: agent.Hooks{
 					OnToolCall: func(call api.ToolCall) {
@@ -1043,6 +1047,7 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().String("embedding-model", "all-MiniLM-L6-v2.Q8_0", "embedding model name for memory")
 	cmd.Flags().Int("embedding-port", 0, "port for embedding server (0 = auto)")
 	cmd.Flags().Int("embedding-ctx-size", 0, "embedding model context window in tokens (0 = auto-detect from model)")
+	cmd.Flags().Int("max-iterations", 200, "maximum agent tool-call iterations per turn (0 = unlimited)")
 	cmd.Flags().Bool("finetune", false, "enable fine-tuning pipeline (requires --memory --agent)")
 	cmd.Flags().String("finetune-schedule", "", "auto-finetune interval (e.g. 24h)")
 }

@@ -64,7 +64,7 @@ func toolCallKey(tc api.ToolCall) string {
 // Returns the final message history (including all tool calls and results).
 func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, cfg Config) ([]api.Message, error) {
 	if cfg.MaxIterations <= 0 {
-		cfg.MaxIterations = 20
+		cfg.MaxIterations = 1<<31 - 1 // unlimited
 	}
 	if cfg.MaxResponseTokens <= 0 {
 		cfg.MaxResponseTokens = defaultMaxResponseTokens
@@ -205,7 +205,7 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 // processing, stuck detection, and error tracking are identical to Run().
 func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, messages []api.Message, cfg StreamingConfig) ([]api.Message, error) {
 	if cfg.MaxIterations <= 0 {
-		cfg.MaxIterations = 20
+		cfg.MaxIterations = 1<<31 - 1 // unlimited
 	}
 	if cfg.MaxResponseTokens <= 0 {
 		cfg.MaxResponseTokens = defaultMaxResponseTokens

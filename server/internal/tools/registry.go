@@ -66,10 +66,12 @@ func DefaultRegistry() *Registry {
 	r := NewRegistry()
 	r.Register(&FileReadTool{})
 	r.Register(&FileWriteTool{})
+	r.Register(&PatchFileTool{})
 	r.Register(&ListDirTool{})
 	r.Register(&FindFilesTool{})
 	r.Register(&GrepSearchTool{})
 	r.Register(&GitInfoTool{})
 	r.Register(&ShellExecTool{})
+	r.Register(&WebSearchTool{})
 	return r
 }

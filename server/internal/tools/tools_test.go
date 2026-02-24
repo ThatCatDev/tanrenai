@@ -335,9 +335,130 @@ func TestListDirInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestPatchFileValid(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "test.go")
+	os.WriteFile(path, []byte("func hello() {\n\treturn \"hello\"\n}\n"), 0644)
+
+	tool := &PatchFileTool{}
+	result, err := tool.Execute(context.Background(), `{"path":"`+path+`","old_string":"\"hello\"","new_string":"\"world\""}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "Replaced") {
+		t.Errorf("expected success message, got %q", result.Output)
+	}
+
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "\"world\"") {
+		t.Errorf("expected replaced content, got %q", string(data))
+	}
+	if strings.Contains(string(data), "\"hello\"") {
+		t.Error("old string should be gone")
+	}
+}
+
+func TestPatchFileNotFound(t *testing.T) {
+	tool := &PatchFileTool{}
+	result, err := tool.Execute(context.Background(), `{"path":"/nonexistent/file.go","old_string":"a","new_string":"b"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error for missing file")
+	}
+	if !strings.Contains(result.Output, "not found") {
+		t.Errorf("expected 'not found' message, got %q", result.Output)
+	}
+}
+
+func TestPatchFileOldStringNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "test.txt")
+	os.WriteFile(path, []byte("some content here"), 0644)
+
+	tool := &PatchFileTool{}
+	result, err := tool.Execute(context.Background(), `{"path":"`+path+`","old_string":"nonexistent","new_string":"replacement"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error when old_string not found")
+	}
+	if !strings.Contains(result.Output, "not found") {
+		t.Errorf("expected 'not found' message, got %q", result.Output)
+	}
+	if !strings.Contains(result.Output, "some content") {
+		t.Error("expected file snippet in error output")
+	}
+}
+
+func TestPatchFileMultipleMatches(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "test.txt")
+	os.WriteFile(path, []byte("foo bar foo baz foo"), 0644)
+
+	tool := &PatchFileTool{}
+	result, err := tool.Execute(context.Background(), `{"path":"`+path+`","old_string":"foo","new_string":"qux"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error for multiple matches")
+	}
+	if !strings.Contains(result.Output, "3 locations") {
+		t.Errorf("expected match count in error, got %q", result.Output)
+	}
+
+	// File should be unchanged
+	data, _ := os.ReadFile(path)
+	if string(data) != "foo bar foo baz foo" {
+		t.Error("file should not be modified on multiple matches")
+	}
+}
+
+func TestPatchFileSameStrings(t *testing.T) {
+	tool := &PatchFileTool{}
+	result, err := tool.Execute(context.Background(), `{"path":"any.txt","old_string":"same","new_string":"same"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error when old_string == new_string")
+	}
+	if !strings.Contains(result.Output, "identical") {
+		t.Errorf("expected 'identical' message, got %q", result.Output)
+	}
+}
+
+func TestPatchFileInvalidJSON(t *testing.T) {
+	tool := &PatchFileTool{}
+	result, err := tool.Execute(context.Background(), `not json`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestPatchFileEmptyPath(t *testing.T) {
+	tool := &PatchFileTool{}
+	result, err := tool.Execute(context.Background(), `{"path":"","old_string":"a","new_string":"b"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error for empty path")
+	}
+}
+
 func TestToolDescriptionsAndParameters(t *testing.T) {
 	// Exercise Description() and Parameters() for all tools
-	allTools := []Tool{&FileReadTool{}, &FileWriteTool{}, &ListDirTool{}, &ShellExecTool{}}
+	allTools := []Tool{&FileReadTool{}, &FileWriteTool{}, &PatchFileTool{}, &ListDirTool{}, &ShellExecTool{}}
 	for _, tool := range allTools {
 		if tool.Description() == "" {
 			t.Errorf("%s: empty description", tool.Name())
