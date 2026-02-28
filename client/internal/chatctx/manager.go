@@ -44,6 +44,9 @@ type Manager struct {
 	memories     []api.Message // injected memory messages from RAG
 }
 
+// Estimator returns the token estimator used by this manager.
+func (m *Manager) Estimator() *TokenEstimator { return m.estimator }
+
 // NewManager creates a Manager with the given config and estimator.
 func NewManager(cfg Config, estimator *TokenEstimator) *Manager {
 	if cfg.CtxSize <= 0 {

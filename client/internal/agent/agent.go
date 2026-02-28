@@ -37,7 +37,7 @@ type StreamingCompletionFunc func(ctx context.Context, req *api.ChatCompletionRe
 // StreamingConfig extends Config with streaming hooks.
 type StreamingConfig struct {
 	Config
-	OnIterationStart func(iteration, maxIterations int)
+	OnIterationStart func(iteration, maxIterations int, messages []api.Message)
 	OnThinking       func()
 	OnThinkingDone   func()
 	OnContentDelta   func(delta string)
@@ -194,7 +194,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 
 	for i := 0; i < cfg.MaxIterations; i++ {
 		if cfg.OnIterationStart != nil {
-			cfg.OnIterationStart(i+1, cfg.MaxIterations)
+			cfg.OnIterationStart(i+1, cfg.MaxIterations, messages)
 		}
 
 		if cfg.MaxTokens > 0 && cfg.TokenEstimator != nil {

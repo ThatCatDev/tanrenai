@@ -6,13 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
+	"github.com/charmbracelet/glamour"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
@@ -29,6 +32,11 @@ const (
 	focusChat focusTarget = iota
 	focusFileViewer
 )
+
+type iterRecord struct {
+	inputTokens int
+	duration    time.Duration
+}
 
 // tuiApp is the single mutable state struct for the tview-based TUI.
 type tuiApp struct {
@@ -57,6 +65,17 @@ type tuiApp struct {
 	ctrlCPending  bool
 	streaming     strings.Builder
 	turnCancel    context.CancelFunc
+
+	// Progress tracking
+	iterStartTime    time.Time
+	iterHistory      []iterRecord // persists across turns — never reset
+	currentIterTokens int         // input tokens for the current iteration
+	currentIterOutput int         // output chars accumulated this iteration
+	lastInputTokens  int         // input tokens for status bar display
+	lastOutputTokens int         // output tokens for status bar display
+	estimatedDur     time.Duration
+	progressTicker   *time.Ticker
+	progressStop     chan struct{}
 
 	// Dependencies (immutable after construction)
 	client        *apiclient.Client
@@ -125,8 +144,8 @@ func newTuiApp(
 
 	t.rootFlex = tview.NewFlex().SetDirection(tview.FlexRow)
 	t.rootFlex.AddItem(t.chatArea, 0, 1, false)
-	t.rootFlex.AddItem(newHDivider(), 1, 0, false)
 	t.rootFlex.AddItem(t.statusBar, 1, 0, false)
+	t.rootFlex.AddItem(newHDivider(), 1, 0, false)
 	t.rootFlex.AddItem(t.inputField, 1, 0, true)
 	t.rootFlex.AddItem(newHDivider(), 1, 0, false)
 
@@ -193,7 +212,7 @@ func (t *tuiApp) setupInputCapture() {
 				return nil
 			}
 			t.ctrlCPending = true
-			t.addLine("[gray::i]  Press Ctrl+C again to quit.[-:-:-]")
+			t.addLine("[gray::-]  Press Ctrl+C again to quit.[-:-:-]")
 			t.refreshChatView()
 			return nil
 
@@ -359,6 +378,13 @@ func (t *tuiApp) handleEnter(text string) {
 
 	t.processing = true
 	t.statusText = "Thinking..."
+	t.currentIterTokens = 0
+	t.currentIterOutput = 0
+	t.lastInputTokens = 0
+	t.lastOutputTokens = 0
+	t.startProgressTicker()
+	t.iterStartTime = time.Now()
+	t.estimatedDur = 0
 	t.updateStatusBar()
 	t.streaming.Reset()
 
@@ -379,44 +405,44 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 		t.toolResults = make(map[int]string)
 		t.toolCallLines = make(map[int]api.ToolCall)
 		t.closeFileViewer()
-		t.addLine("[gray::i]  History cleared.[-:-:-]")
+		t.addLine("[gray::-]  History cleared.[-:-:-]")
 		t.addLine("")
 		return true
 
 	case input == "/compact":
 		if !t.agentMode {
-			t.addLine("[gray::i]  /compact is only available in agent mode.[-:-:-]")
+			t.addLine("[gray::-]  /compact is only available in agent mode.[-:-:-]")
 			t.addLine("")
 			return true
 		}
 		if t.mgr.NeedsSummary() {
-			t.addLine("[gray::i]  [compacting...][-:-:-]")
+			t.addLine("[gray::-]  [compacting...][-:-:-]")
 			if err := t.mgr.Summarize(context.Background(), chatctx.CompletionFunc(t.completeFn)); err != nil {
-				t.addLine(fmt.Sprintf("[gray::i]  Compact failed: %v[-:-:-]", err))
+				t.addLine(fmt.Sprintf("[gray::-]  Compact failed: %v[-:-:-]", err))
 			} else {
 				budget := t.mgr.Budget()
-				t.addLine(fmt.Sprintf("[gray::i]  Compacted. %d tokens free (%d%%)[-:-:-]",
+				t.addLine(fmt.Sprintf("[gray::-]  Compacted. %d tokens free (%d%%)[-:-:-]",
 					budget.Available, budget.Available*100/budget.Total))
 			}
 		} else {
-			t.addLine("[gray::i]  Nothing to compact.[-:-:-]")
+			t.addLine("[gray::-]  Nothing to compact.[-:-:-]")
 		}
 		t.addLine("")
 		return true
 
 	case input == "/help":
-		t.addLine("[gray::i]  Commands:[-:-:-]")
-		t.addLine("[gray::i]    /clear              Clear conversation history[-:-:-]")
-		t.addLine("[gray::i]    /compact            Summarize to free context[-:-:-]")
-		t.addLine("[gray::i]    /tokens             Show token budget[-:-:-]")
-		t.addLine("[gray::i]    /context add <path> Load file into context[-:-:-]")
-		t.addLine("[gray::i]    /context list       Show loaded files[-:-:-]")
-		t.addLine("[gray::i]    /context clear      Remove all context files[-:-:-]")
-		t.addLine("[gray::i]    /memory             List recent memories[-:-:-]")
-		t.addLine("[gray::i]    /memory search <q>  Search memories[-:-:-]")
-		t.addLine("[gray::i]    /memory forget <id> Delete a memory[-:-:-]")
-		t.addLine("[gray::i]    /memory clear       Clear all memories[-:-:-]")
-		t.addLine("[gray::i]    /quit, /exit        Exit[-:-:-]")
+		t.addLine("[gray::-]  Commands:[-:-:-]")
+		t.addLine("[gray::-]    /clear              Clear conversation history[-:-:-]")
+		t.addLine("[gray::-]    /compact            Summarize to free context[-:-:-]")
+		t.addLine("[gray::-]    /tokens             Show token budget[-:-:-]")
+		t.addLine("[gray::-]    /context add <path> Load file into context[-:-:-]")
+		t.addLine("[gray::-]    /context list       Show loaded files[-:-:-]")
+		t.addLine("[gray::-]    /context clear      Remove all context files[-:-:-]")
+		t.addLine("[gray::-]    /memory             List recent memories[-:-:-]")
+		t.addLine("[gray::-]    /memory search <q>  Search memories[-:-:-]")
+		t.addLine("[gray::-]    /memory forget <id> Delete a memory[-:-:-]")
+		t.addLine("[gray::-]    /memory clear       Clear all memories[-:-:-]")
+		t.addLine("[gray::-]    /quit, /exit        Exit[-:-:-]")
 		t.addLine("")
 		return true
 	}
@@ -425,7 +451,7 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 	if handleREPLCommand(&buf, input, t.mgr, t.client, t.memoryEnabled) {
 		for _, line := range strings.Split(buf.String(), "\n") {
 			if line != "" {
-				t.addLine("[gray::i]  " + tview.Escape(line) + "[-:-:-]")
+				t.addLine("[gray::-]  " + tview.Escape(line) + "[-:-:-]")
 			}
 		}
 		t.addLine("")
@@ -440,6 +466,14 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 func (t *tuiApp) startChatTurn(input string) {
 	t.mgr.Append(api.Message{Role: "user", Content: input})
 	windowedMsgs := t.mgr.Messages()
+
+	// Estimate input tokens
+	inputTokens := t.mgr.Estimator().EstimateMessages(windowedMsgs)
+	t.currentIterTokens = inputTokens
+	t.lastInputTokens = inputTokens
+	t.currentIterOutput = 0
+	t.estimatedDur = t.predictDuration(inputTokens)
+	t.app.QueueUpdateDraw(func() { t.updateStatusBar() })
 
 	req := &api.ChatCompletionRequest{
 		Model:    t.modelName,
@@ -486,6 +520,7 @@ func (t *tuiApp) startChatTurn(input string) {
 		for _, choice := range ev.Chunk.Choices {
 			if choice.Delta.Content != "" {
 				full.WriteString(choice.Delta.Content)
+				t.currentIterOutput += len(choice.Delta.Content)
 				t.app.QueueUpdateDraw(func() {
 					t.streaming.WriteString(choice.Delta.Content)
 					t.updateStreamingLine()
@@ -506,19 +541,35 @@ func (t *tuiApp) startChatTurn(input string) {
 }
 
 func (t *tuiApp) handleStreamDone(content string, err error) {
+	t.recordIterationEnd()
+	t.stopProgressTicker()
 	t.processing = false
 	t.statusText = ""
 
 	if err != nil {
 		if strings.Contains(err.Error(), "context canceled") {
-			t.addLine("[gray::i]  [interrupted][-:-:-]")
+			t.addLine("[gray::-]  [interrupted][-:-:-]")
 		} else {
-			t.addLine(fmt.Sprintf("[gray::i]  Error: %v[-:-:-]", err))
+			t.addLine(fmt.Sprintf("[gray::-]  Error: %v[-:-:-]", err))
 		}
 	}
 
 	if content != "" {
 		t.mgr.Append(api.Message{Role: "assistant", Content: content})
+
+		// Replace raw streaming lines with rendered markdown
+		streamStart := len(t.lines)
+		for i := len(t.lines) - 1; i >= 0; i-- {
+			if strings.Contains(t.lines[i], ">>>") {
+				streamStart = i + 2
+				break
+			}
+		}
+		if streamStart > len(t.lines) {
+			streamStart = len(t.lines)
+		}
+		rendered := fmt.Sprintf(" [purple::b] * [-:-:-]%s", t.renderMarkdown(content))
+		t.lines = append(t.lines[:streamStart], strings.Split(rendered, "\n")...)
 	}
 
 	t.streaming.Reset()
@@ -570,8 +621,9 @@ func (t *tuiApp) startAgentTurn(input string) {
 			t.app.QueueUpdateDraw(func() {
 				trimmed := strings.TrimSpace(text)
 				if trimmed != "" {
-					for _, line := range strings.Split(trimmed, "\n") {
-						t.addLine("[gray::i]    " + tview.Escape(line) + "[-:-:-]")
+					rendered := t.renderMarkdown(trimmed)
+					for _, line := range strings.Split(rendered, "\n") {
+						t.addLine("    " + line)
 					}
 					t.refreshChatView()
 				}
@@ -587,6 +639,7 @@ func (t *tuiApp) startAgentTurn(input string) {
 				OnToolCall: func(call api.ToolCall) {
 					flushContent()
 					toolCount++
+					t.currentIterOutput += len(call.Function.Name) + len(call.Function.Arguments)
 					display := fmt.Sprintf("%d tools | %s", toolCount, call.Function.Name)
 					name := call.Function.Name
 					t.app.QueueUpdateDraw(func() {
@@ -595,11 +648,11 @@ func (t *tuiApp) startAgentTurn(input string) {
 						idx := len(t.lines)
 						if name == "file_read" || name == "file_write" || name == "patch_file" {
 							path := extractFilePath(call)
-							label := "[gray::i]    > " + tview.Escape(display) + " [-:-:-][#00afff::u]" + tview.Escape(path) + "[-:-:-]"
+							label := "[gray::-]    > " + tview.Escape(display) + " [-:-:-][#00afff::u]" + tview.Escape(path) + "[-:-:-]"
 							t.addLine(label)
 							t.toolCallLines[idx] = call
 						} else {
-							t.addLine("[gray::i]    > " + tview.Escape(display) + "[-:-:-]")
+							t.addLine("[gray::-]    > " + tview.Escape(display) + "[-:-:-]")
 						}
 						t.refreshChatView()
 					})
@@ -612,7 +665,7 @@ func (t *tuiApp) startAgentTurn(input string) {
 							preview = preview[:120] + "..."
 						}
 						idx := len(t.lines)
-						t.addLine("[gray::i]      " + tview.Escape(preview) + "[-:-:-]")
+						t.addLine("[gray::-]      " + tview.Escape(preview) + "[-:-:-]")
 						t.toolResults[idx] = result
 						t.refreshChatView()
 					})
@@ -622,12 +675,25 @@ func (t *tuiApp) startAgentTurn(input string) {
 				},
 			},
 		},
-		OnIterationStart: func(iteration, maxIter int) {
+		OnIterationStart: func(iteration, maxIter int, messages []api.Message) {
 			flushContent()
 			t.app.QueueUpdateDraw(func() {
+				// Record previous iteration duration
+				t.recordIterationEnd()
+
+				// Estimate input tokens for this iteration
+				inputTokens := t.mgr.Estimator().EstimateMessages(messages)
+				t.currentIterTokens = inputTokens
+				t.lastInputTokens = inputTokens
+				t.currentIterOutput = 0
+
+				// Start timing this iteration
 				t.statusText = fmt.Sprintf("iteration %d, %d tools", iteration, toolCount)
+				t.startProgressTicker()
+				t.iterStartTime = time.Now()
+				t.estimatedDur = t.predictDuration(inputTokens)
 				t.updateStatusBar()
-				t.addLine(fmt.Sprintf("[gray::i]  -- iteration %d --[-:-:-]", iteration))
+				t.addLine(fmt.Sprintf("[gray::-]  -- iteration %d --[-:-:-]", iteration))
 				t.refreshChatView()
 			})
 		},
@@ -644,6 +710,7 @@ func (t *tuiApp) startAgentTurn(input string) {
 			})
 		},
 		OnContentDelta: func(delta string) {
+			t.currentIterOutput += len(delta)
 			contentBuf.WriteString(delta)
 		},
 	}
@@ -661,14 +728,16 @@ func (t *tuiApp) startAgentTurn(input string) {
 }
 
 func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
+	t.recordIterationEnd()
+	t.stopProgressTicker()
 	t.processing = false
 	t.statusText = ""
 
 	if err != nil {
 		if strings.Contains(err.Error(), "context canceled") {
-			t.addLine("[gray::i]  [interrupted][-:-:-]")
+			t.addLine("[gray::-]  [interrupted][-:-:-]")
 		} else {
-			t.addLine(fmt.Sprintf("[gray::i]  Error: %v[-:-:-]", err))
+			t.addLine(fmt.Sprintf("[gray::-]  Error: %v[-:-:-]", err))
 		}
 	}
 
@@ -684,7 +753,7 @@ func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
 			}
 		}
 		if finalContent != "" {
-			formatted := fmt.Sprintf(" [purple::b] * [-:-:-]%s", tview.Escape(finalContent))
+			formatted := fmt.Sprintf(" [purple::b] * [-:-:-]%s", t.renderMarkdown(finalContent))
 			for _, line := range strings.Split(formatted, "\n") {
 				t.addLine(line)
 			}
@@ -759,7 +828,7 @@ func (t *tuiApp) refreshChatView() {
 		for i, line := range t.lines {
 			if full, ok := t.toolResults[i]; ok {
 				for _, fline := range strings.Split(strings.TrimRight(full, "\n"), "\n") {
-					built = append(built, "[gray::i]      "+tview.Escape(fline)+"[-:-:-]")
+					built = append(built, "[gray::-]      "+tview.Escape(fline)+"[-:-:-]")
 				}
 			} else {
 				built = append(built, line)
@@ -773,10 +842,146 @@ func (t *tuiApp) refreshChatView() {
 
 func (t *tuiApp) updateStatusBar() {
 	if t.processing && t.statusText != "" {
-		t.statusBar.SetText(" [gray::i]" + tview.Escape(t.statusText) + "[-:-:-]")
+		tokenInfo := ""
+		if t.lastInputTokens > 0 {
+			tokenInfo = " | ~" + formatTokenCount(t.lastInputTokens) + " in"
+		}
+		bar := ""
+		if !t.iterStartTime.IsZero() {
+			elapsed := time.Since(t.iterStartTime)
+			bar = " " + renderProgressBar(elapsed, t.estimatedDur)
+		}
+		t.statusBar.SetText(" [gray::-]" + tview.Escape(t.statusText+tokenInfo) + "[-:-:-] " + bar)
+	} else if t.lastInputTokens > 0 || t.lastOutputTokens > 0 {
+		parts := []string{}
+		if t.lastInputTokens > 0 {
+			parts = append(parts, "~"+formatTokenCount(t.lastInputTokens)+" in")
+		}
+		if t.lastOutputTokens > 0 {
+			parts = append(parts, "~"+formatTokenCount(t.lastOutputTokens)+" out")
+		}
+		t.statusBar.SetText(" [gray::-]" + strings.Join(parts, " / ") + "[-:-:-]")
 	} else {
 		t.statusBar.SetText("")
 	}
+}
+
+func (t *tuiApp) startProgressTicker() {
+	t.stopProgressTicker()
+	t.progressStop = make(chan struct{})
+	t.progressTicker = time.NewTicker(500 * time.Millisecond)
+	stop := t.progressStop
+	ticker := t.progressTicker
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				t.app.QueueUpdateDraw(func() {
+					t.updateStatusBar()
+				})
+			}
+		}
+	}()
+}
+
+func (t *tuiApp) stopProgressTicker() {
+	if t.progressTicker != nil {
+		t.progressTicker.Stop()
+		t.progressTicker = nil
+	}
+	if t.progressStop != nil {
+		close(t.progressStop)
+		t.progressStop = nil
+	}
+	t.iterStartTime = time.Time{}
+}
+
+func (t *tuiApp) recordIterationEnd() {
+	if !t.iterStartTime.IsZero() && t.currentIterTokens > 0 {
+		t.iterHistory = append(t.iterHistory, iterRecord{
+			inputTokens: t.currentIterTokens,
+			duration:    time.Since(t.iterStartTime),
+		})
+	}
+	if t.currentIterOutput > 0 {
+		t.lastOutputTokens = t.currentIterOutput / 4 // rough char→token
+	}
+}
+
+func (t *tuiApp) predictDuration(inputTokens int) time.Duration {
+	n := len(t.iterHistory)
+	if n == 0 {
+		return 0
+	}
+	if n == 1 {
+		r := t.iterHistory[0]
+		if r.inputTokens > 0 {
+			return time.Duration(float64(r.duration) * float64(inputTokens) / float64(r.inputTokens))
+		}
+		return r.duration
+	}
+	// 2+ data points: least-squares linear regression
+	var sumX, sumY, sumXY, sumX2 float64
+	for _, r := range t.iterHistory {
+		x := float64(r.inputTokens)
+		y := float64(r.duration)
+		sumX += x
+		sumY += y
+		sumXY += x * y
+		sumX2 += x * x
+	}
+	fn := float64(n)
+	denom := fn*sumX2 - sumX*sumX
+	if denom == 0 {
+		return time.Duration(sumY / fn)
+	}
+	slope := (fn*sumXY - sumX*sumY) / denom
+	intercept := (sumY - slope*sumX) / fn
+	predicted := slope*float64(inputTokens) + intercept
+	if predicted < 0 {
+		predicted = 0
+	}
+	return time.Duration(predicted)
+}
+
+func formatTokenCount(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+func renderProgressBar(elapsed, estimated time.Duration) string {
+	const barWidth = 20
+	if estimated <= 0 {
+		// No estimate yet — just show elapsed
+		return fmt.Sprintf("[gray::-]%ds[-:-:-]", int(elapsed.Seconds()))
+	}
+	ratio := float64(elapsed) / float64(estimated)
+	if ratio > 1.0 {
+		ratio = 1.0
+	}
+	filled := int(ratio * barWidth)
+	if filled > barWidth {
+		filled = barWidth
+	}
+	empty := barWidth - filled
+
+	remaining := estimated - elapsed
+	countdown := ""
+	if remaining > 0 {
+		countdown = fmt.Sprintf("%ds", int(remaining.Seconds()))
+	} else {
+		over := elapsed - estimated
+		countdown = fmt.Sprintf("+%ds", int(over.Seconds()))
+	}
+
+	return fmt.Sprintf("[gray::-][[-]%s%s[gray::-]][-:-:-] [gray::-]%s[-:-:-]",
+		strings.Repeat("█", filled),
+		strings.Repeat("░", empty),
+		countdown)
 }
 
 // ── File Viewer ─────────────────────────────────────────────────────────
@@ -808,7 +1013,7 @@ func (t *tuiApp) openFileViewerContent(path, content string, err error) {
 		SetDynamicColors(true).
 		SetScrollable(false)
 	t.fileHeader.SetBorder(false)
-	t.fileHeader.SetText(fmt.Sprintf("[blue::b]%s[-:-:-] [gray]Esc close | Tab focus[-:-:-]",
+	t.fileHeader.SetText(fmt.Sprintf("[blue::b]%s[-:-:-] [gray::-]Esc close | Tab focus[-:-:-]",
 		tview.Escape(path)))
 
 	// Create file view
@@ -819,7 +1024,7 @@ func (t *tuiApp) openFileViewerContent(path, content string, err error) {
 	t.fileView.SetBorder(false)
 
 	if err != nil {
-		t.fileView.SetText(fmt.Sprintf("[red]Error: %v[-]", err))
+		t.fileView.SetText(fmt.Sprintf("[red::-]Error: %v[-:-:-]", err))
 	} else {
 		highlighted := highlightContent(path, content)
 		numbered := addLineNumbers(highlighted)
@@ -864,26 +1069,43 @@ func (t *tuiApp) closeFileViewer() {
 // ── Display Line Mapping ────────────────────────────────────────────────
 
 func (t *tuiApp) displayLineToLogicalLine(displayLine int) int {
-	if !t.expanded || len(t.toolResults) == 0 {
-		return displayLine
+	_, _, cw, _ := t.chatView.GetRect()
+	if cw <= 0 {
+		cw = 80
 	}
+
 	cur := 0
 	for i, line := range t.lines {
-		if full, ok := t.toolResults[i]; ok {
-			expandedCount := len(strings.Split(strings.TrimRight(full, "\n"), "\n"))
-			if displayLine < cur+expandedCount {
-				return i
+		if t.expanded && len(t.toolResults) > 0 {
+			if full, ok := t.toolResults[i]; ok {
+				for _, fline := range strings.Split(strings.TrimRight(full, "\n"), "\n") {
+					escaped := "[gray::-]      " + tview.Escape(fline) + "[-:-:-]"
+					rows := wrappedLineRows(escaped, cw)
+					if displayLine < cur+rows {
+						return i
+					}
+					cur += rows
+				}
+				continue
 			}
-			cur += expandedCount
-		} else {
-			if cur == displayLine {
-				return i
-			}
-			cur++
-			_ = line
 		}
+		rows := wrappedLineRows(line, cw)
+		if displayLine < cur+rows {
+			return i
+		}
+		cur += rows
 	}
 	return -1
+}
+
+// wrappedLineRows estimates how many display rows a logical line occupies
+// when word-wrapped to the given view width.
+func wrappedLineRows(taggedLine string, viewWidth int) int {
+	w := tview.TaggedStringWidth(taggedLine)
+	if w <= viewWidth {
+		return 1
+	}
+	return (w + viewWidth - 1) / viewWidth
 }
 
 // ── Syntax Highlighting ─────────────────────────────────────────────────
@@ -933,6 +1155,92 @@ func addLineNumbers(content string) string {
 		}
 	}
 	return b.String()
+}
+
+// ── Markdown Rendering ──────────────────────────────────────────────────
+
+var ansiSGR = regexp.MustCompile("\x1b\\[([0-9;:]*)m")
+var tviewTag = regexp.MustCompile(`\[([^\[\]]*):([^\[\]]*):([^\[\]]*)\]`)
+
+// stripTviewUnderline removes 'u' (underline) from the attributes field of
+// tview color tags like [fg:bg:attrs]. This is a safety net in case ANSI
+// underline sequences slip through stripANSIUnderline.
+func stripTviewUnderline(s string) string {
+	return tviewTag.ReplaceAllStringFunc(s, func(tag string) string {
+		inner := tag[1 : len(tag)-1]
+		parts := strings.SplitN(inner, ":", 3)
+		if len(parts) < 3 {
+			return tag
+		}
+		attrs := parts[2]
+		if !strings.ContainsRune(attrs, 'u') {
+			return tag
+		}
+		newAttrs := strings.ReplaceAll(attrs, "u", "")
+		if newAttrs == "" {
+			newAttrs = "-"
+		}
+		return "[" + parts[0] + ":" + parts[1] + ":" + newAttrs + "]"
+	})
+}
+
+// stripANSIUnderline removes underline (4, 4:N) and no-underline (24) parameters
+// from ANSI SGR sequences, preserving all other attributes and colors.
+func stripANSIUnderline(s string) string {
+	return ansiSGR.ReplaceAllStringFunc(s, func(seq string) string {
+		inner := seq[2 : len(seq)-1] // between \x1b[ and m
+		if inner == "" {
+			return seq
+		}
+		params := strings.Split(inner, ";")
+		var out []string
+		for i := 0; i < len(params); i++ {
+			p := params[i]
+			// Strip underline: 4, 4:N (colon sub-params), 24
+			if p == "4" || p == "24" || strings.HasPrefix(p, "4:") {
+				continue
+			}
+			// 38;5;N / 48;5;N: extended color — consume all three parts
+			if (p == "38" || p == "48") && i+2 < len(params) && params[i+1] == "5" {
+				out = append(out, p, params[i+1], params[i+2])
+				i += 2
+				continue
+			}
+			// 38;2;R;G;B / 48;2;R;G;B: true color — consume all five parts
+			if (p == "38" || p == "48") && i+4 < len(params) && params[i+1] == "2" {
+				out = append(out, p, params[i+1], params[i+2], params[i+3], params[i+4])
+				i += 4
+				continue
+			}
+			// 38:5:N / 48:5:N / 38:2:R:G:B / 48:2:R:G:B: colon-style extended color
+			if strings.HasPrefix(p, "38:") || strings.HasPrefix(p, "48:") {
+				out = append(out, p)
+				continue
+			}
+			out = append(out, p)
+		}
+		if len(out) == 0 {
+			return ""
+		}
+		return "\x1b[" + strings.Join(out, ";") + "m"
+	})
+}
+
+func (t *tuiApp) renderMarkdown(content string) string {
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(0),
+	)
+	if err != nil {
+		return tview.Escape(content)
+	}
+	out, err := r.Render(content)
+	if err != nil {
+		return tview.Escape(content)
+	}
+	out = stripANSIUnderline(out)
+	translated := tview.TranslateANSI(strings.TrimRight(out, "\n"))
+	return stripTviewUnderline(translated)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
