@@ -57,6 +57,14 @@ var serveCmd = &cobra.Command{
 			cfg.EmbeddingModel = embModel
 		}
 
+		if rf, _ := cmd.Flags().GetString("reasoning-format"); rf != "" {
+			cfg.ReasoningFormat = rf
+		}
+		if cmd.Flags().Changed("flash-attn") {
+			fa, _ := cmd.Flags().GetBool("flash-attn")
+			cfg.FlashAttention = fa
+		}
+
 		if err := config.EnsureDirs(); err != nil {
 			return err
 		}
@@ -87,5 +95,7 @@ func init() {
 	serveCmd.Flags().String("chat-template", "", "named chat template to use (e.g. qwen2.5)")
 	serveCmd.Flags().String("chat-template-file", "", "path to custom Jinja chat template file")
 	serveCmd.Flags().String("embedding-model", "", "embedding model name (e.g. nomic-embed-text)")
+	serveCmd.Flags().String("reasoning-format", "", "reasoning format for thinking mode (e.g. deepseek)")
+	serveCmd.Flags().Bool("flash-attn", true, "enable flash attention")
 	rootCmd.AddCommand(serveCmd)
 }

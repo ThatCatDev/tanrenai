@@ -175,10 +175,29 @@ func (c *Client) ListModels(ctx context.Context) (*api.ModelListResponse, error)
 	return &result, nil
 }
 
-// PullModel downloads a model on the GPU server.
-func (c *Client) PullModel(ctx context.Context, url string) error {
+// PullModelStream sends a pull request to the GPU server and returns the raw
+// SSE response body. The caller is responsible for closing it.
+func (c *Client) PullModelStream(ctx context.Context, url string) (io.ReadCloser, error) {
 	body, _ := json.Marshal(map[string]string{"url": url})
-	return c.postJSON(ctx, "/api/pull", body, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/pull", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// If the GPU server returned an error before streaming, read it.
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("GPU server returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return resp.Body, nil
 }
 
 // Health checks if the GPU server is healthy.

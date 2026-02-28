@@ -5,8 +5,12 @@
 *.dylib
 
 # Go build output
+/gpu/tanrenai-gpu
+/server/tanrenai-server
 /server/tanrenai
 /server/tanrenai.exe
+/clients/cli/tanrenai
+/client/tanrenai
 
 # llama.cpp binaries
 shared/bin/

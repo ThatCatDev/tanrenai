@@ -152,7 +152,7 @@ func (h *ProxyHandler) LoadModel(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// PullModel proxies POST /api/pull to the GPU server.
+// PullModel proxies POST /api/pull to the GPU server, streaming SSE progress.
 func (h *ProxyHandler) PullModel(w http.ResponseWriter, r *http.Request) {
 	if !h.ensureGPU(w, r) {
 		return
@@ -166,13 +166,35 @@ func (h *ProxyHandler) PullModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.GPUClient.PullModel(r.Context(), req.URL); err != nil {
+	body, err := h.GPUClient.PullModelStream(r.Context(), req.URL)
+	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
 		return
 	}
+	defer body.Close()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if ok {
+		flusher.Flush()
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := body.Read(buf)
+		if n > 0 {
+			w.Write(buf[:n])
+			if ok {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
 }
 
 // RawProxy forwards a request to the GPU server at the same path and copies the response back.

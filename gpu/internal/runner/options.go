@@ -27,6 +27,10 @@ type Options struct {
 	// When set, llama-server uses this template instead of the GGUF-embedded one.
 	ChatTemplateFile string
 
+	// ReasoningFormat specifies the reasoning/thinking format for llama-server
+	// (e.g. "deepseek" for Qwen3.5 thinking mode).
+	ReasoningFormat string
+
 	// Quiet suppresses subprocess stdout/stderr output.
 	Quiet bool
 

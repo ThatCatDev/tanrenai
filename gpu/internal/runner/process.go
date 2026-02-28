@@ -123,6 +123,10 @@ func (r *ProcessRunner) buildArgs() []string {
 		args = append(args, "--chat-template-file", r.opts.ChatTemplateFile)
 	}
 
+	if r.opts.ReasoningFormat != "" {
+		args = append(args, "--reasoning-format", r.opts.ReasoningFormat)
+	}
+
 	return args
 }
 

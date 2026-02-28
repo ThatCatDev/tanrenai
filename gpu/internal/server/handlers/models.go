@@ -85,14 +85,50 @@ func (h *PullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := models.Download(req.URL, h.Store.Dir(), nil)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "download_error", err.Error())
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "server_error", "streaming not supported")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "downloaded", "path": path})
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	var lastPercent int
+	progress := func(downloaded, total int64) {
+		if total <= 0 {
+			return
+		}
+		percent := int(downloaded * 100 / total)
+		if percent == lastPercent && percent != 100 {
+			return // only send when percentage changes
+		}
+		lastPercent = percent
+		evt := map[string]any{
+			"status":     "downloading",
+			"downloaded": downloaded,
+			"total":      total,
+			"percent":    percent,
+		}
+		data, _ := json.Marshal(evt)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	path, err := models.Download(req.URL, h.Store.Dir(), progress)
+	if err != nil {
+		evt := map[string]string{"status": "error", "error": err.Error()}
+		data, _ := json.Marshal(evt)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+		return
+	}
+
+	evt := map[string]string{"status": "downloaded", "path": path}
+	data, _ := json.Marshal(evt)
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	flusher.Flush()
 }
 
 // normalizeModelName strips common extensions (.gguf, etc.) for comparison.

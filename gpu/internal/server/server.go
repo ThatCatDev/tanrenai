@@ -146,6 +146,8 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) error {
 	opts.GPULayers = s.cfg.GPULayers
 	opts.CtxSize = s.cfg.CtxSize
 	opts.ChatTemplateFile = s.cfg.ChatTemplateFile
+	opts.FlashAttention = s.cfg.FlashAttention
+	opts.ReasoningFormat = s.cfg.ReasoningFormat
 
 	if err := r.Load(ctx, modelPath, opts); err != nil {
 		return err
