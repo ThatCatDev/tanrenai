@@ -648,7 +648,7 @@ func (t *tuiApp) startAgentTurn(input string) {
 						idx := len(t.lines)
 						if name == "file_read" || name == "file_write" || name == "patch_file" {
 							path := extractFilePath(call)
-							label := "[gray::-]    > " + tview.Escape(display) + " [-:-:-][#00afff::u]" + tview.Escape(path) + "[-:-:-]"
+							label := "[gray::-]    > " + tview.Escape(display) + " [-:-:-][#00afff::u]" + tview.Escape(path) + "[::U][-:-:-]"
 							t.addLine(label)
 							t.toolCallLines[idx] = call
 						} else {
