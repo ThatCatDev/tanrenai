@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/ThatCatDev/tanrenai/client/internal/apiclient"
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/client/internal/tools"
@@ -182,13 +180,8 @@ func startTUI(client *apiclient.Client, model, systemPrompt string, mgr *chatctx
 		return client.StreamCompletion(ctx, req)
 	}
 
-	m := newTUIModel(client, model, mgr, registry, memoryEnabled, maxIterations, agentMode, completeFn, streamFn)
-
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	m.shared.program = p
-
-	_, err := p.Run()
-	return err
+	t := newTuiApp(client, model, mgr, registry, memoryEnabled, maxIterations, agentMode, completeFn, streamFn)
+	return t.run()
 }
 
 func calibrateEstimator(client *apiclient.Client, estimator *chatctx.TokenEstimator) {
