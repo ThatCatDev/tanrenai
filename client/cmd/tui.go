@@ -1,12 +1,20 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
+	"github.com/alecthomas/chroma/v2"
+	"github.com/alecthomas/chroma/v2/formatters"
+	"github.com/alecthomas/chroma/v2/lexers"
+	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,10 +29,11 @@ import (
 // ── Styles ──────────────────────────────────────────────────────────────
 
 var (
-	borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	userPfx     = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Render(">>>")
-	botPfx      = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true).Render(" ● ")
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+	borderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	userPfx       = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Render(">>>")
+	botPfx        = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true).Render(" ● ")
+	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+	fileClickStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Underline(true)
 )
 
 // ── Tea messages ────────────────────────────────────────────────────────
@@ -33,7 +42,10 @@ type contentDeltaMsg string
 type agentContentMsg string // assistant text between iterations (dimmed)
 type thinkingMsg struct{}
 type thinkingDoneMsg struct{}
-type toolCallMsg string
+type toolCallMsg struct {
+	display string
+	call    api.ToolCall
+}
 type toolResultMsg struct{ name, result string }
 type iterationMsg struct{ iteration, tools int }
 type turnDoneMsg struct {
@@ -43,6 +55,24 @@ type turnDoneMsg struct {
 type streamDoneMsg struct {
 	content string
 	err     error
+}
+type fileContentMsg struct {
+	path    string
+	content string
+	err     error
+}
+
+type focusTarget int
+
+const (
+	focusChat focusTarget = iota
+	focusFileViewer
+)
+
+type fileViewerState struct {
+	viewport viewport.Model
+	filePath string
+	err      error
 }
 
 // ── Shared mutable state (pointer, avoids value-copy issues) ────────────
@@ -89,6 +119,11 @@ type tuiModel struct {
 	toolResults map[int]string // line index -> full tool result
 	expanded    bool           // Tab toggles full tool output
 
+	// File viewer
+	fileViewer    *fileViewerState
+	toolCallLines map[int]api.ToolCall // line index -> original tool call
+	focus         focusTarget
+
 	// Processing state
 	processing  bool
 	statusText  string
@@ -130,6 +165,8 @@ func newTUIModel(
 		input:         ti,
 		agentMode:     agentMode,
 		toolResults:   make(map[int]string),
+		toolCallLines: make(map[int]api.ToolCall),
+		focus:         focusChat,
 		shared:        &tuiShared{},
 		client:        client,
 		modelName:     modelName,
@@ -176,10 +213,32 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlD:
 			m.quitting = true
 			return m, tea.Quit
+		case tea.KeyEsc:
+			if m.fileViewer != nil {
+				m.fileViewer = nil
+				m.focus = focusChat
+				m = m.recalcLayout()
+				m.refreshViewport()
+				return m, nil
+			}
 		case tea.KeyTab:
+			if m.fileViewer != nil {
+				if m.focus == focusChat {
+					m.focus = focusFileViewer
+				} else {
+					m.focus = focusChat
+				}
+				return m, nil
+			}
 			m.expanded = !m.expanded
 			m.refreshViewport()
 			return m, nil
+		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown:
+			if m.fileViewer != nil && m.focus == focusFileViewer {
+				var cmd tea.Cmd
+				m.fileViewer.viewport, cmd = m.fileViewer.viewport.Update(msg)
+				return m, cmd
+			}
 		case tea.KeyEnter:
 			if m.processing {
 				return m, nil
@@ -229,8 +288,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case toolCallMsg:
-		m.statusText = string(msg)
-		m.addLine(dimStyle.Render("    ↳ " + string(msg)))
+		m.statusText = msg.display
+		idx := len(m.lines)
+		name := msg.call.Function.Name
+		if name == "file_read" || name == "file_write" || name == "patch_file" {
+			path := extractFilePath(msg.call)
+			label := dimStyle.Render("    ↳ "+msg.display+" ") + fileClickStyle.Render("📄 "+path)
+			m.addLine(label)
+			m.toolCallLines[idx] = msg.call
+		} else {
+			m.addLine(dimStyle.Render("    ↳ " + msg.display))
+		}
 		m.refreshViewport()
 		return m, nil
 
@@ -261,6 +329,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addLine(dimStyle.Render(fmt.Sprintf("  ── iteration %d ──", msg.iteration)))
 		m.refreshViewport()
 		return m, nil
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
+	case fileContentMsg:
+		return m.handleFileContent(msg), nil
 
 	case turnDoneMsg:
 		return m.handleTurnDone(msg), nil
@@ -299,7 +373,6 @@ func (m tuiModel) View() string {
 	inputLine := inputView
 	if m.processing && m.statusText != "" {
 		status := dimStyle.Render(m.statusText + " ")
-		// Measure visible widths (strip ANSI)
 		inputW := lipgloss.Width(inputView)
 		statusW := lipgloss.Width(status)
 		gap := m.width - inputW - statusW
@@ -310,8 +383,15 @@ func (m tuiModel) View() string {
 		}
 	}
 
+	var chatArea string
+	if m.fileViewer != nil {
+		chatArea = m.renderSplitView()
+	} else {
+		chatArea = m.viewport.View()
+	}
+
 	var b strings.Builder
-	b.WriteString(m.viewport.View())
+	b.WriteString(chatArea)
 	b.WriteString("\n")
 	b.WriteString(divider)
 	b.WriteString("\n")
@@ -330,13 +410,30 @@ func (m tuiModel) recalcLayout() tuiModel {
 		vpHeight = 1
 	}
 
+	chatWidth := m.width
+	if m.fileViewer != nil {
+		chatWidth, _ = m.splitWidths()
+	}
+
 	if !m.ready {
-		m.viewport = viewport.New(m.width, vpHeight)
+		m.viewport = viewport.New(chatWidth, vpHeight)
+		m.viewport.MouseWheelEnabled = true
 		m.viewport.SetContent(strings.Join(m.lines, "\n"))
 		m.ready = true
 	} else {
-		m.viewport.Width = m.width
+		m.viewport.Width = chatWidth
 		m.viewport.Height = vpHeight
+	}
+
+	if m.fileViewer != nil {
+		_, fvWidth := m.splitWidths()
+		// -1 for header line
+		fvHeight := vpHeight - 1
+		if fvHeight < 1 {
+			fvHeight = 1
+		}
+		m.fileViewer.viewport.Width = fvWidth
+		m.fileViewer.viewport.Height = fvHeight
 	}
 
 	m.input.Width = m.width - 4
@@ -399,6 +496,9 @@ func (m *tuiModel) handleSlashCommand(input string) bool {
 		m.mgr.Clear()
 		m.lines = nil
 		m.toolResults = make(map[int]string)
+		m.toolCallLines = make(map[int]api.ToolCall)
+		m.fileViewer = nil
+		m.focus = focusChat
 		m.addLine(dimStyle.Render("  History cleared."))
 		m.addLine("")
 		return true
@@ -513,7 +613,10 @@ func (m *tuiModel) startAgentTurn(input string) tea.Cmd {
 					OnToolCall: func(call api.ToolCall) {
 						flushContent()
 						toolCount++
-						shared.send(toolCallMsg(fmt.Sprintf("%d tools | %s", toolCount, call.Function.Name)))
+						shared.send(toolCallMsg{
+							display: fmt.Sprintf("%d tools | %s", toolCount, call.Function.Name),
+							call:    call,
+						})
 					},
 					OnToolResult: func(call api.ToolCall, result string) {
 						shared.send(toolResultMsg{name: call.Function.Name, result: result})
@@ -688,4 +791,264 @@ func (m tuiModel) handleStreamDone(msg streamDoneMsg) tuiModel {
 	m.addLine("")
 	m.refreshViewport()
 	return m
+}
+
+// ── Syntax highlighting ─────────────────────────────────────────────────
+
+// highlightContent applies chroma syntax highlighting to file content.
+// It detects the language from the filename, falls back to content analysis,
+// then plain text. Returns ANSI-escaped string for terminal256.
+func highlightContent(path, content string) string {
+	lexer := lexers.Match(path)
+	if lexer == nil {
+		lexer = lexers.Analyse(content)
+	}
+	if lexer == nil {
+		lexer = lexers.Fallback
+	}
+	lexer = chroma.Coalesce(lexer)
+
+	style := styles.Get("monokai")
+	formatter := formatters.Get("terminal256")
+	if formatter == nil {
+		return content
+	}
+
+	iterator, err := lexer.Tokenise(nil, content)
+	if err != nil {
+		return content
+	}
+
+	var buf bytes.Buffer
+	if err := formatter.Format(&buf, style, iterator); err != nil {
+		return content
+	}
+	return buf.String()
+}
+
+// addLineNumbers prepends dimmed, right-aligned line numbers to each line.
+func addLineNumbers(content string) string {
+	lines := strings.Split(content, "\n")
+	width := len(fmt.Sprintf("%d", len(lines)))
+	numStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	var b strings.Builder
+	for i, line := range lines {
+		num := fmt.Sprintf("%*d", width, i+1)
+		b.WriteString(numStyle.Render(num))
+		b.WriteString(" ")
+		b.WriteString(line)
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+// ── File viewer ─────────────────────────────────────────────────────────
+
+func extractFilePath(call api.ToolCall) string {
+	var args struct {
+		Path string `json:"path"`
+	}
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+	return args.Path
+}
+
+// splitWidths returns (chatWidth, fileViewerWidth) for the split layout.
+// 50/50 split with 1 col for the divider.
+func (m tuiModel) splitWidths() (int, int) {
+	divider := 1
+	available := m.width - divider
+	chatW := available / 2
+	fvW := available - chatW
+	return chatW, fvW
+}
+
+// displayLineToLogicalLine maps a display line (accounting for expanded tool
+// results) back to the logical m.lines index.
+func (m tuiModel) displayLineToLogicalLine(displayLine int) int {
+	if !m.expanded || len(m.toolResults) == 0 {
+		return displayLine
+	}
+	cur := 0
+	for i, line := range m.lines {
+		if full, ok := m.toolResults[i]; ok {
+			expandedCount := len(strings.Split(strings.TrimRight(full, "\n"), "\n"))
+			if displayLine < cur+expandedCount {
+				return i
+			}
+			cur += expandedCount
+		} else {
+			if cur == displayLine {
+				return i
+			}
+			cur++
+			_ = line
+		}
+	}
+	return -1
+}
+
+func (m tuiModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.MouseLeft:
+		chatWidth := m.width
+		if m.fileViewer != nil {
+			chatWidth, _ = m.splitWidths()
+		}
+
+		if m.fileViewer != nil && msg.X > chatWidth {
+			m.focus = focusFileViewer
+			return m, nil
+		}
+
+		if msg.X <= chatWidth {
+			// Click in chat area — check if it's a tool call line
+			displayLine := m.viewport.YOffset + msg.Y
+			logicalLine := m.displayLineToLogicalLine(displayLine)
+			if logicalLine >= 0 {
+				if call, ok := m.toolCallLines[logicalLine]; ok {
+					path := extractFilePath(call)
+					if path != "" {
+						m.focus = focusFileViewer
+						return m, openFileViewer(path)
+					}
+				}
+			}
+			m.focus = focusChat
+		}
+
+	case tea.MouseWheelUp, tea.MouseWheelDown:
+		chatWidth := m.width
+		if m.fileViewer != nil {
+			chatWidth, _ = m.splitWidths()
+		}
+
+		if m.fileViewer != nil && msg.X > chatWidth {
+			var cmd tea.Cmd
+			m.fileViewer.viewport, cmd = m.fileViewer.viewport.Update(msg)
+			return m, cmd
+		}
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+	}
+
+	return m, nil
+}
+
+func openFileViewer(path string) tea.Cmd {
+	return func() tea.Msg {
+		const maxSize = 64 * 1024
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fileContentMsg{path: path, err: err}
+		}
+		content := string(data)
+		if len(content) > maxSize {
+			content = content[:maxSize] + "\n... (truncated at 64KB)"
+		}
+		return fileContentMsg{path: path, content: content}
+	}
+}
+
+func (m tuiModel) handleFileContent(msg fileContentMsg) tuiModel {
+	vpHeight := m.height - 3
+	if vpHeight < 1 {
+		vpHeight = 1
+	}
+	// Header takes 1 line
+	fvHeight := vpHeight - 1
+	if fvHeight < 1 {
+		fvHeight = 1
+	}
+
+	_, fvWidth := m.splitWidths()
+
+	fv := &fileViewerState{
+		filePath: msg.path,
+		viewport: viewport.New(fvWidth, fvHeight),
+	}
+	fv.viewport.MouseWheelEnabled = true
+
+	if msg.err != nil {
+		fv.err = msg.err
+		fv.viewport.SetContent(fmt.Sprintf("Error: %v", msg.err))
+	} else {
+		fv.viewport.SetContent(addLineNumbers(highlightContent(msg.path, msg.content)))
+	}
+
+	m.fileViewer = fv
+	m.focus = focusFileViewer
+	savedOffset := m.viewport.YOffset
+	m = m.recalcLayout()
+	m.refreshViewport()
+	m.viewport.SetYOffset(savedOffset)
+	return m
+}
+
+func (m tuiModel) renderSplitView() string {
+	if m.fileViewer == nil {
+		return m.viewport.View()
+	}
+
+	chatW, fvW := m.splitWidths()
+	vpHeight := m.viewport.Height
+
+	// ── File viewer header ──
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+	path := m.fileViewer.filePath
+	scrollPct := int(m.fileViewer.viewport.ScrollPercent() * 100)
+	hint := fmt.Sprintf(" %d%% [Esc close | Tab focus]", scrollPct)
+	maxPathW := fvW - ansi.StringWidth(hint)
+	if maxPathW < 10 {
+		maxPathW = 10
+	}
+	if ansi.StringWidth(path) > maxPathW {
+		path = "…" + path[len(path)-maxPathW+1:]
+	}
+	header := headerStyle.Render(path + hint)
+	// ── Divider ──
+	divColor := "240"
+	if m.focus == focusFileViewer {
+		divColor = "12"
+	}
+	div := lipgloss.NewStyle().Foreground(lipgloss.Color(divColor)).Render("│")
+
+	// ── Split lines from each pane ──
+	chatLines := strings.Split(m.viewport.View(), "\n")
+	fvLines := strings.Split(m.fileViewer.viewport.View(), "\n")
+
+	// Column where divider sits (1-based for ANSI CHA escape)
+	divCol := chatW + 1
+
+	// ── Compose line by line ──
+	var b strings.Builder
+	for i := 0; i < vpHeight; i++ {
+		// Chat content (viewport already truncates to chatW)
+		if i < len(chatLines) {
+			b.WriteString(chatLines[i])
+		}
+		b.WriteString("\x1b[0m") // reset any ANSI bleed from chat
+
+		// Force cursor to exact column — terminal handles placement,
+		// bypasses all width-measurement disagreements.
+		fmt.Fprintf(&b, "\x1b[%dG", divCol)
+		b.WriteString(div)
+
+		// File viewer column: header on row 0, viewport below
+		fv := ""
+		if i == 0 {
+			fv = header
+		} else if i-1 < len(fvLines) {
+			fv = fvLines[i-1]
+		}
+		b.WriteString(ansi.Truncate(fv, fvW, ""))
+
+		if i < vpHeight-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }

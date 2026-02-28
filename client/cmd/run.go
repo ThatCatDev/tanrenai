@@ -184,7 +184,7 @@ func startTUI(client *apiclient.Client, model, systemPrompt string, mgr *chatctx
 
 	m := newTUIModel(client, model, mgr, registry, memoryEnabled, maxIterations, agentMode, completeFn, streamFn)
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	m.shared.program = p
 
 	_, err := p.Run()
