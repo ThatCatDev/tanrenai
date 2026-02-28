@@ -6,16 +6,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	Version   = "dev"
-	CommitSHA = "unknown"
-)
+var version = "dev"
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print version information",
+	Short: "Print the version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("tanrenai %s (%s)\n", Version, CommitSHA)
+		fmt.Printf("tanrenai-server %s\n", version)
 	},
 }
 

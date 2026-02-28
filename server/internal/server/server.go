@@ -9,28 +9,27 @@ import (
 	"time"
 
 	"github.com/ThatCatDev/tanrenai/server/internal/config"
-	"github.com/ThatCatDev/tanrenai/server/internal/models"
-	"github.com/ThatCatDev/tanrenai/server/internal/runner"
-	"github.com/ThatCatDev/tanrenai/server/internal/tools"
-	"github.com/ThatCatDev/tanrenai/server/internal/training"
+	"github.com/ThatCatDev/tanrenai/server/internal/gpuclient"
+	"github.com/ThatCatDev/tanrenai/server/internal/gpuprovider"
+	"github.com/ThatCatDev/tanrenai/server/internal/memory"
 )
 
-// Server is the tanrenai HTTP API server.
+// Server is the tanrenai backend HTTP API server.
 type Server struct {
-	cfg             *config.Config
-	http            *http.Server
-	store           *models.Store
-	runner          runner.Runner
-	toolRegistry    *tools.Registry
-	trainingManager *training.Manager
+	cfg       *config.Config
+	http      *http.Server
+	gpuClient *gpuclient.Client
+	memStore  memory.Store
+	provider  gpuprovider.Provider
 }
 
-// New creates a new Server.
-func New(cfg *config.Config) *Server {
+// New creates a new backend Server.
+func New(cfg *config.Config, gpuClient *gpuclient.Client, memStore memory.Store, provider gpuprovider.Provider) *Server {
 	s := &Server{
-		cfg:          cfg,
-		store:        models.NewStore(cfg.ModelsDir),
-		toolRegistry: tools.DefaultRegistry(),
+		cfg:       cfg,
+		gpuClient: gpuClient,
+		memStore:  memStore,
+		provider:  provider,
 	}
 
 	mux := http.NewServeMux()
@@ -51,9 +50,14 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	log.Printf("Tanrenai server listening on %s", s.http.Addr)
-	log.Printf("Models dir: %s", s.cfg.ModelsDir)
-	log.Printf("Bin dir: %s", s.cfg.BinDir)
+	log.Printf("Tanrenai backend listening on %s", s.http.Addr)
+	log.Printf("GPU server: %s", s.cfg.GPUURL)
+	log.Printf("GPU provider: %s", s.provider.Name())
+	if s.memStore != nil {
+		log.Printf("Memory enabled (dir: %s)", s.cfg.MemoryDir)
+	}
+
+	s.provider.StartIdleTimer()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -68,45 +72,12 @@ func (s *Server) Start(ctx context.Context) error {
 		if err := s.http.Shutdown(shutdownCtx); err != nil {
 			log.Printf("Server shutdown error: %v", err)
 		}
-		if s.runner != nil {
-			s.runner.Close()
+		s.provider.Close()
+		if s.memStore != nil {
+			s.memStore.Close()
 		}
 		return nil
 	case err := <-errCh:
 		return err
 	}
-}
-
-// SetTrainingManager sets the training manager for fine-tuning API endpoints.
-// Must be called before Start() for routes to be registered.
-func (s *Server) SetTrainingManager(m *training.Manager) {
-	s.trainingManager = m
-}
-
-// LoadModel loads a model by name into the runner.
-func (s *Server) LoadModel(ctx context.Context, modelName string) error {
-	modelPath, err := s.store.Resolve(modelName)
-	if err != nil {
-		return err
-	}
-
-	// Close existing runner if any
-	if s.runner != nil {
-		s.runner.Close()
-		s.runner = nil
-	}
-
-	r := runner.NewProcessRunner()
-	opts := runner.DefaultOptions()
-	opts.BinDir = s.cfg.BinDir
-	opts.GPULayers = s.cfg.GPULayers
-	opts.CtxSize = s.cfg.CtxSize
-	opts.ChatTemplateFile = s.cfg.ChatTemplateFile
-
-	if err := r.Load(ctx, modelPath, opts); err != nil {
-		return err
-	}
-
-	s.runner = r
-	return nil
 }

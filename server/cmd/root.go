@@ -8,17 +8,13 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "tanrenai",
-	Short: "Tanrenai — local LLM server",
-	Long:  "Tanrenai (鍛錬AI) — a self-evolving local LLM system that serves, manages, and improves models over time.",
+	Use:   "tanrenai-server",
+	Short: "Tanrenai backend server",
+	Long:  "Tanrenai (鍛錬AI) backend — orchestration layer with memory, GPU proxy, and instance management.",
 }
 
 func Execute() error {
 	return rootCmd.Execute()
-}
-
-func init() {
-	rootCmd.PersistentFlags().StringP("models-dir", "m", "", "model storage directory")
 }
 
 func exitError(msg string, args ...any) {

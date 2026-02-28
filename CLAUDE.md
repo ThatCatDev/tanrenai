@@ -4,79 +4,96 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Tanrenai (鍛錬AI) is a local-first LLM system: a Go CLI/server that manages llama-server subprocesses for inference, with agentic tool use, context windowing, and memory/RAG.
+Tanrenai (鍛錬AI) is a three-tier LLM system: a GPU inference server, an orchestration backend, and a CLI client with agentic tool use, context windowing, and memory/RAG.
+
+## Architecture Overview
+
+```
+Client (client/)  →  Backend (server/)  →  GPU Server (gpu/)
+CLI REPL + tools     memory, proxy,        llama-server,
+agent loop            vast.ai mgmt         models, training
+```
+
+### Tier 1: GPU Server (`gpu/`)
+Pure inference + training. Manages llama-server subprocesses. Exposes:
+- `POST /v1/chat/completions` — LLM inference (streaming + non-streaming)
+- `POST /v1/embeddings` — embedding generation
+- `POST /tokenize` — token counting
+- `POST /api/load`, `GET /v1/models`, `POST /api/pull` — model management
+- `POST /v1/finetune/*` — fine-tuning endpoints
+
+### Tier 2: Backend (`server/`)
+Orchestration layer. Owns memory/RAG, manages vast.ai, proxies to GPU:
+- Proxies completions, tokenize, models to GPU server
+- `POST /v1/memory/search`, `POST /v1/memory/store`, `GET /v1/memory/list`, `DELETE /v1/memory/{id}`, `DELETE /v1/memory`, `GET /v1/memory/count`
+- `GET /api/instance/status`, `POST /api/instance/start`, `POST /api/instance/stop`
+
+### Tier 3: Client (`client/`)
+Thin REPL + local tools. Agent loop runs here (tools execute on user's filesystem):
+- Calls backend for completions, memory, models
+- Tools: `file_read`, `file_write`, `patch_file`, `list_dir`, `find_files`, `grep_search`, `git_info`, `shell_exec`, `web_search`
 
 ## Build & Test Commands
 
-All commands run from `server/`:
-
 ```bash
-# Build
-go build -o tanrenai .
+# GPU server
+cd gpu/ && go build -o tanrenai-gpu . && go test ./...
 
-# Run all tests
-go test ./...
+# Backend server
+cd server/ && go build -o tanrenai-server . && go test ./...
 
-# Run a single package's tests
-go test ./internal/memory/... -v
-
-# Run a single test by name
-go test ./internal/e2e/... -v -run TestE2EMemoryWithToolCalls
-
-# Run the server (must have llama-server binary in ~/.local/share/tanrenai/bin/)
-go run main.go serve
-
-# Run interactive agent with memory
-go run main.go run <model-name> --agent --memory --ctx-size 16384
+# Client
+cd client/ && go build -o tanrenai . && go test ./...
 ```
 
-## Architecture
+## Running
 
-### Inference Path (subprocess, not CGo)
+```bash
+# 1. Start GPU server (locally or on vast.ai)
+cd gpu/ && ./tanrenai-gpu serve --port 11435
 
-The system spawns `llama-server` as a child process (`internal/runner/process.go`) and communicates via HTTP. A separate subprocess handles embedding for memory/RAG. This means `{DataDir}/bin/llama-server` must exist.
+# 2. Start backend pointing at GPU server
+cd server/ && ./tanrenai-server serve --gpu-url http://localhost:11435 --memory --port 8080
 
-### Two Entry Points to the Agent Loop
+# 3. Use client
+cd client/ && ./tanrenai run <model-name> --agent --memory --server-url http://localhost:8080
+```
 
-1. **CLI REPL** (`cmd/run.go` → `agentLoop()`): User types in terminal, streaming responses print directly. Memory search/inject and storage happen here, wrapping `agent.RunStreaming()`.
-2. **HTTP API** (`internal/server/handlers/agent.go`): Server-side agent via `POST /v1/agent/completions`, uses `agent.Run()` (non-streaming).
+## Module Paths
 
-The agent loop itself (`internal/agent/agent.go`) is decoupled from both — it takes a `StreamingCompletionFunc` or `CompletionFunc` and a `tools.Registry`, so it works identically in CLI and server contexts.
+```
+github.com/ThatCatDev/tanrenai/gpu      # GPU server
+github.com/ThatCatDev/tanrenai/server   # Backend
+github.com/ThatCatDev/tanrenai/client   # Client CLI
+```
 
-### Context Management (`internal/chatctx/`)
+Three independent Go modules. JSON over HTTP is the contract between them.
 
-`Manager` maintains a token-budgeted message window:
-- **Pinned** (never evicted): system prompt, context files, injected memories
-- **Windowed**: conversation history, oldest evicted first
-- **Budget**: `CtxSize - System - Memory - ResponseBudget = available for history`
+## Key Packages
 
-Token estimation defaults to 3.5 chars/token, optionally calibrated against the server's `/tokenize` endpoint.
+### GPU (`gpu/`)
+- `internal/runner/` — llama-server subprocess management (process.go, stream.go, client.go)
+- `internal/models/` — model store, download, manifest
+- `internal/training/` — fine-tuning pipeline (manager, sidecar)
+- `internal/server/handlers/` — HTTP handlers (chat, models, embeddings, tokenize, finetune)
 
-### Memory/RAG (`internal/memory/`)
+### Backend (`server/`)
+- `internal/gpuclient/` — typed HTTP client to GPU server
+- `internal/memory/` — chromem-go vector store with hybrid search, remote embedding via GPU
+- `internal/vastai/` — vast.ai instance management (client, manager)
+- `internal/server/handlers/` — HTTP handlers (proxy, memory, instance, health)
 
-ChromemStore wraps chromem-go for in-process vector storage with hybrid search (70% semantic + 30% keyword). `EmbedFunc` is the abstraction over embedding providers — production uses a second llama-server subprocess; tests use FNV-hash mock vectors.
-
-The memory flow in `agentLoop`: search → inject as system messages → run agent → store turn.
-
-### Tools (`internal/tools/`)
-
-Registry pattern. Built-in: `file_read`, `file_write`, `list_dir`, `shell_exec`. Tools return `ToolResult{Output, IsError}` — tool-level errors go to the LLM; Go errors mean infrastructure failure.
-
-### API Types (`pkg/api/`)
-
-OpenAI-compatible request/response schemas. Streaming uses SSE with `ChatCompletionChunk` and delta accumulation for tool call arguments.
+### Client (`client/`)
+- `internal/apiclient/` — typed HTTP client to backend (stream.go, client.go)
+- `internal/agent/` — agent loop with tool calling and stuck detection
+- `internal/chatctx/` — token-budgeted context windowing
+- `internal/tools/` — tool registry and implementations
 
 ## Key Conventions
 
 - `memory.Store` is an interface; `ChromemStore` is the implementation. `NewChromemStoreInMemory()` exists for tests.
+- Backend's `memory.NewRemoteEmbedFunc(gpuClient)` calls GPU's `/v1/embeddings` instead of spawning a local subprocess.
 - The agent's stuck-detection tracks repeated identical failing tool calls and force-stops after 3 consecutive repeats.
-- REPL slash commands (`/memory`, `/context`, `/tokens`, `/clear`) are handled in `cmd/run.go` `handleREPLCommand()` before the message reaches the agent.
+- REPL slash commands (`/memory`, `/context`, `/tokens`, `/clear`) are handled in `client/cmd/run.go`.
 - Data directories: `~/.local/share/tanrenai/{models,bin,memory}` (override with `TANRENAI_DATA_DIR`).
-
-## Module Path
-
-```
-github.com/ThatCatDev/tanrenai/server
-```
-
-Go module is under `server/`, not the repo root.
+- `pkg/api/types.go` is duplicated across all three modules (OpenAI-compatible schemas).

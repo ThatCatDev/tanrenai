@@ -1,6 +1,9 @@
 package api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Message represents a chat message.
 type Message struct {
@@ -129,4 +132,84 @@ type ErrorDetail struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
 	Code    string `json:"code,omitempty"`
+}
+
+// Embedding API types
+
+// EmbeddingRequest is the request for POST /v1/embeddings.
+type EmbeddingRequest struct {
+	Input string `json:"input"`
+	Model string `json:"model"`
+}
+
+// EmbeddingResponse is the response for POST /v1/embeddings.
+type EmbeddingResponse struct {
+	Data []EmbeddingData `json:"data"`
+}
+
+// EmbeddingData contains a single embedding vector.
+type EmbeddingData struct {
+	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+
+// Memory API types
+
+// MemoryEntry represents a single memory entry.
+type MemoryEntry struct {
+	ID        string    `json:"id"`
+	UserMsg   string    `json:"user_msg"`
+	AssistMsg string    `json:"assist_msg"`
+	Timestamp time.Time `json:"timestamp"`
+	SessionID string    `json:"session_id,omitempty"`
+}
+
+// MemorySearchResult is a memory entry with associated scores.
+type MemorySearchResult struct {
+	Entry         MemoryEntry `json:"entry"`
+	SemanticScore float32     `json:"semantic_score"`
+	KeywordScore  float32     `json:"keyword_score"`
+	CombinedScore float32     `json:"combined_score"`
+}
+
+// MemorySearchRequest is the request for POST /v1/memory/search.
+type MemorySearchRequest struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit,omitempty"`
+}
+
+// MemorySearchResponse is the response for POST /v1/memory/search.
+type MemorySearchResponse struct {
+	Results []MemorySearchResult `json:"results"`
+}
+
+// MemoryStoreRequest is the request for POST /v1/memory/store.
+type MemoryStoreRequest struct {
+	UserMsg   string `json:"user_msg"`
+	AssistMsg string `json:"assist_msg"`
+}
+
+// MemoryStoreResponse is the response for POST /v1/memory/store.
+type MemoryStoreResponse struct {
+	ID string `json:"id"`
+}
+
+// MemoryListResponse is the response for GET /v1/memory/list.
+type MemoryListResponse struct {
+	Entries []MemoryEntry `json:"entries"`
+	Total   int           `json:"total"`
+}
+
+// MemoryCountResponse is the response for GET /v1/memory/count.
+type MemoryCountResponse struct {
+	Count int `json:"count"`
+}
+
+// Instance management types
+
+// InstanceStatus represents the status of a GPU instance.
+type InstanceStatus struct {
+	Status    string     `json:"status"` // running, stopped, starting
+	GPUURL    string     `json:"gpu_url,omitempty"`
+	IdleSince *time.Time `json:"idle_since,omitempty"`
 }
