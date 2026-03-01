@@ -37,20 +37,29 @@ var serveCmd = &cobra.Command{
 		if tpl, _ := cmd.Flags().GetString("chat-template-file"); tpl != "" {
 			cfg.ChatTemplateFile = tpl
 		}
-		// Named template shortcut
+		// Named template shortcut — generates from ChatMLConfig instead of static constants.
 		if name, _ := cmd.Flags().GetString("chat-template"); name != "" && cfg.ChatTemplateFile == "" {
+			var tplCfg runner.ChatMLConfig
+			var label string
 			switch name {
 			case "qwen2.5", "qwen2", "qwen":
-				path, err := runner.WriteQwen25Template()
-				if err != nil {
-					return fmt.Errorf("failed to write chat template: %w", err)
-				}
-				defer os.Remove(path)
-				cfg.ChatTemplateFile = path
-				fmt.Printf("Using Qwen2.5 native chat template\n")
+				tplCfg = runner.DefaultChatMLConfig
+				label = "qwen25"
+			case "qwen3.5", "qwen3":
+				tplCfg = runner.DefaultChatMLConfig
+				tplCfg.SystemAsUser = true
+				label = "qwen35"
 			default:
-				return fmt.Errorf("unknown chat template %q (available: qwen2.5)", name)
+				return fmt.Errorf("unknown chat template %q (available: qwen2.5, qwen3.5)", name)
 			}
+			tpl := runner.GenerateChatML(tplCfg)
+			path, err := runner.WriteTemplateFile(label, tpl)
+			if err != nil {
+				return fmt.Errorf("failed to write chat template: %w", err)
+			}
+			defer os.Remove(path)
+			cfg.ChatTemplateFile = path
+			fmt.Printf("Using %s native chat template (generated)\n", name)
 		}
 
 		if embModel, _ := cmd.Flags().GetString("embedding-model"); embModel != "" {
@@ -63,6 +72,10 @@ var serveCmd = &cobra.Command{
 		if cmd.Flags().Changed("flash-attn") {
 			fa, _ := cmd.Flags().GetBool("flash-attn")
 			cfg.FlashAttention = fa
+		}
+		if cmd.Flags().Changed("no-auto-template") {
+			nat, _ := cmd.Flags().GetBool("no-auto-template")
+			cfg.NoAutoTemplate = nat
 		}
 
 		if err := config.EnsureDirs(); err != nil {
@@ -97,5 +110,6 @@ func init() {
 	serveCmd.Flags().String("embedding-model", "", "embedding model name (e.g. nomic-embed-text)")
 	serveCmd.Flags().String("reasoning-format", "", "reasoning format for thinking mode (e.g. deepseek)")
 	serveCmd.Flags().Bool("flash-attn", true, "enable flash attention")
+	serveCmd.Flags().Bool("no-auto-template", false, "disable automatic chat template detection from GGUF metadata")
 	rootCmd.AddCommand(serveCmd)
 }

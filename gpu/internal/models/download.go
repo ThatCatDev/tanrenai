@@ -102,5 +102,18 @@ func Download(url, destDir string, progress DownloadProgress) (string, error) {
 		return "", fmt.Errorf("rename file: %w", err)
 	}
 
+	// Save provenance metadata if this is a HuggingFace URL.
+	if repo, branch, ok := ParseHFURL(url); ok {
+		meta := &ModelMetadata{
+			HFRepo:   repo,
+			HFBranch: branch,
+			Source:   "huggingface",
+		}
+		if err := SaveMetadata(destPath, meta); err != nil {
+			// Non-fatal — the model itself was downloaded successfully.
+			fmt.Fprintf(os.Stderr, "warning: could not save model metadata: %v\n", err)
+		}
+	}
+
 	return destPath, nil
 }

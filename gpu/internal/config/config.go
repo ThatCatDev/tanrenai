@@ -12,6 +12,7 @@ type Config struct {
 	EmbeddingModel   string // optional embedding model name/path
 	ReasoningFormat  string // optional reasoning format (e.g. "deepseek" for Qwen3.5 thinking mode)
 	FlashAttention   bool   // enable flash attention (default true)
+	NoAutoTemplate   bool   // disable automatic template detection from GGUF metadata
 }
 
 // DefaultConfig returns a Config with sensible defaults.

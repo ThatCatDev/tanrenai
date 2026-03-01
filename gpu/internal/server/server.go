@@ -22,6 +22,7 @@ type Server struct {
 	runner          runner.Runner
 	embeddingRunner *EmbeddingSubprocess
 	trainingManager *training.Manager
+	templateCleanup func() // removes temp template file on model switch/shutdown
 }
 
 // EmbeddingSubprocess wraps an embedding server subprocess.
@@ -77,6 +78,9 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		if s.embeddingRunner != nil {
 			s.embeddingRunner.Sub.GracefulStop()
+		}
+		if s.templateCleanup != nil {
+			s.templateCleanup()
 		}
 		return nil
 	case err := <-errCh:
@@ -140,6 +144,12 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) error {
 		s.runner = nil
 	}
 
+	// Clean up any previous auto-detected template.
+	if s.templateCleanup != nil {
+		s.templateCleanup()
+		s.templateCleanup = nil
+	}
+
 	r := runner.NewProcessRunner()
 	opts := runner.DefaultOptions()
 	opts.BinDir = s.cfg.BinDir
@@ -148,6 +158,17 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) error {
 	opts.ChatTemplateFile = s.cfg.ChatTemplateFile
 	opts.FlashAttention = s.cfg.FlashAttention
 	opts.ReasoningFormat = s.cfg.ReasoningFormat
+
+	// Auto-detect chat template from GGUF metadata when no explicit template is set.
+	if opts.ChatTemplateFile == "" && !s.cfg.NoAutoTemplate {
+		if res, err := runner.ResolveTemplate(modelPath); err != nil {
+			log.Printf("template auto-detection: %v", err)
+		} else if res != nil {
+			opts.ChatTemplateFile = res.TemplatePath
+			s.templateCleanup = res.Cleanup
+			log.Printf("Auto-detected chat template: %s", res.Source)
+		}
+	}
 
 	if err := r.Load(ctx, modelPath, opts); err != nil {
 		return err
