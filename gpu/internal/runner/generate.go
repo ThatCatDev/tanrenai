@@ -70,8 +70,8 @@ func GenerateChatML(cfg ChatMLConfig) string {
         {{- '%s' + messages[0]['content'] + '%s' }}
     {%%- endif %%}
 {%%- endif %%}`,
-		escapeJinja(toolPreamble),
-		escapeJinja(toolSuffix),
+		toolPreamble,
+		toolSuffix,
 		endRole(cfg),
 		startRole(cfg, "system"), endRole(cfg))
 
@@ -151,11 +151,6 @@ func startRole(cfg ChatMLConfig, role string) string {
 // endRole returns the end-of-role token: "<|im_end|>\n"
 func endRole(cfg ChatMLConfig) string {
 	return cfg.EndToken + `\n`
-}
-
-// escapeJinja escapes double quotes for use inside Jinja {{- "..." }} expressions.
-func escapeJinja(s string) string {
-	return strings.ReplaceAll(s, `"`, `\"`)
 }
 
 // FamilyEntry maps a model architecture (and optional name substring) to a ChatMLConfig.
