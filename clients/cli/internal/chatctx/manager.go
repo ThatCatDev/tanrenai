@@ -2,8 +2,9 @@ package chatctx
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/ThatCatDev/tanrenai/client/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 )
 
 // Config configures the context manager.
@@ -106,13 +107,9 @@ func (m *Manager) AppendMany(msgs []api.Message) {
 }
 
 // Messages returns the windowed message list suitable for sending to the LLM.
-// Algorithm:
-// 1. Compute system tokens from pinned system messages
-// 2. available = CtxSize - systemTokens - ResponseBudget
-// 3. If summary exists, subtract its tokens from available
-// 4. Walk history backwards, summing tokens
-// 5. Stop when next message would exceed available
-// 6. Return: systemMsgs + [summary msg if present] + history[cutoff:]
+// All system content (prompt, context files, memories, summary) is merged into
+// a single system message at position 0 to satisfy models like Qwen 3.5 that
+// require exactly one system message at the beginning.
 func (m *Manager) Messages() []api.Message {
 	systemMsgs := m.buildSystemMessages()
 	systemTokens := m.estimator.EstimateMessages(systemMsgs)
@@ -123,9 +120,8 @@ func (m *Manager) Messages() []api.Message {
 	}
 
 	// Reserve space for memories if present
-	memoryTokens := 0
 	if len(m.memories) > 0 {
-		memoryTokens = m.estimator.EstimateMessages(m.memories)
+		memoryTokens := m.estimator.EstimateMessages(m.memories)
 		available -= memoryTokens
 		if available < 0 {
 			available = 0
@@ -133,18 +129,15 @@ func (m *Manager) Messages() []api.Message {
 	}
 
 	// Reserve space for summary if present
-	var summaryMsg *api.Message
+	var summaryText string
 	if m.summary != "" {
-		sm := api.Message{
-			Role:    "system",
-			Content: fmt.Sprintf("[Conversation summary] %s", m.summary),
-		}
+		summaryText = fmt.Sprintf("[Conversation summary] %s", m.summary)
+		sm := api.Message{Role: "system", Content: summaryText}
 		summaryTokens := m.estimator.EstimateMessages([]api.Message{sm})
 		available -= summaryTokens
 		if available < 0 {
 			available = 0
 		}
-		summaryMsg = &sm
 	}
 
 	// Walk history backwards to find the cutoff
@@ -159,34 +152,57 @@ func (m *Manager) Messages() []api.Message {
 		cutoff = i
 	}
 
-	// Build result: [system] + [memories] + [summary?] + [windowed history]
-	result := make([]api.Message, 0, len(systemMsgs)+len(m.memories)+1+len(m.history)-cutoff)
-	result = append(result, systemMsgs...)
-	result = append(result, m.memories...)
-	if summaryMsg != nil {
-		result = append(result, *summaryMsg)
+	// Merge all system content into a single message
+	var systemContent string
+	if len(systemMsgs) > 0 {
+		systemContent = systemMsgs[0].Content
+	}
+
+	for _, mem := range m.memories {
+		if systemContent != "" {
+			systemContent += "\n\n"
+		}
+		systemContent += mem.Content
+	}
+
+	if summaryText != "" {
+		if systemContent != "" {
+			systemContent += "\n\n"
+		}
+		systemContent += summaryText
+	}
+
+	// Build result: [single system msg] + [windowed history]
+	var result []api.Message
+	if systemContent != "" {
+		result = append(result, api.Message{Role: "system", Content: systemContent})
 	}
 	result = append(result, m.history[cutoff:]...)
 
 	return result
 }
 
-// buildSystemMessages constructs the pinned system messages.
+// buildSystemMessages constructs the base system message (prompt + context files
+// merged into a single message). Returns a slice of 0 or 1 messages.
 func (m *Manager) buildSystemMessages() []api.Message {
-	var msgs []api.Message
+	var parts []string
 
 	if m.systemPrompt != "" {
-		msgs = append(msgs, api.Message{Role: "system", Content: m.systemPrompt})
+		parts = append(parts, m.systemPrompt)
 	}
 
 	for _, cf := range m.contextFiles {
-		msgs = append(msgs, api.Message{
-			Role:    "system",
-			Content: fmt.Sprintf("[File: %s]\n%s", cf.Path, cf.Content),
-		})
+		parts = append(parts, fmt.Sprintf("[File: %s]\n%s", cf.Path, cf.Content))
 	}
 
-	return msgs
+	if len(parts) == 0 {
+		return nil
+	}
+
+	return []api.Message{{
+		Role:    "system",
+		Content: strings.Join(parts, "\n\n"),
+	}}
 }
 
 // NeedsSummary returns true if the history has messages that won't fit in the window
@@ -243,10 +259,10 @@ func (m *Manager) Budget() BudgetInfo {
 
 	// Count tokens in the windowed history
 	msgs := m.Messages()
-	// History messages are everything after system + memories + summary messages
-	historyStart := len(systemMsgs) + len(m.memories)
-	if m.summary != "" {
-		historyStart++
+	// After merging, Messages() returns [single system msg?] + history
+	historyStart := 0
+	if len(msgs) > 0 && msgs[0].Role == "system" {
+		historyStart = 1
 	}
 	historyMsgs := msgs[historyStart:]
 	historyTokens := m.estimator.EstimateMessages(historyMsgs)

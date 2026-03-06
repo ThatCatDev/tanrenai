@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ThatCatDev/tanrenai/client/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 )
 
 func TestEstimateEmpty(t *testing.T) {

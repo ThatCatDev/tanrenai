@@ -41,13 +41,10 @@ func (t *ListDirTool) Execute(_ context.Context, arguments string) (*ToolResult,
 		return ErrorResult(fmt.Sprintf("invalid arguments: %v", err)), nil
 	}
 
-	// Default to current directory
 	if args.Path == "" {
 		args.Path = "."
 	}
 
-	// Resolve depth: nil (not specified) → 2 for a useful default.
-	// Explicit 0 means unlimited (capped at 50). Negative → 1.
 	depth := 2
 	if args.Depth != nil {
 		depth = *args.Depth
@@ -59,8 +56,6 @@ func (t *ListDirTool) Execute(_ context.Context, arguments string) (*ToolResult,
 		}
 	}
 
-	// If the path doesn't exist and looks like a natural-language placeholder,
-	// fall back to "." so the model still gets useful output.
 	if _, err := os.Stat(args.Path); os.IsNotExist(err) && !isRealPath(args.Path) {
 		args.Path = "."
 	}
@@ -77,7 +72,6 @@ func (t *ListDirTool) Execute(_ context.Context, arguments string) (*ToolResult,
 	return &ToolResult{Output: b.String()}, nil
 }
 
-// listDirRecursive writes directory entries to b, recursing up to maxDepth levels.
 func listDirRecursive(b *strings.Builder, root, prefix string, remainingDepth int) error {
 	entries, err := os.ReadDir(filepath.Join(root, prefix))
 	if err != nil {
@@ -90,7 +84,6 @@ func listDirRecursive(b *strings.Builder, root, prefix string, remainingDepth in
 			fmt.Fprintf(b, "[dir]  %s\n", rel)
 			if remainingDepth > 1 {
 				if err := listDirRecursive(b, root, rel, remainingDepth-1); err != nil {
-					// Skip unreadable subdirectories
 					continue
 				}
 			}
@@ -101,9 +94,6 @@ func listDirRecursive(b *strings.Builder, root, prefix string, remainingDepth in
 	return nil
 }
 
-// isRealPath returns true if s looks like an actual filesystem path
-// (starts with /, ./, ../, ~/, or is just "." or "..") rather than a
-// natural-language placeholder like "current_directory".
 func isRealPath(s string) bool {
 	if s == "." || s == ".." {
 		return true
@@ -111,8 +101,6 @@ func isRealPath(s string) bool {
 	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") || strings.HasPrefix(s, "~/") {
 		return true
 	}
-	// If it contains spaces or only letters/underscores with no path separators,
-	// it's probably a placeholder like "current_directory" or "my files"
 	for _, r := range s {
 		if r == '/' {
 			return true
@@ -121,7 +109,5 @@ func isRealPath(s string) bool {
 			return false
 		}
 	}
-	// Single word with no slashes — could be a real relative dir name,
-	// but if it doesn't exist (caller already checked), treat as placeholder
 	return false
 }

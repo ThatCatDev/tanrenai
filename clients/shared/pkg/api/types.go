@@ -194,3 +194,20 @@ type InstanceStatus struct {
 	GPUURL    string     `json:"gpu_url,omitempty"`
 	IdleSince *time.Time `json:"idle_since,omitempty"`
 }
+
+// Model pull types
+
+// PullRequest is the request body for POST /api/pull.
+type PullRequest struct {
+	URL string `json:"url"`
+}
+
+// PullEvent is a streaming SSE event during a model download.
+type PullEvent struct {
+	Status     string `json:"status"`               // "downloading", "downloaded", "error"
+	Downloaded int64  `json:"downloaded,omitempty"`
+	Total      int64  `json:"total,omitempty"`
+	Percent    int    `json:"percent,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Error      string `json:"error,omitempty"`
+}

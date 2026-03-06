@@ -63,7 +63,6 @@ func (t *PatchFileTool) Execute(_ context.Context, arguments string) (*ToolResul
 
 	switch count {
 	case 0:
-		// Show a snippet of the file to help the LLM correct its call
 		snippet := fileStr
 		if len(snippet) > 500 {
 			snippet = snippet[:500] + "\n...(truncated)"
@@ -71,7 +70,6 @@ func (t *PatchFileTool) Execute(_ context.Context, arguments string) (*ToolResul
 		return ErrorResult(fmt.Sprintf("old_string not found in %s. File content starts with:\n%s", args.Path, snippet)), nil
 
 	case 1:
-		// Exactly one match — perform the replacement
 		newContent := strings.Replace(fileStr, args.OldString, args.NewString, 1)
 		if err := os.WriteFile(args.Path, []byte(newContent), 0644); err != nil {
 			return ErrorResult(fmt.Sprintf("failed to write file: %v", err)), nil

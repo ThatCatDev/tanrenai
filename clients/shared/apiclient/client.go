@@ -1,14 +1,16 @@
 package apiclient
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
-	"github.com/ThatCatDev/tanrenai/client/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 )
 
 // Client is a typed HTTP client that talks to the tanrenai backend server.
@@ -23,6 +25,16 @@ func New(baseURL string) *Client {
 		baseURL:    baseURL,
 		httpClient: &http.Client{},
 	}
+}
+
+// BaseURL returns the client's base URL.
+func (c *Client) BaseURL() string {
+	return c.baseURL
+}
+
+// SetBaseURL updates the client's base URL.
+func (c *Client) SetBaseURL(url string) {
+	c.baseURL = url
 }
 
 // --- Completions (proxied through backend to GPU) ---
@@ -188,6 +200,73 @@ func (c *Client) ListModels(ctx context.Context) (*api.ModelListResponse, error)
 		return nil, err
 	}
 	return &result, nil
+}
+
+// --- Model Pull (proxied through backend to GPU) ---
+
+// PullModelEvent represents a parsed SSE event during a model download.
+type PullModelEvent struct {
+	Event api.PullEvent
+	Done  bool
+	Err   error
+}
+
+// PullModel starts downloading a model by URL and streams progress events.
+// The returned channel is closed when the download completes, errors, or ctx is cancelled.
+func (c *Client) PullModel(ctx context.Context, url string) (<-chan PullModelEvent, error) {
+	req := api.PullRequest{URL: url}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/pull", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("server error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	ch := make(chan PullModelEvent)
+	go func() {
+		defer resp.Body.Close()
+		defer close(ch)
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := strings.TrimPrefix(line, "data: ")
+			if data == "[DONE]" {
+				return
+			}
+			var ev api.PullEvent
+			if err := json.Unmarshal([]byte(data), &ev); err != nil {
+				ch <- PullModelEvent{Err: err}
+				return
+			}
+			ch <- PullModelEvent{Event: ev}
+			if ev.Status == "downloaded" || ev.Status == "error" {
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			ch <- PullModelEvent{Err: err}
+		}
+	}()
+
+	return ch, nil
 }
 
 // --- Tokenize (proxied through backend to GPU) ---

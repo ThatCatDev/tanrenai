@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ThatCatDev/tanrenai/client/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 )
 
 // Tool is the interface that all built-in tools implement.

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ThatCatDev/tanrenai/client/internal/apiclient"
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
-	"github.com/ThatCatDev/tanrenai/client/internal/tools"
-	"github.com/ThatCatDev/tanrenai/client/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/apiclient"
+	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/tools"
 	"github.com/spf13/cobra"
 )
 

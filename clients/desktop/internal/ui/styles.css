@@ -1,0 +1,47 @@
+.user-message {
+    background: @accent_bg_color;
+    color: @accent_fg_color;
+    border-radius: 12px;
+    padding: 8px 12px;
+    margin: 4px 8px 4px 48px;
+}
+
+.assistant-message {
+    background: @card_bg_color;
+    border-radius: 12px;
+    padding: 8px 12px;
+    margin: 4px 48px 4px 8px;
+}
+
+.tool-call {
+    background: alpha(@card_bg_color, 0.5);
+    border-radius: 6px;
+    padding: 4px 8px;
+    margin: 2px 8px;
+    font-size: 0.9em;
+}
+
+.tool-result {
+    background: alpha(@card_bg_color, 0.3);
+    border-radius: 6px;
+    padding: 4px 8px;
+    margin: 2px 8px;
+    font-size: 0.85em;
+}
+
+.chat-input {
+    min-height: 40px;
+    border-radius: 8px;
+    padding: 8px;
+}
+
+.message-list {
+    padding: 8px;
+}
+
+.thinking-indicator {
+    color: @dim_label_color;
+    padding: 4px 8px;
+    margin: 2px 8px;
+    font-style: italic;
+}

@@ -20,10 +20,10 @@ const (
 type GrepSearchTool struct{}
 
 type grepSearchArgs struct {
-	Pattern   string `json:"pattern"`
-	Path      string `json:"path"`
-	FileGlob  string `json:"file_glob"`
-	MaxResults int   `json:"max_results"`
+	Pattern    string `json:"pattern"`
+	Path       string `json:"path"`
+	FileGlob   string `json:"file_glob"`
+	MaxResults int    `json:"max_results"`
 }
 
 func (t *GrepSearchTool) Name() string { return "grep_search" }
@@ -73,26 +73,23 @@ func (t *GrepSearchTool) Execute(_ context.Context, arguments string) (*ToolResu
 
 	walkErr := filepath.Walk(args.Path, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // skip unreadable entries
+			return nil
 		}
 		if matches >= args.MaxResults {
 			return filepath.SkipAll
 		}
 		if info.IsDir() {
 			name := info.Name()
-			// Skip common non-source directories
 			if name == ".git" || name == "node_modules" || name == "vendor" || name == "__pycache__" || name == ".venv" || name == "venv" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		// Skip binary/large files
-		if info.Size() > 1024*1024 { // 1MB
+		if info.Size() > 1024*1024 {
 			return nil
 		}
 
-		// Apply file glob filter
 		if args.FileGlob != "" {
 			matched, _ := filepath.Match(args.FileGlob, info.Name())
 			if !matched {
@@ -100,7 +97,6 @@ func (t *GrepSearchTool) Execute(_ context.Context, arguments string) (*ToolResu
 			}
 		}
 
-		// Skip likely binary files
 		if isBinaryFilename(info.Name()) {
 			return nil
 		}

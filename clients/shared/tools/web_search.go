@@ -75,15 +75,12 @@ func (t *WebSearchTool) Execute(ctx context.Context, arguments string) (*ToolRes
 	return &ToolResult{Output: out.String()}, nil
 }
 
-// searchResult holds a single search result.
 type searchResult struct {
 	Title   string
 	URL     string
 	Snippet string
 }
 
-// searchDuckDuckGo queries DuckDuckGo Lite via POST, which avoids CAPTCHA
-// challenges that the HTML endpoint returns for GET requests.
 func searchDuckDuckGo(ctx context.Context, query string, maxResults int) ([]searchResult, error) {
 	form := url.Values{"q": {query}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://lite.duckduckgo.com/lite/", strings.NewReader(form.Encode()))
@@ -109,8 +106,6 @@ func searchDuckDuckGo(ctx context.Context, query string, maxResults int) ([]sear
 		return nil, err
 	}
 
-	// DuckDuckGo Lite uses <a class="result-link"> for titles/URLs
-	// followed by <td class="result-snippet"> for the description.
 	var results []searchResult
 	doc.Find("a.result-link").Each(func(i int, s *goquery.Selection) {
 		if i >= maxResults {
@@ -122,7 +117,6 @@ func searchDuckDuckGo(ctx context.Context, query string, maxResults int) ([]sear
 			return
 		}
 
-		// The snippet is in the next <td class="result-snippet"> sibling
 		snippet := ""
 		snippetTd := s.Closest("tr").Next().Find("td.result-snippet")
 		if snippetTd.Length() > 0 {

@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ThatCatDev/tanrenai/client/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 )
 
 // StreamEvent represents a parsed SSE event from the backend.
@@ -117,7 +117,6 @@ func AccumulateResponse(events <-chan StreamEvent) (*api.ChatCompletionResponse,
 		}
 	}
 
-	// Finalize accumulated tool call arguments
 	for idx, buf := range toolArgBuf {
 		if idx < len(toolCalls) {
 			toolCalls[idx].Function.Arguments = buf.String()

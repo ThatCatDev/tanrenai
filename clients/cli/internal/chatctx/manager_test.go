@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ThatCatDev/tanrenai/client/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 )
 
 func newTestManager(ctxSize int) *Manager {
@@ -93,19 +93,20 @@ func TestContextFilesPinned(t *testing.T) {
 
 	msgs := mgr.Messages()
 
-	// Should have system prompt + context file + some history
-	if len(msgs) < 3 {
-		t.Fatalf("expected at least 3 messages, got %d", len(msgs))
+	// Should have merged system message + some history
+	if len(msgs) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d", len(msgs))
 	}
 
-	// First should be system prompt
-	if msgs[0].Role != "system" || msgs[0].Content != "sys" {
-		t.Errorf("first should be system prompt, got %q", msgs[0].Content)
+	// First should be merged system message containing prompt and context file
+	if msgs[0].Role != "system" {
+		t.Errorf("first should be system, got role %q", msgs[0].Role)
 	}
-
-	// Second should be context file
-	if msgs[1].Role != "system" || !strings.Contains(msgs[1].Content, "go.mod") {
-		t.Errorf("second should be context file, got %q", msgs[1].Content)
+	if !strings.Contains(msgs[0].Content, "sys") {
+		t.Errorf("system message should contain prompt, got %q", msgs[0].Content)
+	}
+	if !strings.Contains(msgs[0].Content, "go.mod") {
+		t.Errorf("system message should contain context file, got %q", msgs[0].Content)
 	}
 }
 
@@ -213,16 +214,16 @@ func TestClear(t *testing.T) {
 		t.Error("summary should be empty after Clear")
 	}
 
-	// System prompt and context files should be preserved
+	// System prompt and context files should be preserved in single system message
 	msgs := mgr.Messages()
-	if len(msgs) < 2 {
-		t.Fatalf("expected at least system + context file, got %d", len(msgs))
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message (merged system), got %d", len(msgs))
 	}
-	if msgs[0].Content != "keep me" {
+	if !strings.Contains(msgs[0].Content, "keep me") {
 		t.Errorf("system prompt should be preserved, got %q", msgs[0].Content)
 	}
-	if !strings.Contains(msgs[1].Content, "keep.txt") {
-		t.Errorf("context file should be preserved, got %q", msgs[1].Content)
+	if !strings.Contains(msgs[0].Content, "keep.txt") {
+		t.Errorf("context file should be preserved, got %q", msgs[0].Content)
 	}
 }
 

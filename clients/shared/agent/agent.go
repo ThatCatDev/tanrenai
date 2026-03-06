@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
@@ -26,9 +25,7 @@ type Config struct {
 	MaxIterations     int
 	Tools             *tools.Registry
 	Hooks             Hooks
-	MaxTokens         int                    // 0 = no limit (backward compatible)
-	MaxResponseTokens int                    // max tokens per generation (0 = default 4096)
-	TokenEstimator    *chatctx.TokenEstimator // nil = no estimation
+	MaxResponseTokens int // max tokens per generation (0 = default 4096)
 }
 
 // StreamingCompletionFunc returns a channel of stream events instead of blocking.
@@ -69,10 +66,6 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 	nudgeCount := 0
 
 	for i := 0; i < cfg.MaxIterations; i++ {
-		if cfg.MaxTokens > 0 && cfg.TokenEstimator != nil {
-			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
-		}
-
 		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
 			Messages:  messages,
@@ -197,10 +190,6 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			cfg.OnIterationStart(i+1, cfg.MaxIterations, messages)
 		}
 
-		if cfg.MaxTokens > 0 && cfg.TokenEstimator != nil {
-			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
-		}
-
 		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
 			Messages:  messages,
@@ -323,15 +312,15 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 
 func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *StreamingConfig) (*api.ChatCompletionResponse, error) {
 	var (
-		content       strings.Builder
-		role          string
-		model         string
-		id            string
-		finishReason  string
-		toolCalls     []api.ToolCall
-		toolArgBuf    = make(map[int]*strings.Builder)
-		gotContent    bool
-		thinkingDone  bool
+		content      strings.Builder
+		role         string
+		model        string
+		id           string
+		finishReason string
+		toolCalls    []api.ToolCall
+		toolArgBuf   = make(map[int]*strings.Builder)
+		gotContent   bool
+		thinkingDone bool
 	)
 
 	for ev := range events {
@@ -477,37 +466,4 @@ func stripNarration(msg *api.Message) {
 	if len(msg.ToolCalls) > 0 && msg.Content != "" {
 		msg.Content = ""
 	}
-}
-
-func truncateToolResults(messages []api.Message, maxTokens int, estimator *chatctx.TokenEstimator) []api.Message {
-	total := estimator.EstimateMessages(messages)
-	if total <= maxTokens {
-		return messages
-	}
-
-	msgs := make([]api.Message, len(messages))
-	copy(msgs, messages)
-
-	for i := range msgs {
-		if msgs[i].Role != "tool" || msgs[i].Content == "" {
-			continue
-		}
-
-		contentTokens := estimator.Estimate(msgs[i].Content)
-		if contentTokens <= 50 {
-			continue
-		}
-
-		maxChars := 50 * 4
-		if len(msgs[i].Content) > maxChars {
-			msgs[i].Content = msgs[i].Content[:maxChars] + "\n[truncated to fit context window]"
-		}
-
-		total = estimator.EstimateMessages(msgs)
-		if total <= maxTokens {
-			break
-		}
-	}
-
-	return msgs
 }

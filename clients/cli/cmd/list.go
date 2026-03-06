@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/spf13/cobra"
-	"github.com/ThatCatDev/tanrenai/client/internal/apiclient"
 )
 
 var listCmd = &cobra.Command{

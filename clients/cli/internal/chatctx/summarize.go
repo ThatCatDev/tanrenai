@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ThatCatDev/tanrenai/client/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 )
 
 // CompletionFunc sends a chat completion request and returns the response.

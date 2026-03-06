@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	defaultTimeout   = 30 * time.Second
-	maxTimeout       = 120 * time.Second
-	maxShellOutput   = 64 * 1024 // 64KB
+	defaultTimeout = 30 * time.Second
+	maxTimeout     = 120 * time.Second
+	maxShellOutput = 64 * 1024 // 64KB
 )
 
 // ShellExecTool runs a shell command.
