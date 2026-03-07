@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ThatCatDev/tanrenai/gpu/internal/config"
+	"github.com/ThatCatDev/tanrenai/gpu/internal/gguf"
 	"github.com/ThatCatDev/tanrenai/gpu/internal/models"
 	"github.com/ThatCatDev/tanrenai/gpu/internal/runner"
 	"github.com/ThatCatDev/tanrenai/gpu/internal/training"
@@ -130,11 +131,16 @@ func (s *Server) StartEmbeddingSubprocess(ctx context.Context, modelName string)
 	return &EmbeddingSubprocess{Sub: sub, BaseURL: sub.BaseURL()}, nil
 }
 
+// LoadResult contains information about a loaded model.
+type LoadResult struct {
+	CtxSize int
+}
+
 // LoadModel loads a model by name into the runner.
-func (s *Server) LoadModel(ctx context.Context, modelName string) error {
+func (s *Server) LoadModel(ctx context.Context, modelName string) (*LoadResult, error) {
 	modelPath, err := s.store.Resolve(modelName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Close existing runner if any
@@ -149,6 +155,14 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) error {
 		s.templateCleanup = nil
 	}
 
+	// Read GGUF metadata once for both template and context length detection.
+	var meta *gguf.Metadata
+	meta, err = gguf.ReadMetadata(modelPath)
+	if err != nil {
+		slog.Warn("could not read GGUF metadata", "error", err)
+		meta = nil
+	}
+
 	r := runner.NewProcessRunner()
 	opts := runner.DefaultOptions()
 	opts.BinDir = s.cfg.BinDir
@@ -158,9 +172,15 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) error {
 	opts.FlashAttention = s.cfg.FlashAttention
 	opts.ReasoningFormat = s.cfg.ReasoningFormat
 
+	// Auto-detect context length from GGUF when config uses the default.
+	if meta != nil && meta.Architecture.ContextLength > 0 && opts.CtxSize == runner.DefaultOptions().CtxSize {
+		opts.CtxSize = int(meta.Architecture.ContextLength)
+		slog.Info("auto-detected context length from GGUF", "ctx_size", opts.CtxSize)
+	}
+
 	// Auto-detect chat template from GGUF metadata when no explicit template is set.
 	if opts.ChatTemplateFile == "" && !s.cfg.NoAutoTemplate {
-		if res, err := runner.ResolveTemplate(modelPath); err != nil {
+		if res, err := runner.ResolveTemplate(modelPath, meta); err != nil {
 			slog.Warn("template auto-detection failed", "error", err)
 		} else if res != nil {
 			opts.ChatTemplateFile = res.TemplatePath
@@ -170,9 +190,9 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) error {
 	}
 
 	if err := r.Load(ctx, modelPath, opts); err != nil {
-		return err
+		return nil, err
 	}
 
 	s.runner = r
-	return nil
+	return &LoadResult{CtxSize: opts.CtxSize}, nil
 }

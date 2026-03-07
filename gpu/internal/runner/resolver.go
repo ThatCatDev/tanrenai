@@ -24,19 +24,25 @@ type TemplateResolution struct {
 }
 
 // ResolveTemplate attempts to auto-detect and generate a chat template for the
-// given GGUF model file. Returns nil (no error) if no template could be determined.
+// given GGUF model file. If meta is non-nil it is used directly; otherwise the
+// GGUF header is read from modelPath. Returns nil (no error) if no template
+// could be determined.
 //
 // Resolution chain:
 //  1. Read GGUF metadata → match architecture/name to known family → generate template
 //  2. Load .meta.json sidecar → fetch from HuggingFace if repo info available
 //  3. Return nil if no strategy works
-func ResolveTemplate(modelPath string) (*TemplateResolution, error) {
+func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution, error) {
 	// Step 1: Try GGUF metadata → family match → generate.
-	meta, err := gguf.ReadMetadata(modelPath)
-	if err != nil {
-		slog.Warn("template resolver: could not read GGUF metadata", "error", err)
-		// Non-fatal — continue to fallback strategies.
-	} else if meta != nil && meta.General.Architecture != "" {
+	if meta == nil {
+		var err error
+		meta, err = gguf.ReadMetadata(modelPath)
+		if err != nil {
+			slog.Warn("template resolver: could not read GGUF metadata", "error", err)
+			// Non-fatal — continue to fallback strategies.
+		}
+	}
+	if meta != nil && meta.General.Architecture != "" {
 		if cfg := MatchFamily(meta.General.Architecture, meta.General.Name); cfg != nil {
 			tpl := GenerateChatML(*cfg)
 			name := sanitizeName(meta.General.Architecture)

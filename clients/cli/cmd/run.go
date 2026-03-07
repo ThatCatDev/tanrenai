@@ -51,11 +51,38 @@ var runCmd = &cobra.Command{
 			systemPrompt = string(data)
 		}
 
-		client := apiclient.New(serverURL)
+		activeURL := serverURL
+		local, _ := cmd.Flags().GetBool("local")
+		if local {
+			gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
+			flashAttn, _ := cmd.Flags().GetBool("flash-attn")
+			url, cleanup, err := startLocalServers(cmd.Context(), localOpts{
+				GPULayers:      gpuLayers,
+				FlashAttention: flashAttn,
+				MemoryEnabled:  memoryEnabled,
+			})
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			activeURL = url
+		}
+
+		client := apiclient.New(activeURL)
 
 		fmt.Printf("Loading model %s...\n", model)
-		if err := client.LoadModel(cmd.Context(), model); err != nil {
+		loadResp, err := client.LoadModel(cmd.Context(), model)
+		if err != nil {
 			return fmt.Errorf("failed to load model (is the backend running?): %w", err)
+		}
+
+		// Use GGUF-detected ctx_size unless user explicitly set --ctx-size.
+		if !cmd.Flags().Changed("ctx-size") && loadResp.CtxSize > 0 {
+			ctxSize = loadResp.CtxSize
+			fmt.Printf("Using model context size: %d tokens\n", ctxSize)
+		}
+		if ctxSize == 0 {
+			ctxSize = 4096 // fallback default
 		}
 
 		estimator := chatctx.NewTokenEstimator()
@@ -118,7 +145,24 @@ var chatCmd = &cobra.Command{
 			systemPrompt = string(data)
 		}
 
-		client := apiclient.New(serverURL)
+		activeURL := serverURL
+		local, _ := cmd.Flags().GetBool("local")
+		if local {
+			gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
+			flashAttn, _ := cmd.Flags().GetBool("flash-attn")
+			url, cleanup, err := startLocalServers(cmd.Context(), localOpts{
+				GPULayers:      gpuLayers,
+				FlashAttention: flashAttn,
+				MemoryEnabled:  memoryEnabled,
+			})
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			activeURL = url
+		}
+
+		client := apiclient.New(activeURL)
 
 		estimator := chatctx.NewTokenEstimator()
 		calibrateEstimator(client, estimator)
@@ -365,7 +409,7 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().String("system", "", "system prompt")
 	cmd.Flags().String("system-file", "", "read system prompt from file")
 	cmd.Flags().Bool("agent", false, "enable agent mode with tool calling")
-	cmd.Flags().Int("ctx-size", 4096, "context window size in tokens")
+	cmd.Flags().Int("ctx-size", 0, "context window size in tokens (0 = auto-detect from model)")
 	cmd.Flags().Int("response-budget", 512, "tokens reserved for model response")
 	cmd.Flags().StringSlice("context-file", nil, "files to load into context")
 	cmd.Flags().Bool("memory", false, "enable memory/RAG")

@@ -17,7 +17,8 @@ Pure inference and training tier. Manages llama-server subprocesses and exposes 
 - `POST /v1/chat/completions` — streaming and non-streaming inference
 - `POST /v1/embeddings` — embedding generation
 - `POST /tokenize` — token counting
-- `POST /api/load`, `GET /v1/models`, `POST /api/pull` — model management
+- `POST /api/load` — model loading (auto-detects context length from GGUF metadata)
+- `GET /v1/models`, `POST /api/pull` — model listing and download
 - `POST /v1/finetune/*` — fine-tuning
 
 ### Backend (`server/`)
@@ -79,6 +80,23 @@ cd clients/desktop/
 go build -o tanrenai-desktop .
 ./tanrenai-desktop
 ```
+
+## Context Size
+
+The context window size is automatically detected from GGUF model metadata. When you load a model, the GPU server reads the model's native context length and returns it through the backend to the CLI, which uses it for context windowing.
+
+- **Auto-detect (default):** `--ctx-size 0` — uses the model's native context length (e.g., 32768 for Qwen3)
+- **Manual override:** `--ctx-size 8192` — explicitly set a context size, overriding the GGUF value
+
+```bash
+# Auto-detect: uses model's native context length
+tanrenai run qwen3-8b --agent
+
+# Override: force 8192 tokens
+tanrenai run qwen3-8b --agent --ctx-size 8192
+```
+
+Use `/tokens` in the REPL to see the active context budget.
 
 ## Agent Mode
 

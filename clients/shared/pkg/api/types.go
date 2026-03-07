@@ -136,6 +136,13 @@ type ErrorDetail struct {
 	Code    string `json:"code,omitempty"`
 }
 
+// LoadResponse is the response for POST /api/load.
+type LoadResponse struct {
+	Status  string `json:"status"`
+	Model   string `json:"model"`
+	CtxSize int    `json:"ctx_size"`
+}
+
 // Embedding API types
 
 // EmbeddingRequest is the request for POST /v1/embeddings.

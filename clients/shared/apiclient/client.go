@@ -190,10 +190,14 @@ func (c *Client) MemoryCount(ctx context.Context) (int, error) {
 
 // --- Models (proxied through backend to GPU) ---
 
-// LoadModel loads a model by name on the GPU server.
-func (c *Client) LoadModel(ctx context.Context, model string) error {
+// LoadModel loads a model by name on the GPU server and returns the load response.
+func (c *Client) LoadModel(ctx context.Context, model string) (*api.LoadResponse, error) {
 	body, _ := json.Marshal(map[string]string{"model": model})
-	return c.postJSON(ctx, "/api/load", body, nil)
+	var result api.LoadResponse
+	if err := c.postJSON(ctx, "/api/load", body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // ListModels returns available models from the GPU server.

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -35,16 +36,26 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(w, r)
 }
 
+func (s *Server) wrapLoadFunc() func(ctx context.Context, model string) (*handlers.LoadResult, error) {
+	return func(ctx context.Context, model string) (*handlers.LoadResult, error) {
+		res, err := s.LoadModel(ctx, model)
+		if err != nil {
+			return nil, err
+		}
+		return &handlers.LoadResult{CtxSize: res.CtxSize}, nil
+	}
+}
+
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	h := &handlers.ChatHandler{
 		GetRunner: func() runner.Runner { return s.runner },
-		LoadFunc:  s.LoadModel,
+		LoadFunc:  s.wrapLoadFunc(),
 	}
 	h.ServeHTTP(w, r)
 }
 
 func (s *Server) handleLoadModel(w http.ResponseWriter, r *http.Request) {
-	h := &handlers.LoadHandler{LoadFunc: s.LoadModel}
+	h := &handlers.LoadHandler{LoadFunc: s.wrapLoadFunc()}
 	h.ServeHTTP(w, r)
 }
 

@@ -7,7 +7,7 @@ import (
 )
 
 func TestResolveTemplate_NonExistentFile(t *testing.T) {
-	res, err := ResolveTemplate("/nonexistent/model.gguf")
+	res, err := ResolveTemplate("/nonexistent/model.gguf", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

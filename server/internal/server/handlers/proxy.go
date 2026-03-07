@@ -149,13 +149,14 @@ func (h *ProxyHandler) LoadModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.GPUClient.LoadModel(r.Context(), req.Model); err != nil {
+	resp, err := h.GPUClient.LoadModel(r.Context(), req.Model)
+	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	json.NewEncoder(w).Encode(resp)
 }
 
 // PullModel proxies POST /api/pull to the GPU server, streaming SSE progress.

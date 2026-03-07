@@ -587,14 +587,18 @@ func TestLoadModel(t *testing.T) {
 			t.Errorf("model = %q, want %q", req["model"], "test-model")
 		}
 
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"status": "loaded", "model": "test-model", "ctx_size": 4096})
 	}))
 	defer srv.Close()
 
 	c := New(srv.URL)
-	err := c.LoadModel(context.Background(), "test-model")
+	resp, err := c.LoadModel(context.Background(), "test-model")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.CtxSize != 4096 {
+		t.Errorf("ctx_size = %d, want 4096", resp.CtxSize)
 	}
 }
 

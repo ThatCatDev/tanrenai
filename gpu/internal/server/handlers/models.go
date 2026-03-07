@@ -38,9 +38,14 @@ func (h *ModelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// LoadResult contains information returned by a model load.
+type LoadResult struct {
+	CtxSize int
+}
+
 // LoadHandler handles POST /api/load.
 type LoadHandler struct {
-	LoadFunc func(ctx context.Context, model string) error
+	LoadFunc func(ctx context.Context, model string) (*LoadResult, error)
 }
 
 func (h *LoadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -59,13 +64,22 @@ func (h *LoadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.LoadFunc(r.Context(), req.Model); err != nil {
+	result, err := h.LoadFunc(r.Context(), req.Model)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "model_error", err.Error())
 		return
 	}
 
+	resp := api.LoadResponse{
+		Status: "loaded",
+		Model:  req.Model,
+	}
+	if result != nil {
+		resp.CtxSize = result.CtxSize
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "loaded", "model": req.Model})
+	json.NewEncoder(w).Encode(resp)
 }
 
 // PullHandler handles POST /api/pull — download a model.

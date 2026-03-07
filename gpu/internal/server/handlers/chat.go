@@ -12,7 +12,7 @@ import (
 // ChatHandler handles POST /v1/chat/completions.
 type ChatHandler struct {
 	GetRunner func() runner.Runner
-	LoadFunc  func(ctx context.Context, model string) error
+	LoadFunc  func(ctx context.Context, model string) (*LoadResult, error)
 }
 
 func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +36,7 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "no model specified and no model loaded")
 			return
 		}
-		if err := h.LoadFunc(r.Context(), req.Model); err != nil {
+		if _, err := h.LoadFunc(r.Context(), req.Model); err != nil {
 			writeError(w, http.StatusInternalServerError, "model_error", "failed to load model: "+err.Error())
 			return
 		}

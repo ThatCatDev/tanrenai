@@ -211,7 +211,7 @@ func TestLoadModel(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		w.Write([]byte(`{"status":"loaded","model":"my-model","ctx_size":4096}`))
 	}))
 
 	body := `{"model":"my-model"}`
@@ -225,12 +225,12 @@ func TestLoadModel(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var got map[string]string
+	var got map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got["status"] != "ok" {
-		t.Errorf("status = %q, want ok", got["status"])
+	if got["status"] != "loaded" {
+		t.Errorf("status = %q, want loaded", got["status"])
 	}
 }
 
