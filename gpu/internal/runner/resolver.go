@@ -36,17 +36,17 @@ func ResolveTemplate(modelPath string) (*TemplateResolution, error) {
 	if err != nil {
 		log.Printf("template resolver: could not read GGUF metadata: %v", err)
 		// Non-fatal — continue to fallback strategies.
-	} else if meta != nil && meta.Architecture != "" {
-		if cfg := MatchFamily(meta.Architecture, meta.Name); cfg != nil {
+	} else if meta != nil && meta.General.Architecture != "" {
+		if cfg := MatchFamily(meta.General.Architecture, meta.General.Name); cfg != nil {
 			tpl := GenerateChatML(*cfg)
-			name := sanitizeName(meta.Architecture)
+			name := sanitizeName(meta.General.Architecture)
 			path, err := WriteTemplateFile(name, tpl)
 			if err != nil {
 				return nil, fmt.Errorf("template resolver: write generated template: %w", err)
 			}
 			return &TemplateResolution{
 				TemplatePath: path,
-				Source:       "generated:" + meta.Architecture,
+				Source:       "generated:" + meta.General.Architecture,
 				Cleanup:      func() { os.Remove(path) },
 			}, nil
 		}

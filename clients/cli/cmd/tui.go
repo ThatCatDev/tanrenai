@@ -26,6 +26,26 @@ import (
 	"github.com/ThatCatDev/tanrenai/shared/tools"
 )
 
+// slashCommands defines the available REPL commands for autocomplete.
+var slashCommands = []struct {
+	cmd  string // command text (trailing space = expects argument)
+	desc string
+}{
+	{"/clear", "Clear conversation history"},
+	{"/compact", "Summarize to free context"},
+	{"/tokens", "Show token budget"},
+	{"/context add ", "Load file into context"},
+	{"/context list", "Show loaded files"},
+	{"/context clear", "Remove all context files"},
+	{"/memory", "List recent memories"},
+	{"/memory search ", "Search memories"},
+	{"/memory forget ", "Delete a memory"},
+	{"/memory clear", "Clear all memories"},
+	{"/help", "Show help"},
+	{"/quit", "Exit"},
+	{"/exit", "Exit"},
+}
+
 type focusTarget int
 
 const (
@@ -59,8 +79,10 @@ type tuiApp struct {
 	toolResults   map[int]string       // line index -> full tool result
 	toolCallLines map[int]api.ToolCall // line index -> original tool call
 	expanded      bool                 // Tab toggles full tool output
-	filePath      string               // "" = no file viewer open
-	focus         focusTarget
+	filePath             string               // "" = no file viewer open
+	focus                focusTarget
+	autocompleteActive   bool
+	autocompleteMatches  []string
 	processing    bool
 	ctrlCPending  bool
 	streaming     strings.Builder
@@ -137,6 +159,40 @@ func newTuiApp(
 		SetLabelWidth(4).
 		SetFieldBackgroundColor(tcell.ColorDefault)
 	t.inputField.SetBorder(false)
+
+	// Slash command autocomplete
+	t.inputField.SetAutocompleteFunc(func(currentText string) []string {
+		if !strings.HasPrefix(currentText, "/") {
+			t.autocompleteActive = false
+			t.autocompleteMatches = nil
+			return nil
+		}
+		var entries []string
+		t.autocompleteMatches = nil
+		for _, sc := range slashCommands {
+			if strings.HasPrefix(sc.cmd, currentText) {
+				entries = append(entries, fmt.Sprintf("%-20s %s", strings.TrimRight(sc.cmd, " "), sc.desc))
+				t.autocompleteMatches = append(t.autocompleteMatches, sc.cmd)
+			}
+		}
+		t.autocompleteActive = len(entries) > 0
+		return entries
+	})
+	t.inputField.SetAutocompletedFunc(func(text string, index int, source int) bool {
+		if source == tview.AutocompletedNavigate {
+			return false // just highlight, don't select
+		}
+		if index >= 0 && index < len(t.autocompleteMatches) {
+			t.inputField.SetText(t.autocompleteMatches[index])
+		}
+		t.autocompleteActive = false
+		return true
+	})
+	t.inputField.SetAutocompleteStyles(
+		tcell.ColorDarkSlateGray,
+		tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorDarkSlateGray),
+		tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlue),
+	)
 
 	// Build layout
 	t.chatArea = tview.NewFlex().SetDirection(tview.FlexColumn)
@@ -227,6 +283,9 @@ func (t *tuiApp) setupInputCapture() {
 			}
 
 		case tcell.KeyTab:
+			if t.autocompleteActive {
+				return event // let tview handle autocomplete selection
+			}
 			if t.filePath != "" {
 				if t.focus == focusChat {
 					t.focus = focusFileViewer
@@ -241,9 +300,15 @@ func (t *tuiApp) setupInputCapture() {
 			return nil
 
 		case tcell.KeyUp:
+			if t.autocompleteActive {
+				return event
+			}
 			t.scrollFocusedPane(-1)
 			return nil
 		case tcell.KeyDown:
+			if t.autocompleteActive {
+				return event
+			}
 			t.scrollFocusedPane(1)
 			return nil
 		case tcell.KeyPgUp:
@@ -256,6 +321,9 @@ func (t *tuiApp) setupInputCapture() {
 		case tcell.KeyEnter:
 			if t.processing {
 				return nil
+			}
+			if t.autocompleteActive {
+				return event // let tview handle autocomplete selection
 			}
 			text := strings.TrimSpace(t.inputField.GetText())
 			if text == "" {

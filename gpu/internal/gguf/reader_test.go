@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"math"
 	"testing"
 )
 
@@ -120,14 +121,14 @@ func TestReadMetadata_V3_AllKeys(t *testing.T) {
 	if meta.Version != 3 {
 		t.Errorf("version = %d, want 3", meta.Version)
 	}
-	if meta.Architecture != "qwen2" {
-		t.Errorf("architecture = %q, want %q", meta.Architecture, "qwen2")
+	if meta.General.Architecture != "qwen2" {
+		t.Errorf("architecture = %q, want %q", meta.General.Architecture, "qwen2")
 	}
-	if meta.Name != "Qwen2.5-Coder-32B-Instruct" {
-		t.Errorf("name = %q, want %q", meta.Name, "Qwen2.5-Coder-32B-Instruct")
+	if meta.General.Name != "Qwen2.5-Coder-32B-Instruct" {
+		t.Errorf("name = %q, want %q", meta.General.Name, "Qwen2.5-Coder-32B-Instruct")
 	}
-	if meta.ChatTemplate != "{{ messages }}" {
-		t.Errorf("chat_template = %q, want %q", meta.ChatTemplate, "{{ messages }}")
+	if meta.Tokenizer.ChatTemplate != "{{ messages }}" {
+		t.Errorf("chat_template = %q, want %q", meta.Tokenizer.ChatTemplate, "{{ messages }}")
 	}
 }
 
@@ -144,30 +145,178 @@ func TestReadMetadata_V2(t *testing.T) {
 	if meta.Version != 2 {
 		t.Errorf("version = %d, want 2", meta.Version)
 	}
-	if meta.Architecture != "llama" {
-		t.Errorf("architecture = %q, want %q", meta.Architecture, "llama")
+	if meta.General.Architecture != "llama" {
+		t.Errorf("architecture = %q, want %q", meta.General.Architecture, "llama")
 	}
-	if meta.Name != "Llama-3" {
-		t.Errorf("name = %q, want %q", meta.Name, "Llama-3")
+	if meta.General.Name != "Llama-3" {
+		t.Errorf("name = %q, want %q", meta.General.Name, "Llama-3")
 	}
 }
 
-func TestReadMetadata_SkipNonStringTargets(t *testing.T) {
-	// If a target key has a non-string value type, it should be skipped.
+func TestReadMetadata_ArchFields(t *testing.T) {
 	b := newBuilder(3)
-	b.addKV("general.architecture", valueTypeUint32, uint32(42)) // non-string, skip
-	b.addKV("general.name", valueTypeString, "TestModel")
+	b.addKV("general.architecture", valueTypeString, "qwen2")
+	b.addKV("qwen2.context_length", valueTypeUint32, uint32(32768))
+	b.addKV("qwen2.embedding_length", valueTypeUint32, uint32(4096))
+	b.addKV("qwen2.block_count", valueTypeUint64, uint64(64))
+	b.addKV("qwen2.feed_forward_length", valueTypeUint32, uint32(11008))
+	b.addKV("qwen2.attention.head_count", valueTypeUint32, uint32(32))
+	b.addKV("qwen2.attention.head_count_kv", valueTypeUint32, uint32(8))
+	b.addKV("qwen2.vocab_size", valueTypeUint32, uint32(151936))
+	b.addKV("qwen2.expert_count", valueTypeUint32, uint32(8))
+	b.addKV("qwen2.expert_used_count", valueTypeUint32, uint32(2))
 
 	meta, err := readMetadataFrom(b.build())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if meta.Architecture != "" {
-		t.Errorf("architecture = %q, want empty (was non-string)", meta.Architecture)
+	if meta.Architecture.ContextLength != 32768 {
+		t.Errorf("context_length = %d, want 32768", meta.Architecture.ContextLength)
 	}
-	if meta.Name != "TestModel" {
-		t.Errorf("name = %q, want %q", meta.Name, "TestModel")
+	if meta.Architecture.EmbeddingLength != 4096 {
+		t.Errorf("embedding_length = %d, want 4096", meta.Architecture.EmbeddingLength)
+	}
+	if meta.Architecture.BlockCount != 64 {
+		t.Errorf("block_count = %d, want 64", meta.Architecture.BlockCount)
+	}
+	if meta.Architecture.FeedForwardLength != 11008 {
+		t.Errorf("feed_forward_length = %d, want 11008", meta.Architecture.FeedForwardLength)
+	}
+	if meta.Architecture.HeadCount != 32 {
+		t.Errorf("head_count = %d, want 32", meta.Architecture.HeadCount)
+	}
+	if meta.Architecture.HeadCountKV != 8 {
+		t.Errorf("head_count_kv = %d, want 8", meta.Architecture.HeadCountKV)
+	}
+	if meta.Architecture.VocabSize != 151936 {
+		t.Errorf("vocab_size = %d, want 151936", meta.Architecture.VocabSize)
+	}
+	if meta.Architecture.ExpertCount != 8 {
+		t.Errorf("expert_count = %d, want 8", meta.Architecture.ExpertCount)
+	}
+	if meta.Architecture.ExpertUsedCount != 2 {
+		t.Errorf("expert_used_count = %d, want 2", meta.Architecture.ExpertUsedCount)
+	}
+}
+
+func TestReadMetadata_RoPEFloatFields(t *testing.T) {
+	b := newBuilder(3)
+	b.addKV("general.architecture", valueTypeString, "llama")
+	b.addKV("llama.attention.layer_norm_rms_epsilon", valueTypeFloat32, float32(1e-5))
+	b.addKV("llama.rope.freq_base", valueTypeFloat32, float32(10000.0))
+	b.addKV("llama.rope.dimension_count", valueTypeUint64, uint64(128))
+	b.addKV("llama.rope.scaling.type", valueTypeString, "linear")
+	b.addKV("llama.rope.scaling.factor", valueTypeFloat32, float32(2.0))
+	b.addKV("llama.rope.scaling.original_context_length", valueTypeUint32, uint32(4096))
+
+	meta, err := readMetadataFrom(b.build())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if math.Float32bits(meta.Architecture.LayerNormRMSEpsilon) != math.Float32bits(1e-5) {
+		t.Errorf("layer_norm_rms_epsilon = %v, want 1e-5", meta.Architecture.LayerNormRMSEpsilon)
+	}
+	if math.Float32bits(meta.Architecture.RoPEFreqBase) != math.Float32bits(10000.0) {
+		t.Errorf("rope_freq_base = %v, want 10000.0", meta.Architecture.RoPEFreqBase)
+	}
+	if meta.Architecture.RoPEDimensionCount != 128 {
+		t.Errorf("rope_dimension_count = %d, want 128", meta.Architecture.RoPEDimensionCount)
+	}
+	if meta.Architecture.RoPEScalingType != "linear" {
+		t.Errorf("rope_scaling_type = %q, want %q", meta.Architecture.RoPEScalingType, "linear")
+	}
+	if math.Float32bits(meta.Architecture.RoPEScalingFactor) != math.Float32bits(2.0) {
+		t.Errorf("rope_scaling_factor = %v, want 2.0", meta.Architecture.RoPEScalingFactor)
+	}
+	if meta.Architecture.RoPEOrigCtxLength != 4096 {
+		t.Errorf("rope_orig_ctx_length = %d, want 4096", meta.Architecture.RoPEOrigCtxLength)
+	}
+}
+
+func TestReadMetadata_NoArchitecture(t *testing.T) {
+	b := newBuilder(3)
+	b.addKV("general.name", valueTypeString, "TestModel")
+	b.addKV("tokenizer.chat_template", valueTypeString, "{{ messages }}")
+
+	meta, err := readMetadataFrom(b.build())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if meta.General.Architecture != "" {
+		t.Errorf("architecture = %q, want empty", meta.General.Architecture)
+	}
+	// All arch fields should be zero-valued.
+	if meta.Architecture.ContextLength != 0 {
+		t.Errorf("context_length = %d, want 0", meta.Architecture.ContextLength)
+	}
+	if meta.Architecture.HeadCount != 0 {
+		t.Errorf("head_count = %d, want 0", meta.Architecture.HeadCount)
+	}
+}
+
+func TestReadMetadata_GeneralFields(t *testing.T) {
+	b := newBuilder(3)
+	b.addKV("general.architecture", valueTypeString, "llama")
+	b.addKV("general.name", valueTypeString, "Llama-3-70B")
+	b.addKV("general.quantization_version", valueTypeUint32, uint32(2))
+	b.addKV("general.file_type", valueTypeUint32, uint32(7))
+	b.addKV("general.size_label", valueTypeString, "70B")
+
+	meta, err := readMetadataFrom(b.build())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if meta.General.QuantizationVersion != 2 {
+		t.Errorf("quantization_version = %d, want 2", meta.General.QuantizationVersion)
+	}
+	if meta.General.FileType != 7 {
+		t.Errorf("file_type = %d, want 7", meta.General.FileType)
+	}
+	if meta.General.SizeLabel != "70B" {
+		t.Errorf("size_label = %q, want %q", meta.General.SizeLabel, "70B")
+	}
+}
+
+func TestReadMetadata_TokenizerFields(t *testing.T) {
+	b := newBuilder(3)
+	b.addKV("tokenizer.chat_template", valueTypeString, "{{ messages }}")
+	b.addKV("tokenizer.ggml.model", valueTypeString, "llama")
+	b.addKV("tokenizer.ggml.bos_token_id", valueTypeUint32, uint32(1))
+	b.addKV("tokenizer.ggml.eos_token_id", valueTypeUint32, uint32(2))
+	b.addKV("tokenizer.ggml.unknown_token_id", valueTypeUint32, uint32(0))
+	b.addKV("tokenizer.ggml.padding_token_id", valueTypeUint32, uint32(3))
+	b.addKV("tokenizer.ggml.add_bos_token", valueTypeBool, true)
+	b.addKV("tokenizer.ggml.add_eos_token", valueTypeBool, false)
+
+	meta, err := readMetadataFrom(b.build())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if meta.Tokenizer.Model != "llama" {
+		t.Errorf("tokenizer model = %q, want %q", meta.Tokenizer.Model, "llama")
+	}
+	if meta.Tokenizer.BOSTokenID != 1 {
+		t.Errorf("bos_token_id = %d, want 1", meta.Tokenizer.BOSTokenID)
+	}
+	if meta.Tokenizer.EOSTokenID != 2 {
+		t.Errorf("eos_token_id = %d, want 2", meta.Tokenizer.EOSTokenID)
+	}
+	if meta.Tokenizer.UnknownTokenID != 0 {
+		t.Errorf("unknown_token_id = %d, want 0", meta.Tokenizer.UnknownTokenID)
+	}
+	if meta.Tokenizer.PaddingTokenID != 3 {
+		t.Errorf("padding_token_id = %d, want 3", meta.Tokenizer.PaddingTokenID)
+	}
+	if !meta.Tokenizer.AddBOSToken {
+		t.Error("add_bos_token = false, want true")
+	}
+	if meta.Tokenizer.AddEOSToken {
+		t.Error("add_eos_token = true, want false")
 	}
 }
 
@@ -194,8 +343,8 @@ func TestReadMetadata_SkipAllValueTypes(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if meta.Architecture != "found" {
-		t.Errorf("architecture = %q, want %q", meta.Architecture, "found")
+	if meta.General.Architecture != "found" {
+		t.Errorf("architecture = %q, want %q", meta.General.Architecture, "found")
 	}
 }
 
@@ -247,9 +396,9 @@ func TestReadMetadata_NoTargetKeys(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if meta.Architecture != "" || meta.Name != "" || meta.ChatTemplate != "" {
+	if meta.General.Architecture != "" || meta.General.Name != "" || meta.Tokenizer.ChatTemplate != "" {
 		t.Errorf("expected all empty, got arch=%q name=%q tpl=%q",
-			meta.Architecture, meta.Name, meta.ChatTemplate)
+			meta.General.Architecture, meta.General.Name, meta.Tokenizer.ChatTemplate)
 	}
 }
 
