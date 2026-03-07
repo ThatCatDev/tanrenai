@@ -5,25 +5,29 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 )
 
 // Client is a typed HTTP client that talks to the tanrenai backend server.
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL      string
+	httpClient   *http.Client // non-streaming requests (has timeout)
+	streamClient *http.Client // streaming requests (no timeout)
 }
 
 // New creates a new Client for the given backend URL.
 func New(baseURL string) *Client {
 	return &Client{
-		baseURL:    baseURL,
-		httpClient: &http.Client{},
+		baseURL:      baseURL,
+		httpClient:   &http.Client{Timeout: 2 * time.Minute},
+		streamClient: &http.Client{},
 	}
 }
 
@@ -53,15 +57,15 @@ func (c *Client) StreamCompletion(ctx context.Context, req *api.ChatCompletionRe
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, connError(err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("server error %d: %s", resp.StatusCode, string(respBody))
+		return nil, &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	events := ParseSSEStream(resp.Body)
@@ -84,13 +88,13 @@ func (c *Client) ChatCompletion(ctx context.Context, req *api.ChatCompletionRequ
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, connError(err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	var result api.ChatCompletionResponse
@@ -145,12 +149,12 @@ func (c *Client) MemoryDelete(ctx context.Context, id string) error {
 	}
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return err
+		return connError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
+		return &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 	return nil
 }
@@ -164,12 +168,12 @@ func (c *Client) MemoryClear(ctx context.Context) error {
 	}
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return err
+		return connError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
+		return &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 	return nil
 }
@@ -226,15 +230,15 @@ func (c *Client) PullModel(ctx context.Context, url string) (<-chan PullModelEve
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, connError(err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("server error %d: %s", resp.StatusCode, string(respBody))
+		return nil, &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	ch := make(chan PullModelEvent)
@@ -286,12 +290,13 @@ func (c *Client) Tokenize(ctx context.Context, text string) (int, error) {
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return 0, err
+		return 0, connError(err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("tokenize returned %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return 0, &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	var result struct {
@@ -341,13 +346,13 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte, result 
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("send request: %w", err)
+		return connError(err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
+		return &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	if result != nil {
@@ -366,13 +371,13 @@ func (c *Client) getJSON(ctx context.Context, url string, result any) error {
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("send request: %w", err)
+		return connError(err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
+		return &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	if result != nil {
@@ -381,6 +386,15 @@ func (c *Client) getJSON(ctx context.Context, url string, result any) error {
 		}
 	}
 	return nil
+}
+
+// connError wraps a connection-level error as ErrServerUnavailable when appropriate.
+func connError(err error) error {
+	// Context cancellation is not a server-unavailable error.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("send request: %w", err)
+	}
+	return fmt.Errorf("%w: %v", ErrServerUnavailable, err)
 }
 
 // wrapStreamWithCleanup wraps a stream event channel, ensuring the HTTP response

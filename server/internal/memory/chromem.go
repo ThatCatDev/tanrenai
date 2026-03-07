@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,7 +47,7 @@ func NewChromemStore(persistDir string, embedFunc EmbedFunc) (*ChromemStore, err
 	// Load entry index from disk
 	if err := s.loadIndex(); err != nil {
 		// Not fatal — index may not exist yet
-		_ = err
+		slog.Warn("failed to load memory index", "error", err)
 	}
 
 	return s, nil
@@ -67,7 +68,7 @@ func NewChromemStoreInMemory(embedFunc EmbedFunc) (*ChromemStore, error) {
 	}, nil
 }
 
-func (s *ChromemStore) Add(ctx context.Context, entry Entry) error {
+func (s *ChromemStore) Add(ctx context.Context, entry *Entry) error {
 	if entry.ID == "" {
 		entry.ID = uuid.New().String()
 	}
@@ -91,14 +92,20 @@ func (s *ChromemStore) Add(ctx context.Context, entry Entry) error {
 	}
 
 	s.mu.Lock()
-	s.entries[entry.ID] = entry
+	s.entries[entry.ID] = *entry
 	s.mu.Unlock()
 
-	s.saveIndex()
+	if err := s.saveIndex(); err != nil {
+		slog.Error("failed to save memory index", "error", err)
+	}
 	return nil
 }
 
 func (s *ChromemStore) Search(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+	if query == "" {
+		return nil, ErrEmpty
+	}
+
 	if limit <= 0 {
 		limit = 5
 	}
@@ -166,6 +173,14 @@ func (s *ChromemStore) List(ctx context.Context, limit int) ([]Entry, error) {
 }
 
 func (s *ChromemStore) Delete(ctx context.Context, id string) error {
+	s.mu.RLock()
+	_, exists := s.entries[id]
+	s.mu.RUnlock()
+
+	if !exists {
+		return ErrNotFound
+	}
+
 	if err := s.collection.Delete(ctx, nil, nil, id); err != nil {
 		return fmt.Errorf("delete document: %w", err)
 	}
@@ -174,7 +189,9 @@ func (s *ChromemStore) Delete(ctx context.Context, id string) error {
 	delete(s.entries, id)
 	s.mu.Unlock()
 
-	s.saveIndex()
+	if err := s.saveIndex(); err != nil {
+		slog.Error("failed to save memory index", "error", err)
+	}
 	return nil
 }
 
@@ -193,7 +210,9 @@ func (s *ChromemStore) Clear(ctx context.Context) error {
 		}
 	}
 
-	s.saveIndex()
+	if err := s.saveIndex(); err != nil {
+		slog.Error("failed to save memory index", "error", err)
+	}
 	return nil
 }
 
@@ -236,10 +255,10 @@ func (s *ChromemStore) indexPath() string {
 	return filepath.Join(s.persistDir, "entries_index.json")
 }
 
-func (s *ChromemStore) saveIndex() {
+func (s *ChromemStore) saveIndex() error {
 	path := s.indexPath()
 	if path == "" {
-		return
+		return nil
 	}
 
 	s.mu.RLock()
@@ -247,9 +266,12 @@ func (s *ChromemStore) saveIndex() {
 	s.mu.RUnlock()
 
 	if err != nil {
-		return
+		return fmt.Errorf("marshal index: %w", err)
 	}
-	os.WriteFile(path, data, 0644)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("write index: %w", err)
+	}
+	return nil
 }
 
 func (s *ChromemStore) loadIndex() error {

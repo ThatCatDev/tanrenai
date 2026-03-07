@@ -1,15 +1,13 @@
 package cmd
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 )
 
 var pullCmd = &cobra.Command{
@@ -17,48 +15,29 @@ var pullCmd = &cobra.Command{
 	Short: "Download a GGUF model via the backend",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		url := args[0]
+		modelURL := args[0]
+		client := apiclient.New(serverURL)
 
-		body, _ := json.Marshal(map[string]string{"url": url})
-		resp, err := http.Post(serverURL+"/api/pull", "application/json", bytes.NewReader(body))
+		ch, err := client.PullModel(context.Background(), modelURL)
 		if err != nil {
 			return fmt.Errorf("failed to pull model: %w", err)
 		}
-		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			respBody, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
-		}
-
-		// Read SSE progress events
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data: ") {
-				continue
+		for ev := range ch {
+			if ev.Err != nil {
+				return fmt.Errorf("download failed: %w", ev.Err)
 			}
-			data := line[len("data: "):]
-
-			var evt map[string]any
-			if err := json.Unmarshal([]byte(data), &evt); err != nil {
-				continue
-			}
-
-			switch evt["status"] {
+			switch ev.Event.Status {
 			case "downloading":
-				percent := int(evt["percent"].(float64))
-				downloaded := int64(evt["downloaded"].(float64))
-				total := int64(evt["total"].(float64))
-				printProgress(percent, downloaded, total)
+				printProgress(ev.Event.Percent, ev.Event.Downloaded, ev.Event.Total)
 			case "downloaded":
-				fmt.Printf("\rDownloaded: %s\n", evt["path"])
+				fmt.Printf("\rDownloaded: %s\n", ev.Event.Path)
 			case "error":
-				return fmt.Errorf("download failed: %s", evt["error"])
+				return fmt.Errorf("download failed: %s", ev.Event.Path)
 			}
 		}
 
-		return scanner.Err()
+		return nil
 	},
 }
 

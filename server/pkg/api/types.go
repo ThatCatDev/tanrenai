@@ -1,3 +1,5 @@
+// SYNC: This file is kept in sync with clients/shared/pkg/api/types.go.
+// When modifying, update both copies.
 package api
 
 import (
@@ -203,6 +205,23 @@ type MemoryListResponse struct {
 // MemoryCountResponse is the response for GET /v1/memory/count.
 type MemoryCountResponse struct {
 	Count int `json:"count"`
+}
+
+// Model pull types
+
+// PullRequest is the request body for POST /api/pull.
+type PullRequest struct {
+	URL string `json:"url"`
+}
+
+// PullEvent is a streaming SSE event during a model download.
+type PullEvent struct {
+	Status     string `json:"status"`               // "downloading", "downloaded", "error"
+	Downloaded int64  `json:"downloaded,omitempty"`
+	Total      int64  `json:"total,omitempty"`
+	Percent    int    `json:"percent,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Instance management types

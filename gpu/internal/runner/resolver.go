@@ -2,7 +2,7 @@ package runner
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -34,7 +34,7 @@ func ResolveTemplate(modelPath string) (*TemplateResolution, error) {
 	// Step 1: Try GGUF metadata → family match → generate.
 	meta, err := gguf.ReadMetadata(modelPath)
 	if err != nil {
-		log.Printf("template resolver: could not read GGUF metadata: %v", err)
+		slog.Warn("template resolver: could not read GGUF metadata", "error", err)
 		// Non-fatal — continue to fallback strategies.
 	} else if meta != nil && meta.General.Architecture != "" {
 		if cfg := MatchFamily(meta.General.Architecture, meta.General.Name); cfg != nil {
@@ -55,7 +55,7 @@ func ResolveTemplate(modelPath string) (*TemplateResolution, error) {
 	// Step 2: Try HuggingFace via .meta.json sidecar.
 	modelMeta, err := models.LoadMetadata(modelPath)
 	if err != nil {
-		log.Printf("template resolver: could not load model metadata: %v", err)
+		slog.Warn("template resolver: could not load model metadata", "error", err)
 	}
 	if modelMeta != nil && modelMeta.HFRepo != "" {
 		branch := modelMeta.HFBranch
@@ -65,7 +65,7 @@ func ResolveTemplate(modelPath string) (*TemplateResolution, error) {
 		hf := models.NewHFClient()
 		tpl, err := hf.FetchChatTemplate(modelMeta.HFRepo, branch)
 		if err != nil {
-			log.Printf("template resolver: HuggingFace fetch failed: %v", err)
+			slog.Warn("template resolver: HuggingFace fetch failed", "error", err)
 		} else if tpl != "" {
 			name := sanitizeName(modelMeta.HFRepo)
 			path, err := WriteTemplateFile(name, tpl)

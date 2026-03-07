@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -50,11 +50,9 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	log.Printf("Tanrenai backend listening on %s", s.http.Addr)
-	log.Printf("GPU server: %s", s.cfg.GPUURL)
-	log.Printf("GPU provider: %s", s.provider.Name())
+	slog.Info("Tanrenai backend listening", "addr", s.http.Addr, "gpu_url", s.cfg.GPUURL, "gpu_provider", s.provider.Name())
 	if s.memStore != nil {
-		log.Printf("Memory enabled (dir: %s)", s.cfg.MemoryDir)
+		slog.Info("memory store enabled", "dir", s.cfg.MemoryDir)
 	}
 
 	s.provider.StartIdleTimer()
@@ -66,11 +64,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		log.Println("Shutting down server...")
+		slog.Info("shutting down server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := s.http.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Server shutdown error: %v", err)
+			slog.Error("server shutdown error", "error", err)
 		}
 		s.provider.Close()
 		if s.memStore != nil {

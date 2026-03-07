@@ -4,7 +4,7 @@ package serve
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/ThatCatDev/tanrenai/server/internal/config"
 	"github.com/ThatCatDev/tanrenai/server/internal/gpuclient"
@@ -53,7 +53,7 @@ func Start(ctx context.Context, cfg Config) error {
 			return fmt.Errorf("memory store: %w", err)
 		}
 		memStore = store
-		log.Printf("Memory store initialized at %s", icfg.MemoryDir)
+		slog.Info("memory store initialized", "dir", icfg.MemoryDir)
 	}
 
 	provider := gpuprovider.NewLocalProvider(gpu)

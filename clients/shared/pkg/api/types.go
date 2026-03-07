@@ -1,3 +1,5 @@
+// SYNC: This file is kept in sync with server/pkg/api/types.go.
+// When modifying, update both copies.
 package api
 
 import (
@@ -132,6 +134,25 @@ type ErrorDetail struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
 	Code    string `json:"code,omitempty"`
+}
+
+// Embedding API types
+
+// EmbeddingRequest is the request for POST /v1/embeddings.
+type EmbeddingRequest struct {
+	Input string `json:"input"`
+	Model string `json:"model"`
+}
+
+// EmbeddingResponse is the response for POST /v1/embeddings.
+type EmbeddingResponse struct {
+	Data []EmbeddingData `json:"data"`
+}
+
+// EmbeddingData contains a single embedding vector.
+type EmbeddingData struct {
+	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
 }
 
 // Memory API types

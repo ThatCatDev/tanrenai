@@ -44,6 +44,8 @@ type LoadHandler struct {
 }
 
 func (h *LoadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	var req struct {
 		Model string `json:"model"`
 	}
@@ -72,6 +74,8 @@ type PullHandler struct {
 }
 
 func (h *PullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	var req struct {
 		URL string `json:"url"`
 	}

@@ -37,7 +37,7 @@ type SearchResult struct {
 
 // Store is the interface for persistent memory storage with hybrid search.
 type Store interface {
-	Add(ctx context.Context, entry Entry) error
+	Add(ctx context.Context, entry *Entry) error
 	Search(ctx context.Context, query string, limit int) ([]SearchResult, error)
 	List(ctx context.Context, limit int) ([]Entry, error)
 	Delete(ctx context.Context, id string) error

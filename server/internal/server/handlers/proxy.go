@@ -32,6 +32,8 @@ func (h *ProxyHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10MB limit
+
 	var req api.ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body: "+err.Error())
@@ -95,6 +97,8 @@ func (h *ProxyHandler) Tokenize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	var req struct {
 		Content string `json:"content"`
 	}
@@ -135,6 +139,8 @@ func (h *ProxyHandler) LoadModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	var req struct {
 		Model string `json:"model"`
 	}
@@ -157,6 +163,8 @@ func (h *ProxyHandler) PullModel(w http.ResponseWriter, r *http.Request) {
 	if !h.ensureGPU(w, r) {
 		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
 
 	var req struct {
 		URL string `json:"url"`
@@ -203,15 +211,7 @@ func (h *ProxyHandler) RawProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gpuURL := h.GPUClient.BaseURL() + r.URL.Path
-	gpuReq, err := http.NewRequestWithContext(r.Context(), r.Method, gpuURL, r.Body)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "proxy_error", err.Error())
-		return
-	}
-	gpuReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(gpuReq)
+	resp, err := h.GPUClient.RawRequest(r.Context(), r.Method, r.URL.Path, r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
 		return
@@ -233,10 +233,4 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 			Code:    code,
 		},
 	})
-}
-
-// readBody is a helper for reading and discarding a request body.
-func readBody(r *http.Request) ([]byte, error) {
-	defer r.Body.Close()
-	return io.ReadAll(r.Body)
 }

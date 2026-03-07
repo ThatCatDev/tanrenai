@@ -11,6 +11,7 @@
 /server/tanrenai.exe
 /clients/cli/tanrenai
 /client/tanrenai
+/clients/desktop/tanrenai-desktop
 
 # llama.cpp binaries
 shared/bin/

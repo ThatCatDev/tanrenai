@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
-	"log"
+	"log/slog"
+	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -48,6 +50,25 @@ var serveCmd = &cobra.Command{
 			cfg.IdleTimeout = timeout
 		}
 
+		// Environment variable fallbacks (flag wins if explicitly set)
+		if !cmd.Flags().Changed("gpu-url") {
+			if v := os.Getenv("TANRENAI_GPU_URL"); v != "" {
+				cfg.GPUURL = v
+			}
+		}
+		if !cmd.Flags().Changed("port") {
+			if v := os.Getenv("TANRENAI_SERVER_PORT"); v != "" {
+				if p, err := strconv.Atoi(v); err == nil {
+					cfg.Port = p
+				}
+			}
+		}
+		if !cmd.Flags().Changed("vastai-api-key") {
+			if v := os.Getenv("TANRENAI_VASTAI_API_KEY"); v != "" {
+				cfg.VastaiAPIKey = v
+			}
+		}
+
 		if err := config.EnsureDirs(cfg); err != nil {
 			return err
 		}
@@ -64,7 +85,7 @@ var serveCmd = &cobra.Command{
 				return err
 			}
 			memStore = store
-			log.Printf("Memory store initialized at %s", cfg.MemoryDir)
+			slog.Info("memory store initialized", "dir", cfg.MemoryDir)
 		}
 
 		// Create GPU provider
@@ -76,10 +97,10 @@ var serveCmd = &cobra.Command{
 			}
 			vastClient := vastai.NewClient(cfg.VastaiAPIKey)
 			provider = gpuprovider.NewVastAIProvider(vastClient, gpu, cfg.VastaiInstance, cfg.GPUURL, idleTimeout)
-			log.Printf("GPU provider: vastai (instance: %s, idle timeout: %v)", cfg.VastaiInstance, idleTimeout)
+			slog.Info("GPU provider configured", "provider", "vastai", "instance_id", cfg.VastaiInstance, "idle_timeout", idleTimeout)
 		} else {
 			provider = gpuprovider.NewLocalProvider(gpu)
-			log.Printf("GPU provider: local (%s)", cfg.GPUURL)
+			slog.Info("GPU provider configured", "provider", "local", "gpu_url", cfg.GPUURL)
 		}
 
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

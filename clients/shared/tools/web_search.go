@@ -12,6 +12,9 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+// ddgClient is a shared HTTP client for DuckDuckGo searches.
+var ddgClient = &http.Client{Timeout: 15 * time.Second}
+
 // WebSearchTool searches the web for information.
 type WebSearchTool struct{}
 
@@ -90,8 +93,7 @@ func searchDuckDuckGo(ctx context.Context, query string, maxResults int) ([]sear
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)")
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := ddgClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

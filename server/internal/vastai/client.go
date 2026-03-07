@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 )
 
 const baseURL = "https://console.vast.ai/api/v0"
@@ -32,7 +34,7 @@ type Client struct {
 func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey:     apiKey,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -106,7 +108,7 @@ func (c *Client) put(ctx context.Context, path string, body string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	req.Body = io.NopCloser(io.Reader(jsonReader(body)))
+	req.Body = io.NopCloser(strings.NewReader(body))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -143,20 +145,3 @@ func (c *Client) delete(ctx context.Context, path string) error {
 	return nil
 }
 
-type stringReader struct {
-	s string
-	i int
-}
-
-func (r *stringReader) Read(p []byte) (n int, err error) {
-	if r.i >= len(r.s) {
-		return 0, io.EOF
-	}
-	n = copy(p, r.s[r.i:])
-	r.i += n
-	return n, nil
-}
-
-func jsonReader(s string) io.Reader {
-	return &stringReader{s: s}
-}

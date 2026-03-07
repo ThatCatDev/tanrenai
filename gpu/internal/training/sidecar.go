@@ -43,7 +43,7 @@ func NewSidecarRunner(ctx context.Context, cfg SidecarConfig) (*SidecarRunner, e
 	cmd.Dir = cfg.SidecarDir
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
-	cmd.Env = append(os.Environ())
+	cmd.Env = os.Environ()
 
 	r := &SidecarRunner{
 		cmd:     cmd,

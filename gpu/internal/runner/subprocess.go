@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -164,7 +164,7 @@ func (s *Subprocess) Start(ctx context.Context) error {
 		s.pipeOutput()
 	}
 
-	log.Printf("[%s] starting: %s (port %d)", s.label, s.binPath, s.port)
+	slog.Info("subprocess starting", "label", s.label, "bin", s.binPath, "port", s.port)
 
 	if err := s.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start %s: %w", s.label, err)
@@ -185,7 +185,7 @@ func (s *Subprocess) Start(ctx context.Context) error {
 	s.healthy = true
 	s.mu.Unlock()
 
-	log.Printf("[%s] ready on port %d", s.label, s.port)
+	slog.Info("subprocess ready", "label", s.label, "port", s.port)
 	return nil
 }
 
@@ -216,7 +216,7 @@ func (s *Subprocess) GracefulStop() error {
 	}
 
 	pid := s.cmd.Process.Pid
-	log.Printf("[%s] sending SIGTERM to PID %d", s.label, pid)
+	slog.Info("subprocess sending SIGTERM", "label", s.label, "pid", pid)
 
 	// Send SIGTERM (SIGINT on Windows for graceful shutdown).
 	var sigErr error
@@ -228,17 +228,17 @@ func (s *Subprocess) GracefulStop() error {
 
 	if sigErr != nil {
 		// Process may already be dead.
-		log.Printf("[%s] signal failed (process may have exited): %v", s.label, sigErr)
+		slog.Warn("subprocess signal failed, process may have exited", "label", s.label, "error", sigErr)
 		return nil
 	}
 
 	// Wait up to 5 seconds for clean exit.
 	select {
 	case <-s.doneCh:
-		log.Printf("[%s] process exited cleanly", s.label)
+		slog.Info("subprocess exited cleanly", "label", s.label)
 		return nil
 	case <-time.After(5 * time.Second):
-		log.Printf("[%s] process did not exit after SIGTERM, sending SIGKILL to PID %d", s.label, pid)
+		slog.Warn("subprocess did not exit after SIGTERM, sending SIGKILL", "label", s.label, "pid", pid)
 		if err := s.cmd.Process.Kill(); err != nil {
 			return fmt.Errorf("failed to kill %s: %w", s.label, err)
 		}
@@ -272,7 +272,7 @@ func (s *Subprocess) waitForHealth(ctx context.Context) error {
 		case <-s.doneCh:
 			return fmt.Errorf("%s process exited during startup (exit code %d)", s.label, s.ExitCode())
 		case <-progressTicker.C:
-			log.Printf("[%s] still loading model... (%.0fs elapsed)", s.label, time.Since(start).Seconds())
+			slog.Info("subprocess still loading model", "label", s.label, "elapsed_s", int(time.Since(start).Seconds()))
 		case <-ticker.C:
 			if time.Now().After(deadline) {
 				return fmt.Errorf("timeout waiting for %s to become ready after %s", s.label, s.healthTimeout)
@@ -319,6 +319,6 @@ func (s *Subprocess) scanLines(r io.Reader, prefix string) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)
 	for scanner.Scan() {
-		log.Printf("%s%s", prefix, scanner.Text())
+		slog.Debug("subprocess output", "label", s.label, "line", scanner.Text())
 	}
 }

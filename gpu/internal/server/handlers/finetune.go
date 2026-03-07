@@ -15,6 +15,8 @@ type FinetuneHandler struct {
 
 // Prepare handles POST /v1/finetune/prepare.
 func (h *FinetuneHandler) Prepare(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	var req struct {
 		BaseModel   string              `json:"base_model"`
 		DatasetPath string              `json:"dataset_path"`
@@ -53,6 +55,8 @@ func (h *FinetuneHandler) Prepare(w http.ResponseWriter, r *http.Request) {
 
 // Train handles POST /v1/finetune/train.
 func (h *FinetuneHandler) Train(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	var req struct {
 		RunID string `json:"run_id"`
 	}
@@ -96,6 +100,8 @@ func (h *FinetuneHandler) Status(w http.ResponseWriter, r *http.Request) {
 
 // Merge handles POST /v1/finetune/merge.
 func (h *FinetuneHandler) Merge(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	var req struct {
 		RunID      string `json:"run_id"`
 		OutputName string `json:"output_name,omitempty"`

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -14,6 +15,7 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() error {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	return rootCmd.Execute()
 }
 

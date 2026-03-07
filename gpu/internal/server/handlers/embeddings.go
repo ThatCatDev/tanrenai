@@ -17,6 +17,8 @@ type EmbeddingsHandler struct {
 }
 
 func (h *EmbeddingsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	if h.EmbeddingBaseURL == "" {
 		writeError(w, http.StatusServiceUnavailable, "no_embedding", "embedding server not configured")
 		return
@@ -40,7 +42,14 @@ func (h *EmbeddingsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Post(h.EmbeddingBaseURL+"/v1/embeddings", "application/json", bytes.NewReader(body))
+	proxyReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.EmbeddingBaseURL+"/v1/embeddings", bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", fmt.Sprintf("failed to create request: %v", err))
+		return
+	}
+	proxyReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(proxyReq)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "embedding_error", fmt.Sprintf("embedding server error: %v", err))
 		return

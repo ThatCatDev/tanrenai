@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -56,9 +56,8 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	log.Printf("Tanrenai GPU server listening on %s", s.http.Addr)
-	log.Printf("Models dir: %s", s.cfg.ModelsDir)
-	log.Printf("Bin dir: %s", s.cfg.BinDir)
+	slog.Info("Tanrenai GPU server listening", "addr", s.http.Addr)
+	slog.Info("directories configured", "models_dir", s.cfg.ModelsDir, "bin_dir", s.cfg.BinDir)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -67,11 +66,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		log.Println("Shutting down GPU server...")
+		slog.Info("shutting down GPU server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := s.http.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Server shutdown error: %v", err)
+			slog.Error("server shutdown error", "error", err)
 		}
 		if s.runner != nil {
 			s.runner.Close()
@@ -127,7 +126,7 @@ func (s *Server) StartEmbeddingSubprocess(ctx context.Context, modelName string)
 		return nil, err
 	}
 
-	log.Printf("Embedding server ready on %s (model: %s)", sub.BaseURL(), modelName)
+	slog.Info("embedding server ready", "url", sub.BaseURL(), "model", modelName)
 	return &EmbeddingSubprocess{Sub: sub, BaseURL: sub.BaseURL()}, nil
 }
 
@@ -162,11 +161,11 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) error {
 	// Auto-detect chat template from GGUF metadata when no explicit template is set.
 	if opts.ChatTemplateFile == "" && !s.cfg.NoAutoTemplate {
 		if res, err := runner.ResolveTemplate(modelPath); err != nil {
-			log.Printf("template auto-detection: %v", err)
+			slog.Warn("template auto-detection failed", "error", err)
 		} else if res != nil {
 			opts.ChatTemplateFile = res.TemplatePath
 			s.templateCleanup = res.Cleanup
-			log.Printf("Auto-detected chat template: %s", res.Source)
+			slog.Info("auto-detected chat template", "source", res.Source)
 		}
 	}
 

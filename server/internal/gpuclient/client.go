@@ -8,21 +8,24 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"time"
 
 	"github.com/ThatCatDev/tanrenai/server/pkg/api"
 )
 
 // Client is a typed HTTP client for communicating with the GPU server.
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL      string
+	httpClient   *http.Client // non-streaming requests (has timeout)
+	streamClient *http.Client // streaming requests (no timeout)
 }
 
 // New creates a new GPU Client.
 func New(baseURL string) *Client {
 	return &Client{
-		baseURL:    baseURL,
-		httpClient: &http.Client{},
+		baseURL:      baseURL,
+		httpClient:   &http.Client{Timeout: 5 * time.Minute},
+		streamClient: &http.Client{},
 	}
 }
 
@@ -77,7 +80,7 @@ func (c *Client) StreamCompletionRaw(ctx context.Context, req *api.ChatCompletio
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
 	}
@@ -185,7 +188,7 @@ func (c *Client) PullModelStream(ctx context.Context, url string) (io.ReadCloser
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +201,22 @@ func (c *Client) PullModelStream(ctx context.Context, url string) (io.ReadCloser
 	}
 
 	return resp.Body, nil
+}
+
+// RawRequest sends an arbitrary HTTP request to the GPU server and returns the
+// raw response. The caller is responsible for closing the response body.
+func (c *Client) RawRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	return resp, nil
 }
 
 // Health checks if the GPU server is healthy.

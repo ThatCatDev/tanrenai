@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -92,7 +92,7 @@ func (r *ProcessRunner) startSubprocess(ctx context.Context) error {
 	// Update opts.Port so restarts reuse the same allocated port.
 	r.opts.Port = sub.Port()
 
-	log.Printf("llama-server ready on port %d with model %s", sub.Port(), r.modelName)
+	slog.Info("llama-server ready", "port", sub.Port(), "model", r.modelName)
 	return nil
 }
 
@@ -142,7 +142,7 @@ func (r *ProcessRunner) monitorCrashes() {
 			}
 
 			exitCode := r.sub.ExitCode()
-			log.Printf("[llama-server] process crashed (exit code %d)", exitCode)
+			slog.Error("llama-server process crashed", "exit_code", exitCode)
 
 			r.mu.Lock()
 			r.restarts++
@@ -158,20 +158,20 @@ func (r *ProcessRunner) monitorCrashes() {
 			}
 
 			if attempt > maxRestartAttempts {
-				log.Printf("[llama-server] max restart attempts (%d) reached, giving up", maxRestartAttempts)
+				slog.Error("llama-server max restart attempts reached, giving up", "max_attempts", maxRestartAttempts)
 				return
 			}
 
-			log.Printf("[llama-server] restarting (attempt %d/%d)...", attempt, maxRestartAttempts)
+			slog.Info("llama-server restarting", "attempt", attempt, "max_attempts", maxRestartAttempts)
 			// Use a timeout context for restart health check.
 			restartCtx, cancel := context.WithTimeout(context.Background(), r.sub.healthTimeout)
 			if err := r.startSubprocess(restartCtx); err != nil {
-				log.Printf("[llama-server] restart failed: %v", err)
+				slog.Error("llama-server restart failed", "error", err)
 				cancel()
 				return
 			}
 			cancel()
-			log.Printf("[llama-server] restart successful")
+			slog.Info("llama-server restart successful")
 		}
 	}
 }

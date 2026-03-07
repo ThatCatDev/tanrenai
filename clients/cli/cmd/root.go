@@ -13,6 +13,14 @@ var rootCmd = &cobra.Command{
 	Use:   "tanrenai",
 	Short: "Tanrenai — AI assistant client",
 	Long:  "Tanrenai (鍛錬AI) client — connects to the tanrenai backend for LLM inference, memory, and tool use.",
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Environment variable fallback: flag wins if explicitly set
+		if !cmd.Flags().Changed("server-url") {
+			if v := os.Getenv("TANRENAI_SERVER_URL"); v != "" {
+				serverURL = v
+			}
+		}
+	},
 }
 
 func Execute() error {

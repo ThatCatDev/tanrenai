@@ -13,6 +13,8 @@ type TokenizeHandler struct {
 }
 
 func (h *TokenizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	rn := h.GetRunner()
 	if rn == nil {
 		writeError(w, http.StatusServiceUnavailable, "no_model", "no model loaded")

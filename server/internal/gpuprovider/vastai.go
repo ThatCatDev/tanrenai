@@ -3,7 +3,7 @@ package gpuprovider
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -60,6 +60,11 @@ func (p *VastAIProvider) EnsureRunning(ctx context.Context) error {
 	}
 
 	p.mu.Lock()
+	// Re-check after acquiring lock: another goroutine may have started while we were health-checking.
+	if p.starting {
+		p.mu.Unlock()
+		return p.waitForHealthy(ctx)
+	}
 	p.starting = true
 	p.mu.Unlock()
 	defer func() {
@@ -68,7 +73,7 @@ func (p *VastAIProvider) EnsureRunning(ctx context.Context) error {
 		p.mu.Unlock()
 	}()
 
-	log.Printf("Starting vast.ai instance %s...", p.instanceID)
+	slog.Info("starting vast.ai instance", "instance_id", p.instanceID)
 	if err := p.client.StartInstance(ctx, p.instanceID); err != nil {
 		return fmt.Errorf("start instance: %w", err)
 	}
@@ -90,7 +95,7 @@ func (p *VastAIProvider) waitForHealthy(ctx context.Context) error {
 			return fmt.Errorf("timeout waiting for GPU server to become healthy")
 		case <-ticker.C:
 			if err := p.gpuClient.Health(ctx); err == nil {
-				log.Printf("GPU server is healthy")
+				slog.Info("GPU server is healthy")
 				return nil
 			}
 		}
@@ -130,7 +135,7 @@ func (p *VastAIProvider) Stop(ctx context.Context) error {
 	if p.client == nil || p.instanceID == "" {
 		return fmt.Errorf("vast.ai not configured")
 	}
-	log.Printf("Stopping vast.ai instance %s...", p.instanceID)
+	slog.Info("stopping vast.ai instance", "instance_id", p.instanceID)
 	return p.client.StopInstance(ctx, p.instanceID)
 }
 
@@ -162,10 +167,10 @@ func (p *VastAIProvider) StartIdleTimer() {
 				p.mu.Unlock()
 
 				if idle >= p.idleTimeout {
-					log.Printf("Instance idle for %v, stopping...", idle.Round(time.Second))
+					slog.Info("instance idle, stopping", "idle_duration", idle.Round(time.Second))
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					if err := p.Stop(ctx); err != nil {
-						log.Printf("Failed to stop idle instance: %v", err)
+						slog.Error("failed to stop idle instance", "error", err)
 					}
 					cancel()
 					return
