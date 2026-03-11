@@ -59,17 +59,30 @@ func allocatePort() (int, error) {
 	return port, nil
 }
 
-// resolveBinary returns the full path to llama-server in binDir.
+// resolveBinary finds llama-server by checking multiple locations:
+//  1. The configured binDir (e.g. ~/.local/share/tanrenai/bin/)
+//  2. A bin/ subdirectory next to the running executable (bundled releases)
 func resolveBinary(binDir string) (string, error) {
 	binName := "llama-server"
 	if runtime.GOOS == "windows" {
 		binName = "llama-server.exe"
 	}
+
+	// Check configured binDir first.
 	binPath := filepath.Join(binDir, binName)
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("llama-server not found at %s — download it with 'tanrenai setup'", binPath)
+	if _, err := os.Stat(binPath); err == nil {
+		return binPath, nil
 	}
-	return binPath, nil
+
+	// Check bin/ next to the running executable (bundled release layout).
+	if exe, err := os.Executable(); err == nil {
+		bundled := filepath.Join(filepath.Dir(exe), "bin", binName)
+		if _, err := os.Stat(bundled); err == nil {
+			return bundled, nil
+		}
+	}
+
+	return "", fmt.Errorf("llama-server not found at %s — place it in the bin/ directory next to the tanrenai executable, or in %s", binPath, binDir)
 }
 
 // NewSubprocess creates a Subprocess but does not start it. Call Start() next.
@@ -97,7 +110,14 @@ func NewSubprocess(cfg SubprocessConfig) (*Subprocess, error) {
 		healthTimeout = 120 * time.Second
 	}
 
-	env := append(os.Environ(), "LD_LIBRARY_PATH="+cfg.BinDir)
+	// Set library path so CUDA/other shared libs next to llama-server are found.
+	binDir := filepath.Dir(binPath)
+	env := os.Environ()
+	if runtime.GOOS == "windows" {
+		env = append(env, "PATH="+binDir+";"+os.Getenv("PATH"))
+	} else {
+		env = append(env, "LD_LIBRARY_PATH="+binDir+":"+os.Getenv("LD_LIBRARY_PATH"))
+	}
 
 	return &Subprocess{
 		binPath:       binPath,
