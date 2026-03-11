@@ -179,25 +179,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install NSIS
+        shell: powershell
+        run: choco install nsis -y
+
       - name: Download CLI build
         uses: actions/download-artifact@v4
         with:
           name: cli-windows-build
           path: staging/
 
-      - name: Build NSIS installer
+      - name: Prepare NSIS scripts
         shell: bash
         run: |
-          # Copy NSIS scripts and icon into staging
           cp installers/cli.nsi staging/
           cp installers/EnvVarUpdate.nsh staging/
           cp resources/logo.ico staging/
 
       - name: Run NSIS
-        uses: joncloud/makensis-action@v4
-        with:
-          script-file: staging/cli.nsi
-          arguments: "-DVERSION=v${{ env.VERSION }}"
+        shell: powershell
+        run: |
+          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          makensis /DVERSION="v${{ env.VERSION }}" staging\cli.nsi
 
       - name: Upload installer to release
         shell: bash
@@ -383,6 +386,7 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-gtk4
             mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-gobject-introspection
             mingw-w64-ucrt-x86_64-go
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-pkg-config
@@ -466,21 +470,24 @@ jobs:
           mv bundle "${NAME}"
           zip -r "${NAME}.zip" "${NAME}"
 
+      - name: Install NSIS
+        shell: powershell
+        run: choco install nsis -y
+
       - name: Build NSIS installer
         shell: bash
         run: |
           cd clients/desktop
           NAME="tanrenai-desktop-windows-amd64"
-          # Copy NSIS scripts and icon into the bundle directory
           cp ../../installers/desktop.nsi "${NAME}/"
           cp ../../installers/EnvVarUpdate.nsh "${NAME}/"
           cp ../../resources/logo.ico "${NAME}/"
 
       - name: Run NSIS
-        uses: joncloud/makensis-action@v4
-        with:
-          script-file: clients/desktop/tanrenai-desktop-windows-amd64/desktop.nsi
-          arguments: "-DVERSION=v${{ env.VERSION }}"
+        shell: powershell
+        run: |
+          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          makensis /DVERSION="v${{ env.VERSION }}" clients\desktop\tanrenai-desktop-windows-amd64\desktop.nsi
 
       - name: Upload to release
         shell: bash
