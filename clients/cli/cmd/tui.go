@@ -53,8 +53,9 @@ type iterRecord struct {
 // tuiApp is the single mutable state struct for the tview-based TUI.
 type tuiApp struct {
 	app      *tview.Application
-	rootFlex *tview.Flex // vertical: chatArea + hDiv + inputFlex + hDiv
-	chatArea *tview.Flex // horizontal: chatView [+ vDiv + filePanel]
+	pages    *tview.Pages // root container: "main" page + modal overlays
+	rootFlex *tview.Flex  // vertical: chatArea + hDiv + inputFlex + hDiv
+	chatArea *tview.Flex  // horizontal: chatView [+ vDiv + filePanel]
 	chatView *tview.TextView
 
 	// File viewer widgets (created on demand)
@@ -98,6 +99,7 @@ type tuiApp struct {
 	modelName     string
 	mgr           *chatctx.Manager
 	registry      *tools.Registry
+	permissions   *tools.Permissions
 	memoryEnabled bool
 	maxIterations int
 	agentMode     bool
@@ -111,6 +113,7 @@ func newTuiApp(modelName string) *tuiApp {
 		toolCallLines: make(map[int]api.ToolCall),
 		focus:         focusChat,
 		modelName:     modelName,
+		permissions:   tools.LoadPermissions(),
 	}
 
 	t.app = tview.NewApplication()
@@ -183,6 +186,9 @@ func newTuiApp(modelName string) *tuiApp {
 	t.rootFlex.AddItem(t.inputField, 1, 0, true)
 	t.rootFlex.AddItem(newHDivider(), 1, 0, false)
 
+	t.pages = tview.NewPages()
+	t.pages.AddPage("main", t.rootFlex, true, true)
+
 	t.setupInputCapture()
 	t.setupMouseCapture()
 
@@ -220,7 +226,7 @@ func newVDivider(focused bool) *tview.Box {
 }
 
 func (t *tuiApp) run() error {
-	err := t.app.SetRoot(t.rootFlex, true).EnableMouse(true).Run()
+	err := t.app.SetRoot(t.pages, true).EnableMouse(true).Run()
 	if t.cleanupFn != nil {
 		t.cleanupFn()
 	}
@@ -270,7 +276,7 @@ func (t *tuiApp) refreshChatView() {
 		for i, line := range t.lines {
 			if full, ok := t.toolResults[i]; ok {
 				for _, fline := range strings.Split(strings.TrimRight(full, "\n"), "\n") {
-					built = append(built, "[gray::-]      "+tview.Escape(fline)+"[-:-:-]")
+					built = append(built, colorizeDiffLine(fline))
 				}
 			} else {
 				built = append(built, line)
@@ -280,6 +286,26 @@ func (t *tuiApp) refreshChatView() {
 	}
 	t.chatView.SetText(content)
 	t.chatView.ScrollToEnd()
+}
+
+// colorizeDiffLine applies tview color tags to a single line of unified diff output.
+// Uses background highlights similar to IDE diff views.
+func colorizeDiffLine(line string) string {
+	escaped := tview.Escape(line)
+	prefix := "      "
+	if len(line) == 0 {
+		return "[gray::-]" + prefix + "[-:-:-]"
+	}
+	switch line[0] {
+	case '+':
+		return "[green:#1a3a1a:-]" + prefix + escaped + "[-:-:-]"
+	case '-':
+		return "[red:#3a1a1a:-]" + prefix + escaped + "[-:-:-]"
+	case '@':
+		return "[#6688cc::-]" + prefix + escaped + "[-:-:-]"
+	default:
+		return "[gray::-]" + prefix + escaped + "[-:-:-]"
+	}
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────

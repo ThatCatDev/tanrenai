@@ -12,6 +12,7 @@ import (
 	"github.com/ThatCatDev/tanrenai/client/internal/agent"
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/tools"
 )
 
 // ── Chat Turn (non-agent, streaming) ────────────────────────────────────
@@ -210,21 +211,50 @@ func (t *tuiApp) startAgentTurn(input string) {
 						t.refreshChatView()
 					})
 				},
-				OnToolResult: func(call api.ToolCall, result string) {
+				OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
 					t.app.QueueUpdateDraw(func() {
-						preview := strings.TrimSpace(result)
-						preview = strings.Join(strings.Fields(preview), " ")
-						if len(preview) > 120 {
-							preview = preview[:120] + "..."
+						if result.Diff != "" {
+							// Show colored inline diff with background highlights
+							for _, line := range strings.Split(strings.TrimRight(result.Diff, "\n"), "\n") {
+								if len(line) == 0 {
+									continue
+								}
+								escaped := tview.Escape(line)
+								switch line[0] {
+								case '+':
+									if strings.HasPrefix(line, "+++") {
+										continue
+									}
+									t.addLine("[green:#1a3a1a:-]      " + escaped + "[-:-:-]")
+								case '-':
+									if strings.HasPrefix(line, "---") {
+										continue
+									}
+									t.addLine("[red:#3a1a1a:-]      " + escaped + "[-:-:-]")
+								case '@':
+									t.addLine("[#6688cc::-]      " + escaped + "[-:-:-]")
+								default:
+									t.addLine("[gray::-]      " + escaped + "[-:-:-]")
+								}
+							}
+						} else {
+							preview := strings.TrimSpace(result.Output)
+							preview = strings.Join(strings.Fields(preview), " ")
+							if len(preview) > 120 {
+								preview = preview[:120] + "..."
+							}
+							idx := len(t.lines)
+							t.addLine("[gray::-]      " + tview.Escape(preview) + "[-:-:-]")
+							t.toolResults[idx] = result.Output
 						}
-						idx := len(t.lines)
-						t.addLine("[gray::-]      " + tview.Escape(preview) + "[-:-:-]")
-						t.toolResults[idx] = result
 						t.refreshChatView()
 					})
 				},
 				OnAssistantMessage: func(content string) {
 					// Content already flushed via OnContentDelta; ignore.
+				},
+				OnToolApproval: func(call api.ToolCall) agent.ApprovalAction {
+					return t.approveToolCall(call)
 				},
 			},
 		},
@@ -426,4 +456,45 @@ func (t *tuiApp) predictDuration(inputTokens int) time.Duration {
 		predicted = 0
 	}
 	return time.Duration(predicted)
+}
+
+// approveToolCall checks permissions and shows a modal if needed.
+// Called from the agent goroutine — blocks until user responds.
+func (t *tuiApp) approveToolCall(call api.ToolCall) agent.ApprovalAction {
+	if t.permissions.IsAllowed(call.Function.Name) {
+		return agent.ApprovalAllow
+	}
+
+	responseCh := make(chan agent.ApprovalAction, 1)
+
+	t.app.QueueUpdateDraw(func() {
+		// Format args for display (truncate if long)
+		args := call.Function.Arguments
+		if len(args) > 200 {
+			args = args[:200] + "..."
+		}
+
+		modal := tview.NewModal().
+			SetText(fmt.Sprintf("Tool: [yellow::b]%s[-:-:-]\n\n%s",
+				call.Function.Name, tview.Escape(args))).
+			AddButtons([]string{"Allow", "Always Allow", "Block"}).
+			SetDoneFunc(func(_ int, label string) {
+				t.pages.RemovePage("approval")
+				t.app.SetFocus(t.inputField)
+				switch label {
+				case "Always Allow":
+					_ = t.permissions.Allow(call.Function.Name)
+					responseCh <- agent.ApprovalAlwaysAllow
+				case "Block":
+					responseCh <- agent.ApprovalBlock
+				default:
+					responseCh <- agent.ApprovalAllow
+				}
+			})
+		modal.SetBackgroundColor(0)
+		t.pages.AddPage("approval", modal, true, true)
+		t.app.SetFocus(modal)
+	})
+
+	return <-responseCh
 }

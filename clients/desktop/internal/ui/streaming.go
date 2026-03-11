@@ -68,9 +68,9 @@ func (a *App) runAgentTurn(ctx context.Context) {
 						a.scrollToBottom()
 					})
 				},
-				OnToolResult: func(call api.ToolCall, result string) {
+				OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
 					glib.IdleAdd(func() {
-						w := toolResultWidget(call, result)
+						w := toolResultWidget(call, result.Output)
 						a.messageList.Append(w)
 						a.scrollToBottom()
 					})

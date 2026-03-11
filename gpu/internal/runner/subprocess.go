@@ -176,6 +176,7 @@ func (s *Subprocess) Start(ctx context.Context) error {
 
 	s.cmd = exec.Command(s.binPath, args...)
 	s.cmd.Env = s.env
+	setSysProcAttr(s.cmd)
 
 	if s.quiet {
 		s.cmd.Stdout = io.Discard

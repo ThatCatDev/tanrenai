@@ -95,8 +95,8 @@ func (t *tuiApp) displayLineToLogicalLine(displayLine int) int {
 		if t.expanded && len(t.toolResults) > 0 {
 			if full, ok := t.toolResults[i]; ok {
 				for _, fline := range strings.Split(strings.TrimRight(full, "\n"), "\n") {
-					escaped := "[gray::-]      " + tview.Escape(fline) + "[-:-:-]"
-					rows := wrappedLineRows(escaped, cw)
+					colored := colorizeDiffLine(fline)
+					rows := wrappedLineRows(colored, cw)
 					if displayLine < cur+rows {
 						return i
 					}

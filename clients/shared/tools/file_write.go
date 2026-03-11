@@ -47,9 +47,19 @@ func (t *FileWriteTool) Execute(_ context.Context, arguments string) (*ToolResul
 		return ErrorResult(fmt.Sprintf("failed to create directories: %v", err)), nil
 	}
 
+	// Read existing content for diff (if file exists)
+	var oldContent string
+	if existing, err := os.ReadFile(args.Path); err == nil {
+		oldContent = string(existing)
+	}
+
 	if err := os.WriteFile(args.Path, []byte(args.Content), 0644); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to write file: %v", err)), nil
 	}
 
-	return &ToolResult{Output: fmt.Sprintf("Successfully wrote %d bytes to %s", len(args.Content), args.Path)}, nil
+	diff := GenerateUnifiedDiff(args.Path, oldContent, args.Content)
+	return &ToolResult{
+		Output: fmt.Sprintf("Successfully wrote %d bytes to %s", len(args.Content), args.Path),
+		Diff:   diff,
+	}, nil
 }

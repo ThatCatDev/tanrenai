@@ -17,6 +17,11 @@ import (
 
 func (t *tuiApp) setupInputCapture() {
 	t.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// When a modal is showing, let tview handle all input (arrow keys, enter, etc.)
+		if name, _ := t.pages.GetFrontPage(); name == "approval" {
+			return event
+		}
+
 		if event.Key() != tcell.KeyCtrlC {
 			t.ctrlCPending = false
 		}

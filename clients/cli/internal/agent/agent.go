@@ -14,11 +14,23 @@ import (
 // CompletionFunc sends a chat completion request and returns the response.
 type CompletionFunc func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error)
 
+// ApprovalAction is the user's response to a tool approval prompt.
+type ApprovalAction int
+
+const (
+	ApprovalAllow       ApprovalAction = iota // allow this one call
+	ApprovalBlock                             // block this one call
+	ApprovalAlwaysAllow                       // allow and remember
+)
+
 // Hooks are optional callbacks invoked during the agent loop for observability.
 type Hooks struct {
 	OnAssistantMessage func(content string)
 	OnToolCall         func(call api.ToolCall)
-	OnToolResult       func(call api.ToolCall, result string)
+	OnToolResult       func(call api.ToolCall, result *tools.ToolResult)
+	// OnToolApproval is called before executing a tool. It blocks until the
+	// user responds. If nil, all tools are auto-approved.
+	OnToolApproval func(call api.ToolCall) ApprovalAction
 }
 
 // Config configures the agent loop.
@@ -120,6 +132,24 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 				cfg.Hooks.OnToolCall(tc)
 			}
 
+			// Check tool approval before executing.
+			if cfg.Hooks.OnToolApproval != nil {
+				action := cfg.Hooks.OnToolApproval(tc)
+				if action == ApprovalBlock {
+					blocked := tools.ErrorResult("Tool call blocked by user.")
+					if cfg.Hooks.OnToolResult != nil {
+						cfg.Hooks.OnToolResult(tc, blocked)
+					}
+					messages = append(messages, api.Message{
+						Role:       "tool",
+						Content:    blocked.Output,
+						ToolCallID: tc.ID,
+						Name:       tc.Function.Name,
+					})
+					continue
+				}
+			}
+
 			tool := cfg.Tools.Get(tc.Function.Name)
 			var result *tools.ToolResult
 			if tool == nil {
@@ -144,7 +174,7 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 			}
 
 			if cfg.Hooks.OnToolResult != nil {
-				cfg.Hooks.OnToolResult(tc, result.Output)
+				cfg.Hooks.OnToolResult(tc, result)
 			}
 
 			messages = append(messages, api.Message{
@@ -262,6 +292,24 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 				cfg.Hooks.OnToolCall(tc)
 			}
 
+			// Check tool approval before executing.
+			if cfg.Hooks.OnToolApproval != nil {
+				action := cfg.Hooks.OnToolApproval(tc)
+				if action == ApprovalBlock {
+					blocked := tools.ErrorResult("Tool call blocked by user.")
+					if cfg.Hooks.OnToolResult != nil {
+						cfg.Hooks.OnToolResult(tc, blocked)
+					}
+					messages = append(messages, api.Message{
+						Role:       "tool",
+						Content:    blocked.Output,
+						ToolCallID: tc.ID,
+						Name:       tc.Function.Name,
+					})
+					continue
+				}
+			}
+
 			tool := cfg.Tools.Get(tc.Function.Name)
 			var result *tools.ToolResult
 			if tool == nil {
@@ -286,7 +334,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			}
 
 			if cfg.Hooks.OnToolResult != nil {
-				cfg.Hooks.OnToolResult(tc, result.Output)
+				cfg.Hooks.OnToolResult(tc, result)
 			}
 
 			messages = append(messages, api.Message{

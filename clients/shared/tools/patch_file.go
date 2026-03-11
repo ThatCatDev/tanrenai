@@ -71,11 +71,15 @@ func (t *PatchFileTool) Execute(_ context.Context, arguments string) (*ToolResul
 
 	case 1:
 		newContent := strings.Replace(fileStr, args.OldString, args.NewString, 1)
+		diff := GenerateUnifiedDiff(args.Path, fileStr, newContent)
 		if err := os.WriteFile(args.Path, []byte(newContent), 0644); err != nil {
 			return ErrorResult(fmt.Sprintf("failed to write file: %v", err)), nil
 		}
-		return &ToolResult{Output: fmt.Sprintf("Replaced %d characters with %d characters in %s",
-			len(args.OldString), len(args.NewString), args.Path)}, nil
+		return &ToolResult{
+			Output: fmt.Sprintf("Replaced %d characters with %d characters in %s",
+				len(args.OldString), len(args.NewString), args.Path),
+			Diff: diff,
+		}, nil
 
 	default:
 		return ErrorResult(fmt.Sprintf("old_string matches %d locations in %s. Include more surrounding context in old_string to make it unique.", count, args.Path)), nil

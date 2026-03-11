@@ -106,6 +106,16 @@ In agent mode, the model can use tools to interact with your filesystem and syst
 tanrenai --local run Qwen3-8B-Q4_K_M --agent
 ```
 
+### Tool Permissions
+
+When the agent invokes a tool, you'll be prompted to approve it:
+
+- **Allow** — run this once
+- **Always Allow** — run and remember (saved to `.tanrenai/permissions.json`)
+- **Block** — skip the call
+
+Use arrow keys or mouse to select, Enter to confirm. Permissions are loaded from both `~/.tanrenai/permissions.json` (global) and `.tanrenai/permissions.json` (project-local, takes priority).
+
 ## Memory / RAG
 
 Enable persistent memory so the model remembers across conversations:
@@ -187,23 +197,21 @@ Three independent Go modules communicating via JSON over HTTP. In `--local` mode
 ## Building from Source
 
 ```bash
-# CLI
-cd clients/cli/ && go build -o tanrenai .
+# Build and install CLI to ~/.local/bin/
+make install
+
+# Or build individual components
+make build          # CLI only
+make build-all      # CLI + GPU server + backend
 
 # Desktop (requires GTK4 dev libraries)
 cd clients/desktop/ && go build -o tanrenai-desktop .
-
-# GPU server and backend (for three-tier setup)
-cd gpu/    && go build -o tanrenai-gpu .
-cd server/ && go build -o tanrenai-server .
 ```
 
 ## Testing
 
 ```bash
-cd gpu/           && go test ./...
-cd server/        && go test ./...
-cd clients/cli/   && go test ./...
+make test
 ```
 
 ## License

@@ -16,6 +16,7 @@ require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/philippgille/chromem-go v0.7.0 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20231121144256-b99613f794b6 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect

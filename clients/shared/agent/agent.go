@@ -13,11 +13,23 @@ import (
 // CompletionFunc sends a chat completion request and returns the response.
 type CompletionFunc func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error)
 
+// ApprovalAction is the user's response to a tool approval prompt.
+type ApprovalAction int
+
+const (
+	ApprovalAllow       ApprovalAction = iota // allow this one call
+	ApprovalBlock                             // block this one call
+	ApprovalAlwaysAllow                       // allow and remember
+)
+
 // Hooks are optional callbacks invoked during the agent loop for observability.
 type Hooks struct {
 	OnAssistantMessage func(content string)
 	OnToolCall         func(call api.ToolCall)
-	OnToolResult       func(call api.ToolCall, result string)
+	OnToolResult       func(call api.ToolCall, result *tools.ToolResult)
+	// OnToolApproval is called before executing a tool. It blocks until the
+	// user responds. If nil, all tools are auto-approved.
+	OnToolApproval func(call api.ToolCall) ApprovalAction
 }
 
 // Config configures the agent loop.
@@ -60,6 +72,24 @@ func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *t
 			hooks.OnToolCall(tc)
 		}
 
+		// Check tool approval before executing.
+		if hooks.OnToolApproval != nil {
+			action := hooks.OnToolApproval(tc)
+			if action == ApprovalBlock {
+				result := tools.ErrorResult("Tool call blocked by user.")
+				msgs = append(msgs, api.Message{
+					Role:       "tool",
+					Content:    result.Output,
+					ToolCallID: tc.ID,
+					Name:       tc.Function.Name,
+				})
+				if hooks.OnToolResult != nil {
+					hooks.OnToolResult(tc, result)
+				}
+				continue
+			}
+		}
+
 		tool := registry.Get(tc.Function.Name)
 		var result *tools.ToolResult
 		if tool == nil {
@@ -84,7 +114,7 @@ func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *t
 		}
 
 		if hooks.OnToolResult != nil {
-			hooks.OnToolResult(tc, result.Output)
+			hooks.OnToolResult(tc, result)
 		}
 
 		msgs = append(msgs, api.Message{

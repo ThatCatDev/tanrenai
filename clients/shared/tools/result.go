@@ -7,6 +7,7 @@ package tools
 type ToolResult struct {
 	Output  string
 	IsError bool
+	Diff    string // unified diff for file-editing tools (UI-only, not sent to LLM)
 }
 
 // ErrorResult creates a ToolResult representing a tool-level error.
