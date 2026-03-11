@@ -8,9 +8,63 @@
 
 ## Install
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/ThatCatDev/tanrenai/releases).
+Each release bundles `llama-server` (the inference engine) — no extra downloads needed.
 
-Each release includes `llama-server` (the inference engine) bundled in the `bin/` directory — no extra downloads needed.
+### Linux
+
+**One-line install** (recommended):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ThatCatDev/tanrenai/main/installers/install.sh | sh
+```
+
+This downloads the latest release and installs to `~/.local/bin/`.
+
+**Debian/Ubuntu (.deb)**:
+
+```bash
+# Download the .deb from the latest release
+curl -fsSLO https://github.com/ThatCatDev/tanrenai/releases/latest/download/tanrenai-<version>-amd64.deb
+sudo dpkg -i tanrenai-*-amd64.deb
+```
+
+**Manual**:
+
+```bash
+tar xzf tanrenai-cli-linux-amd64.tar.gz
+cd tanrenai-cli-linux-amd64
+chmod +x tanrenai-cli bin/llama-server
+sudo cp tanrenai-cli /usr/local/bin/tanrenai
+sudo mkdir -p /usr/local/share/tanrenai/bin
+sudo cp bin/llama-server /usr/local/share/tanrenai/bin/
+```
+
+### macOS
+
+**One-line install** (recommended):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ThatCatDev/tanrenai/main/installers/install.sh | sh
+```
+
+**Manual**:
+
+```bash
+tar xzf tanrenai-cli-darwin-arm64.tar.gz   # or darwin-amd64 for Intel
+cd tanrenai-cli-darwin-arm64
+chmod +x tanrenai-cli bin/llama-server
+cp tanrenai-cli ~/.local/bin/tanrenai
+mkdir -p ~/.local/share/tanrenai/bin
+cp bin/llama-server ~/.local/share/tanrenai/bin/
+```
+
+### Windows
+
+**Installer (recommended):** Download `tanrenai-cli-windows-amd64-setup.exe` from [Releases](https://github.com/ThatCatDev/tanrenai/releases). Adds `tanrenai` to your PATH and shows up in Add/Remove Programs.
+
+**Manual:** Download `tanrenai-cli-windows-amd64.zip`, extract it, and run from that folder.
+
+### All platforms
 
 | Platform | File | GPU Support |
 |----------|------|-------------|
@@ -18,23 +72,6 @@ Each release includes `llama-server` (the inference engine) bundled in the `bin/
 | macOS Intel | `tanrenai-cli-darwin-amd64.tar.gz` | - |
 | macOS Apple Silicon | `tanrenai-cli-darwin-arm64.tar.gz` | Metal |
 | Windows x64 | `tanrenai-cli-windows-amd64.zip` | NVIDIA CUDA 12.4 |
-
-### Linux / macOS
-
-```bash
-tar xzf tanrenai-cli-linux-amd64.tar.gz
-cd tanrenai-cli-linux-amd64
-chmod +x tanrenai-cli bin/llama-server
-
-# Run from here, or move the whole folder somewhere on your PATH
-./tanrenai-cli --local list
-```
-
-### Windows
-
-**Installer (recommended):** Download `tanrenai-cli-windows-amd64-setup.exe` from [Releases](https://github.com/ThatCatDev/tanrenai/releases). The installer adds `tanrenai` to your PATH automatically and shows up in Add/Remove Programs.
-
-**Manual:** Download `tanrenai-cli-windows-amd64.zip`, extract it, and run from that folder.
 
 ## Quick Start
 

@@ -209,6 +209,65 @@ jobs:
         run: |
           gh release upload "v${VERSION}" staging/tanrenai-cli-windows-amd64-setup.exe --clobber
 
+  # ─── Build .deb package for Linux ────────────────────────────────
+  build-deb:
+    needs: [release, build-cli]
+    if: needs.release.outputs.new_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download CLI linux-amd64 archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ASSET="tanrenai-cli-linux-amd64.tar.gz"
+          gh release download "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --pattern "${ASSET}" --dir .
+          tar xzf "${ASSET}"
+
+      - name: Build .deb
+        run: |
+          PKG="tanrenai_${VERSION}_amd64"
+          mkdir -p "${PKG}/DEBIAN"
+          mkdir -p "${PKG}/usr/bin"
+          mkdir -p "${PKG}/usr/share/tanrenai/bin"
+
+          # Control file
+          cat > "${PKG}/DEBIAN/control" << EOF
+          Package: tanrenai
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: ThatCatDev <dev@tanrenai.com>
+          Homepage: https://github.com/ThatCatDev/tanrenai
+          Description: Local AI assistant with agentic tool use, context windowing, and memory/RAG
+           Tanrenai (鍛錬AI) is a local AI assistant that runs GGUF models with
+           tool calling, persistent memory, and a built-in inference engine.
+          EOF
+          # Remove leading spaces (heredoc indentation)
+          sed -i 's/^          //' "${PKG}/DEBIAN/control"
+
+          # Copy files
+          cp tanrenai-cli-linux-amd64/tanrenai-cli "${PKG}/usr/bin/tanrenai"
+          chmod 755 "${PKG}/usr/bin/tanrenai"
+
+          if [ -d tanrenai-cli-linux-amd64/bin ] && [ "$(ls -A tanrenai-cli-linux-amd64/bin)" ]; then
+            cp tanrenai-cli-linux-amd64/bin/* "${PKG}/usr/share/tanrenai/bin/"
+            chmod 755 "${PKG}/usr/share/tanrenai/bin/"*
+          fi
+
+          dpkg-deb --build "${PKG}"
+          mv "${PKG}.deb" "tanrenai-${VERSION}-amd64.deb"
+
+      - name: Upload .deb to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${VERSION}" "tanrenai-${VERSION}-amd64.deb" --clobber
+
   # ─── Build Desktop — Linux ───────────────────────────────────────
   build-desktop-linux:
     needs: release
