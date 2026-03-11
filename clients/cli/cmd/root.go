@@ -29,6 +29,9 @@ func Execute() error {
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&serverURL, "server-url", "http://127.0.0.1:8080", "backend server URL")
+	rootCmd.PersistentFlags().Bool("local", false, "start embedded GPU + backend servers (single-binary mode)")
+	rootCmd.PersistentFlags().Int("gpu-layers", -1, "GPU offload layers (-1 = all); only used with --local")
+	rootCmd.PersistentFlags().Bool("flash-attn", true, "enable flash attention; only used with --local")
 }
 
 func exitError(msg string, args ...any) {

@@ -1,47 +1,185 @@
+/* Dark sidebar */
+.chat-sidebar {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+}
+
+.chat-sidebar headerbar {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+}
+
+/* New Chat button */
+.new-chat-button {
+    background-color: #45475a;
+    color: #cdd6f4;
+    border-radius: 8px;
+    padding: 8px 16px;
+    border: 1px solid #585b70;
+}
+
+.new-chat-button:hover {
+    background-color: #585b70;
+}
+
+/* CHATS section label */
+.chats-section-label {
+    font-size: 0.75em;
+    font-weight: bold;
+    color: #6c7086;
+    letter-spacing: 1px;
+}
+
+/* Chat list */
+.chat-list {
+    background-color: transparent;
+}
+
+.chat-list row {
+    color: #bac2de;
+    border-radius: 8px;
+    margin: 1px 8px;
+    padding: 4px 8px;
+}
+
+.chat-list row:hover {
+    background-color: #313244;
+}
+
+.chat-list row:selected {
+    background-color: #45475a;
+    color: #cdd6f4;
+}
+
+/* Settings button */
+.settings-button {
+    color: #a6adc8;
+}
+
+.settings-button:hover {
+    color: #cdd6f4;
+    background-color: #313244;
+}
+
+/* Chat area */
+.chat-area {
+    background-color: #ffffff;
+}
+
+/* Chat header */
+.chat-title-label {
+    font-weight: bold;
+    font-size: 1.05em;
+}
+
+/* Model badge pill */
+.model-badge {
+    background-color: #e2e8f0;
+    color: #475569;
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 0.8em;
+    font-weight: 500;
+}
+
+/* User message bubbles - purple, right-aligned */
 .user-message {
-    background: @accent_bg_color;
-    color: @accent_fg_color;
-    border-radius: 12px;
-    padding: 8px 12px;
-    margin: 4px 8px 4px 48px;
+    background-color: #7c3aed;
+    color: #ffffff;
+    border-radius: 16px 16px 4px 16px;
+    padding: 10px 14px;
+    margin: 4px 16px 4px 80px;
 }
 
+/* Assistant message bubbles - gray, left-aligned */
 .assistant-message {
-    background: @card_bg_color;
-    border-radius: 12px;
-    padding: 8px 12px;
-    margin: 4px 48px 4px 8px;
+    background-color: #f1f5f9;
+    color: #1e293b;
+    border-radius: 16px 16px 16px 4px;
+    padding: 10px 14px;
+    margin: 4px 80px 4px 16px;
 }
 
+/* Tool call pills */
 .tool-call {
-    background: alpha(@card_bg_color, 0.5);
-    border-radius: 6px;
-    padding: 4px 8px;
-    margin: 2px 8px;
-    font-size: 0.9em;
-}
-
-.tool-result {
-    background: alpha(@card_bg_color, 0.3);
-    border-radius: 6px;
-    padding: 4px 8px;
-    margin: 2px 8px;
+    background-color: #e2e8f0;
+    color: #475569;
+    border-radius: 20px;
+    padding: 4px 12px;
+    margin: 2px 80px 2px 16px;
     font-size: 0.85em;
 }
 
-.chat-input {
-    min-height: 40px;
-    border-radius: 8px;
-    padding: 8px;
+.tool-call-icon {
+    color: #7c3aed;
+    font-size: 1.1em;
 }
 
+.tool-call-arg {
+    color: #64748b;
+    font-size: 0.9em;
+}
+
+/* Tool result */
+.tool-result {
+    background-color: #f8fafc;
+    border-radius: 8px;
+    padding: 4px 12px;
+    margin: 2px 80px 2px 16px;
+    font-size: 0.85em;
+    color: #475569;
+}
+
+/* Input container */
+.input-container {
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 24px;
+    padding: 8px 12px;
+}
+
+/* Chat input text view */
+.chat-input {
+    min-height: 36px;
+    background-color: transparent;
+    border: none;
+    padding: 4px 8px;
+    color: #1e293b;
+}
+
+/* Send button - purple circular */
+.send-button {
+    background-color: #7c3aed;
+    color: #ffffff;
+    min-width: 36px;
+    min-height: 36px;
+}
+
+.send-button:hover {
+    background-color: #6d28d9;
+}
+
+/* Stop button - red circular */
+.stop-button {
+    background-color: #dc2626;
+    color: #ffffff;
+    min-width: 36px;
+    min-height: 36px;
+}
+
+.stop-button:hover {
+    background-color: #b91c1c;
+}
+
+/* Message list */
 .message-list {
     padding: 8px;
 }
 
+/* Thinking indicator */
 .thinking-indicator {
-    color: @dim_label_color;
-    padding: 4px 8px;
+    color: #94a3b8;
+    padding: 4px 16px;
     margin: 2px 8px;
     font-style: italic;
 }

@@ -75,10 +75,12 @@ type tuiApp struct {
 	focus                focusTarget
 	autocompleteActive   bool
 	autocompleteMatches  []string
+	loading       bool // true until startup goroutine completes
 	processing    bool
 	ctrlCPending  bool
 	streaming     strings.Builder
 	turnCancel    context.CancelFunc
+	cleanupFn     func() // called on app exit (e.g. stop local servers)
 
 	// Progress tracking
 	iterStartTime    time.Time
@@ -91,7 +93,7 @@ type tuiApp struct {
 	progressTicker   *time.Ticker
 	progressStop     chan struct{}
 
-	// Dependencies (immutable after construction)
+	// Dependencies (set by startup goroutine, then immutable)
 	client        *apiclient.Client
 	modelName     string
 	mgr           *chatctx.Manager
@@ -103,30 +105,12 @@ type tuiApp struct {
 	streamFn      agent.StreamingCompletionFunc
 }
 
-func newTuiApp(
-	client *apiclient.Client,
-	modelName string,
-	mgr *chatctx.Manager,
-	registry *tools.Registry,
-	memoryEnabled bool,
-	maxIterations int,
-	agentMode bool,
-	completeFn agent.CompletionFunc,
-	streamFn agent.StreamingCompletionFunc,
-) *tuiApp {
+func newTuiApp(modelName string) *tuiApp {
 	t := &tuiApp{
 		toolResults:   make(map[int]string),
 		toolCallLines: make(map[int]api.ToolCall),
 		focus:         focusChat,
-		client:        client,
 		modelName:     modelName,
-		mgr:           mgr,
-		registry:      registry,
-		memoryEnabled: memoryEnabled,
-		maxIterations: maxIterations,
-		agentMode:     agentMode,
-		completeFn:    completeFn,
-		streamFn:      streamFn,
 	}
 
 	t.app = tview.NewApplication()
@@ -149,7 +133,9 @@ func newTuiApp(
 	t.inputField = tview.NewInputField().
 		SetLabel("[blue::b] > [-:-:-]").
 		SetLabelWidth(4).
-		SetFieldBackgroundColor(tcell.ColorDefault)
+		SetFieldBackgroundColor(tcell.ColorDefault).
+		SetPlaceholder("Loading...").
+		SetPlaceholderTextColor(tcell.ColorGray)
 	t.inputField.SetBorder(false)
 
 	// Slash command autocomplete
@@ -234,13 +220,25 @@ func newVDivider(focused bool) *tview.Box {
 }
 
 func (t *tuiApp) run() error {
-	return t.app.SetRoot(t.rootFlex, true).EnableMouse(true).Run()
+	err := t.app.SetRoot(t.rootFlex, true).EnableMouse(true).Run()
+	if t.cleanupFn != nil {
+		t.cleanupFn()
+	}
+	return err
 }
 
 // ── Content Management ──────────────────────────────────────────────────
 
 func (t *tuiApp) addLine(line string) {
 	t.lines = append(t.lines, line)
+}
+
+// appendLogLine adds a line to the chat view from any goroutine (thread-safe).
+func (t *tuiApp) appendLogLine(line string) {
+	t.app.QueueUpdateDraw(func() {
+		t.lines = append(t.lines, line)
+		t.refreshChatView()
+	})
 }
 
 func (t *tuiApp) updateStreamingLine() {

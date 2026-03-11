@@ -87,7 +87,7 @@ func (t *tuiApp) setupInputCapture() {
 			return nil
 
 		case tcell.KeyEnter:
-			if t.processing {
+			if t.loading || t.processing {
 				return nil
 			}
 			if t.autocompleteActive {

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -33,7 +34,7 @@ func (a *App) runAgentTurn(ctx context.Context) {
 	// Build messages with system prompt
 	var msgs []api.Message
 	msgs = append(msgs, api.Message{Role: "system", Content: defaultAgentSystemPrompt})
-	msgs = append(msgs, a.messages...)
+	msgs = append(msgs, a.activeSession.Messages...)
 
 	// Streaming state
 	var streamingLabel *gtk.Label
@@ -53,12 +54,10 @@ func (a *App) runAgentTurn(ctx context.Context) {
 			Hooks: agent.Hooks{
 				OnToolCall: func(call api.ToolCall) {
 					glib.IdleAdd(func() {
-						// Remove thinking indicator
 						if thinkingBox != nil {
 							a.messageList.Remove(thinkingBox)
 							thinkingBox = nil
 						}
-						// Remove streaming label if present
 						if streamingLabel != nil {
 							a.messageList.Remove(streamingLabel)
 							streamingLabel = nil
@@ -121,7 +120,6 @@ func (a *App) runAgentTurn(ctx context.Context) {
 	result, err := agent.RunStreaming(ctx, streamFn, msgs, cfg)
 
 	glib.IdleAdd(func() {
-		// Remove thinking indicator if still present
 		if thinkingBox != nil {
 			a.messageList.Remove(thinkingBox)
 			thinkingBox = nil
@@ -133,7 +131,6 @@ func (a *App) runAgentTurn(ctx context.Context) {
 			}
 		}
 
-		// If we have a streaming label with partial content, finalize it
 		if streamingLabel != nil {
 			content := streamBuf.String()
 			if content != "" {
@@ -143,10 +140,19 @@ func (a *App) runAgentTurn(ctx context.Context) {
 			streamBuf.Reset()
 		}
 
-		// Update conversation messages from agent result
-		// Skip the system prompt we prepended
-		if len(result) > 1 {
-			a.messages = result[1:] // Remove system prompt from history
+		// Update active session messages from agent result (skip system prompt)
+		if a.activeSession != nil && len(result) > 1 {
+			a.activeSession.Messages = result[1:]
+			a.activeSession.UpdatedAt = time.Now()
+
+			// Update sidebar title if this was the first response
+			if a.activeSession.Title == "New Chat" {
+				a.activeSession.AutoTitle()
+				a.updateChatHeader()
+				a.updateSidebarTitle()
+			}
+
+			go a.saveSessionsAsync()
 		}
 
 		a.finishGenerating()

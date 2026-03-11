@@ -121,8 +121,8 @@ func (a *App) showDownloadProgress() {
 	a.downloadProgress.SetFraction(0)
 	a.downloadProgress.SetText("0%")
 
-	if a.sidebarContent != nil {
-		a.sidebarContent.Append(a.downloadBox)
+	if a.settingsContent != nil {
+		a.settingsContent.Append(a.downloadBox)
 	}
 	a.downloadBox.SetVisible(true)
 }
@@ -131,8 +131,8 @@ func (a *App) showDownloadProgress() {
 func (a *App) hideDownloadProgress() {
 	if a.downloadBox != nil {
 		a.downloadBox.SetVisible(false)
-		if a.sidebarContent != nil {
-			a.sidebarContent.Remove(a.downloadBox)
+		if a.settingsContent != nil {
+			a.settingsContent.Remove(a.downloadBox)
 		}
 	}
 	a.cancelDownload = nil

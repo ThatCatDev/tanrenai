@@ -16,7 +16,24 @@ var pullCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		modelURL := args[0]
-		client := apiclient.New(serverURL)
+
+		activeURL := serverURL
+		local, _ := cmd.Flags().GetBool("local")
+		if local {
+			gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
+			flashAttn, _ := cmd.Flags().GetBool("flash-attn")
+			url, cleanup, err := startLocalServers(cmd.Context(), localOpts{
+				GPULayers:      gpuLayers,
+				FlashAttention: flashAttn,
+			}, &startupLog{})
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			activeURL = url
+		}
+
+		client := apiclient.New(activeURL)
 
 		ch, err := client.PullModel(context.Background(), modelURL)
 		if err != nil {

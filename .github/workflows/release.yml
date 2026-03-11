@@ -1,0 +1,324 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  # ─── Determine version via semantic-release ───────────────────────
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      new_release: ${{ steps.semantic.outputs.new_release_published }}
+      version: ${{ steps.semantic.outputs.new_release_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run semantic-release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Build CLI (pure Go, no CGo) ─────────────────────────────────
+  build-cli:
+    needs: release
+    if: needs.release.outputs.new_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-latest
+          - goos: darwin
+            goarch: amd64
+            runner: ubuntu-latest
+          - goos: darwin
+            goarch: arm64
+            runner: ubuntu-latest
+          - goos: windows
+            goarch: amd64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Build CLI
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          cd clients/cli
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/ThatCatDev/tanrenai/client/cmd.Version=v${VERSION} -X github.com/ThatCatDev/tanrenai/client/cmd.CommitSHA=${GITHUB_SHA::8}" \
+            -o "tanrenai-cli${EXT}" .
+
+      - name: Package
+        run: |
+          cd clients/cli
+          GOOS="${{ matrix.goos }}"
+          GOARCH="${{ matrix.goarch }}"
+          NAME="tanrenai-cli-${GOOS}-${GOARCH}"
+          mkdir -p "${NAME}"
+          EXT=""
+          if [ "${GOOS}" = "windows" ]; then EXT=".exe"; fi
+          cp "tanrenai-cli${EXT}" "${NAME}/"
+          if [ "${GOOS}" = "windows" ]; then
+            zip -r "${NAME}.zip" "${NAME}"
+          else
+            tar czf "${NAME}.tar.gz" "${NAME}"
+          fi
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd clients/cli
+          GOOS="${{ matrix.goos }}"
+          GOARCH="${{ matrix.goarch }}"
+          NAME="tanrenai-cli-${GOOS}-${GOARCH}"
+          if [ "${GOOS}" = "windows" ]; then
+            gh release upload "v${VERSION}" "${NAME}.zip" --clobber
+          else
+            gh release upload "v${VERSION}" "${NAME}.tar.gz" --clobber
+          fi
+
+  # ─── Build Desktop — Linux ───────────────────────────────────────
+  build-desktop-linux:
+    needs: release
+    if: needs.release.outputs.new_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - goarch: amd64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Install GTK4 and libadwaita
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
+
+      - name: Build desktop
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          cd clients/desktop
+          go build -trimpath \
+            -ldflags "-s -w -X main.Version=v${VERSION} -X main.CommitSHA=${GITHUB_SHA::8}" \
+            -o tanrenai-desktop .
+
+      - name: Package
+        run: |
+          cd clients/desktop
+          NAME="tanrenai-desktop-linux-${{ matrix.goarch }}"
+          mkdir -p "${NAME}"
+          cp tanrenai-desktop "${NAME}/"
+          tar czf "${NAME}.tar.gz" "${NAME}"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd clients/desktop
+          NAME="tanrenai-desktop-linux-${{ matrix.goarch }}"
+          gh release upload "v${VERSION}" "${NAME}.tar.gz" --clobber
+
+  # ─── Build Desktop — macOS ───────────────────────────────────────
+  build-desktop-macos:
+    needs: release
+    if: needs.release.outputs.new_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - goarch: amd64
+            runner: macos-13
+          - goarch: arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Install GTK4 and libadwaita
+        run: brew install gtk4 libadwaita pkg-config
+
+      - name: Build desktop
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          cd clients/desktop
+          go build -trimpath \
+            -ldflags "-s -w -X main.Version=v${VERSION} -X main.CommitSHA=${GITHUB_SHA::8}" \
+            -o tanrenai-desktop .
+
+      - name: Create macOS app bundle
+        run: |
+          cd clients/desktop
+          ARCH="${{ matrix.goarch }}"
+          APP="TanrenAI.app"
+          mkdir -p "${APP}/Contents/MacOS"
+          mkdir -p "${APP}/Contents/Resources"
+
+          cp tanrenai-desktop "${APP}/Contents/MacOS/tanrenai-desktop"
+
+          cat > "${APP}/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>tanrenai-desktop</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.tanrenai.desktop</string>
+            <key>CFBundleName</key>
+            <string>TanrenAI</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>VERSION_PLACEHOLDER</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          sed -i '' "s/VERSION_PLACEHOLDER/v${VERSION}/" "${APP}/Contents/Info.plist"
+
+          NAME="tanrenai-desktop-macos-${ARCH}"
+          mkdir -p "${NAME}"
+          cp -R "${APP}" "${NAME}/"
+          tar czf "${NAME}.tar.gz" "${NAME}"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd clients/desktop
+          NAME="tanrenai-desktop-macos-${{ matrix.goarch }}"
+          gh release upload "v${VERSION}" "${NAME}.tar.gz" --clobber
+
+  # ─── Build Desktop — Windows (GTK4 + DLL bundling) ───────────────
+  build-desktop-windows:
+    needs: release
+    if: needs.release.outputs.new_release == 'true'
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-go
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-pkg-config
+            zip
+
+      - name: Build desktop
+        run: |
+          cd clients/desktop
+          export CGO_ENABLED=1
+          export GOARCH=amd64
+          go build -trimpath \
+            -ldflags "-s -w -H windowsgui -X main.Version=v${VERSION} -X main.CommitSHA=${GITHUB_SHA::8}" \
+            -o tanrenai-desktop.exe .
+
+      - name: Bundle DLLs
+        run: |
+          cd clients/desktop
+          mkdir -p bundle
+
+          # Copy the executable
+          cp tanrenai-desktop.exe bundle/
+
+          # Find and copy all required DLLs from UCRT64
+          ldd tanrenai-desktop.exe | grep -i ucrt64 | awk '{print $3}' | while read dll; do
+            cp "$dll" bundle/
+          done
+
+          # Copy GLib schemas (required for GTK4)
+          mkdir -p bundle/share/glib-2.0/schemas
+          cp /ucrt64/share/glib-2.0/schemas/gschemas.compiled bundle/share/glib-2.0/schemas/ 2>/dev/null || true
+
+          # Copy GDK pixbuf loaders
+          mkdir -p bundle/lib/gdk-pixbuf-2.0
+          cp -r /ucrt64/lib/gdk-pixbuf-2.0/* bundle/lib/gdk-pixbuf-2.0/ 2>/dev/null || true
+
+          # Copy Adwaita icons (essential subset)
+          mkdir -p bundle/share/icons
+          cp -r /ucrt64/share/icons/Adwaita bundle/share/icons/ 2>/dev/null || true
+          cp -r /ucrt64/share/icons/hicolor bundle/share/icons/ 2>/dev/null || true
+
+          # Copy GTK4 settings schemas
+          if [ -d /ucrt64/share/gtk-4.0 ]; then
+            mkdir -p bundle/share/gtk-4.0
+            cp -r /ucrt64/share/gtk-4.0/* bundle/share/gtk-4.0/ 2>/dev/null || true
+          fi
+
+          echo "Bundle contents:"
+          find bundle -type f | head -50
+          echo "Total files: $(find bundle -type f | wc -l)"
+          echo "Total size: $(du -sh bundle | cut -f1)"
+
+      - name: Package
+        run: |
+          cd clients/desktop
+          NAME="tanrenai-desktop-windows-amd64"
+          mv bundle "${NAME}"
+          zip -r "${NAME}.zip" "${NAME}"
+
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd clients/desktop
+          NAME="tanrenai-desktop-windows-amd64"
+          gh release upload "v${VERSION}" "${NAME}.zip" --clobber

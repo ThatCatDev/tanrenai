@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/rivo/tview"
 
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
@@ -14,6 +17,27 @@ import (
 	"github.com/ThatCatDev/tanrenai/shared/tools"
 	"github.com/spf13/cobra"
 )
+
+// startupLog posts status lines to the TUI (or stdout if tui is nil).
+type startupLog struct {
+	tui *tuiApp
+}
+
+func (s *startupLog) Info(msg string) {
+	if s.tui != nil {
+		s.tui.appendLogLine("[gray::-]  " + tview.Escape(msg) + "[-:-:-]")
+	} else {
+		fmt.Println(msg)
+	}
+}
+
+func (s *startupLog) Warn(msg string) {
+	if s.tui != nil {
+		s.tui.appendLogLine("[yellow::-]  " + tview.Escape(msg) + "[-:-:-]")
+	} else {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+	}
+}
 
 const defaultAgentSystemPrompt = `You are a helpful assistant with access to tools for interacting with the filesystem and system.
 
@@ -42,6 +66,11 @@ var runCmd = &cobra.Command{
 		contextFiles, _ := cmd.Flags().GetStringSlice("context-file")
 		memoryEnabled, _ := cmd.Flags().GetBool("memory")
 		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
+		local, _ := cmd.Flags().GetBool("local")
+		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
+		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
+		ctxSizeChanged := cmd.Flags().Changed("ctx-size")
+		ctx := cmd.Context()
 
 		if systemFile != "" {
 			data, err := os.ReadFile(systemFile)
@@ -51,71 +80,106 @@ var runCmd = &cobra.Command{
 			systemPrompt = string(data)
 		}
 
-		activeURL := serverURL
-		local, _ := cmd.Flags().GetBool("local")
-		if local {
-			gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
-			flashAttn, _ := cmd.Flags().GetBool("flash-attn")
-			url, cleanup, err := startLocalServers(cmd.Context(), localOpts{
-				GPULayers:      gpuLayers,
-				FlashAttention: flashAttn,
-				MemoryEnabled:  memoryEnabled,
-			})
+		return startTUI(model, func(t *tuiApp, log *startupLog) error {
+			activeURL := serverURL
+			if local {
+				url, cleanup, err := startLocalServers(ctx, localOpts{
+					GPULayers:      gpuLayers,
+					FlashAttention: flashAttn,
+					MemoryEnabled:  memoryEnabled,
+				}, log)
+				if err != nil {
+					return err
+				}
+				t.cleanupFn = cleanup
+				activeURL = url
+			}
+
+			client := apiclient.New(activeURL)
+
+			log.Info("Loading model " + model + "...")
+			loadResp, err := client.LoadModel(ctx, model)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to load model (is the backend running?): %w", err)
 			}
-			defer cleanup()
-			activeURL = url
-		}
 
-		client := apiclient.New(activeURL)
-
-		fmt.Printf("Loading model %s...\n", model)
-		loadResp, err := client.LoadModel(cmd.Context(), model)
-		if err != nil {
-			return fmt.Errorf("failed to load model (is the backend running?): %w", err)
-		}
-
-		// Use GGUF-detected ctx_size unless user explicitly set --ctx-size.
-		if !cmd.Flags().Changed("ctx-size") && loadResp.CtxSize > 0 {
-			ctxSize = loadResp.CtxSize
-			fmt.Printf("Using model context size: %d tokens\n", ctxSize)
-		}
-		if ctxSize == 0 {
-			ctxSize = 4096 // fallback default
-		}
-
-		estimator := chatctx.NewTokenEstimator()
-		calibrateEstimator(client, estimator)
-
-		toolsBudget := 0
-		if agentMode {
-			toolsBudget = 4000
-		}
-
-		mgr := chatctx.NewManager(chatctx.Config{
-			CtxSize:        ctxSize,
-			ResponseBudget: responseBudget,
-			ToolsBudget:    toolsBudget,
-		}, estimator)
-
-		for _, path := range contextFiles {
-			if err := loadContextFile(mgr, path); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to load context file %s: %v\n", path, err)
+			if !ctxSizeChanged && loadResp.CtxSize > 0 {
+				ctxSize = loadResp.CtxSize
+				log.Info(fmt.Sprintf("Using model context size: %d tokens", ctxSize))
 			}
-		}
-
-		if memoryEnabled && agentMode {
-			count, err := client.MemoryCount(cmd.Context())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: memory not available: %v\n", err)
-				memoryEnabled = false
-			} else {
-				fmt.Printf("Memory enabled (%d stored memories)\n", count)
+			if ctxSize == 0 {
+				ctxSize = 4096
 			}
-		}
 
-		return startTUI(client, model, systemPrompt, mgr, agentMode, memoryEnabled, maxIterations)
+			estimator := chatctx.NewTokenEstimator()
+			calibrateEstimator(client, estimator, log)
+
+			toolsBudget := 0
+			if agentMode {
+				toolsBudget = 4000
+			}
+
+			mgr := chatctx.NewManager(chatctx.Config{
+				CtxSize:        ctxSize,
+				ResponseBudget: responseBudget,
+				ToolsBudget:    toolsBudget,
+			}, estimator)
+
+			for _, path := range contextFiles {
+				msg, err := loadContextFile(mgr, path)
+				if err != nil {
+					log.Warn(fmt.Sprintf("Failed to load context file %s: %v", path, err))
+				} else {
+					log.Info(msg)
+				}
+			}
+
+			if memoryEnabled && agentMode {
+				count, err := client.MemoryCount(ctx)
+				if err != nil {
+					log.Warn(fmt.Sprintf("Memory not available: %v", err))
+					memoryEnabled = false
+				} else {
+					log.Info(fmt.Sprintf("Memory enabled (%d stored memories)", count))
+				}
+			}
+
+			// Configure system prompt
+			if agentMode {
+				agentSystem := defaultAgentSystemPrompt
+				if systemPrompt != "" {
+					agentSystem += "\n\n" + systemPrompt
+				}
+				mgr.SetSystemPrompt(agentSystem)
+			} else if systemPrompt != "" {
+				mgr.SetSystemPrompt(systemPrompt)
+			}
+
+			var registry *tools.Registry
+			if agentMode {
+				registry = tools.DefaultRegistry()
+			}
+
+			completeFn := func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
+				req.Model = model
+				return client.ChatCompletion(ctx, req)
+			}
+			streamFn := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
+				req.Model = model
+				return client.StreamCompletion(ctx, req)
+			}
+
+			// Set TUI dependencies
+			t.client = client
+			t.mgr = mgr
+			t.registry = registry
+			t.memoryEnabled = memoryEnabled
+			t.maxIterations = maxIterations
+			t.agentMode = agentMode
+			t.completeFn = completeFn
+			t.streamFn = streamFn
+			return nil
+		})
 	},
 }
 
@@ -132,6 +196,10 @@ var chatCmd = &cobra.Command{
 		contextFiles, _ := cmd.Flags().GetStringSlice("context-file")
 		memoryEnabled, _ := cmd.Flags().GetBool("memory")
 		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
+		local, _ := cmd.Flags().GetBool("local")
+		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
+		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
+		ctx := cmd.Context()
 
 		if model == "" {
 			return fmt.Errorf("specify a model with --model")
@@ -145,106 +213,202 @@ var chatCmd = &cobra.Command{
 			systemPrompt = string(data)
 		}
 
-		activeURL := serverURL
-		local, _ := cmd.Flags().GetBool("local")
-		if local {
-			gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
-			flashAttn, _ := cmd.Flags().GetBool("flash-attn")
-			url, cleanup, err := startLocalServers(cmd.Context(), localOpts{
-				GPULayers:      gpuLayers,
-				FlashAttention: flashAttn,
-				MemoryEnabled:  memoryEnabled,
-			})
-			if err != nil {
-				return err
+		return startTUI(model, func(t *tuiApp, log *startupLog) error {
+			activeURL := serverURL
+			if local {
+				url, cleanup, err := startLocalServers(ctx, localOpts{
+					GPULayers:      gpuLayers,
+					FlashAttention: flashAttn,
+					MemoryEnabled:  memoryEnabled,
+				}, log)
+				if err != nil {
+					return err
+				}
+				t.cleanupFn = cleanup
+				activeURL = url
 			}
-			defer cleanup()
-			activeURL = url
-		}
 
-		client := apiclient.New(activeURL)
+			client := apiclient.New(activeURL)
 
-		estimator := chatctx.NewTokenEstimator()
-		calibrateEstimator(client, estimator)
+			estimator := chatctx.NewTokenEstimator()
+			calibrateEstimator(client, estimator, log)
 
-		toolsBudget := 0
-		if agentMode {
-			toolsBudget = 4000
-		}
-
-		mgr := chatctx.NewManager(chatctx.Config{
-			CtxSize:        ctxSize,
-			ResponseBudget: responseBudget,
-			ToolsBudget:    toolsBudget,
-		}, estimator)
-
-		for _, path := range contextFiles {
-			if err := loadContextFile(mgr, path); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to load context file %s: %v\n", path, err)
+			toolsBudget := 0
+			if agentMode {
+				toolsBudget = 4000
 			}
-		}
 
-		if memoryEnabled && agentMode {
-			count, err := client.MemoryCount(cmd.Context())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: memory not available: %v\n", err)
-				memoryEnabled = false
-			} else {
-				fmt.Printf("Memory enabled (%d stored memories)\n", count)
+			mgr := chatctx.NewManager(chatctx.Config{
+				CtxSize:        ctxSize,
+				ResponseBudget: responseBudget,
+				ToolsBudget:    toolsBudget,
+			}, estimator)
+
+			for _, path := range contextFiles {
+				msg, err := loadContextFile(mgr, path)
+				if err != nil {
+					log.Warn(fmt.Sprintf("Failed to load context file %s: %v", path, err))
+				} else {
+					log.Info(msg)
+				}
 			}
-		}
 
-		return startTUI(client, model, systemPrompt, mgr, agentMode, memoryEnabled, maxIterations)
+			if memoryEnabled && agentMode {
+				count, err := client.MemoryCount(ctx)
+				if err != nil {
+					log.Warn(fmt.Sprintf("Memory not available: %v", err))
+					memoryEnabled = false
+				} else {
+					log.Info(fmt.Sprintf("Memory enabled (%d stored memories)", count))
+				}
+			}
+
+			// Configure system prompt
+			if agentMode {
+				agentSystem := defaultAgentSystemPrompt
+				if systemPrompt != "" {
+					agentSystem += "\n\n" + systemPrompt
+				}
+				mgr.SetSystemPrompt(agentSystem)
+			} else if systemPrompt != "" {
+				mgr.SetSystemPrompt(systemPrompt)
+			}
+
+			var registry *tools.Registry
+			if agentMode {
+				registry = tools.DefaultRegistry()
+			}
+
+			completeFn := func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
+				req.Model = model
+				return client.ChatCompletion(ctx, req)
+			}
+			streamFn := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
+				req.Model = model
+				return client.StreamCompletion(ctx, req)
+			}
+
+			t.client = client
+			t.mgr = mgr
+			t.registry = registry
+			t.memoryEnabled = memoryEnabled
+			t.maxIterations = maxIterations
+			t.agentMode = agentMode
+			t.completeFn = completeFn
+			t.streamFn = streamFn
+			return nil
+		})
 	},
 }
 
-func startTUI(client *apiclient.Client, model, systemPrompt string, mgr *chatctx.Manager, agentMode, memoryEnabled bool, maxIterations int) error {
-	if agentMode {
-		agentSystem := defaultAgentSystemPrompt
-		if systemPrompt != "" {
-			agentSystem += "\n\n" + systemPrompt
+func startTUI(model string, startup func(t *tuiApp, log *startupLog) error) error {
+	t := newTuiApp(model)
+	t.loading = true
+
+	// Redirect slog to the TUI so embedded server logs appear in the chat view.
+	slog.SetDefault(slog.New(&tuiSlogHandler{tui: t}))
+
+	go func() {
+		log := &startupLog{tui: t}
+		err := startup(t, log)
+
+		// Suppress slog after startup to avoid noisy HTTP request logs.
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+		if err != nil {
+			t.app.QueueUpdateDraw(func() {
+				t.addLine(fmt.Sprintf("[red::-]  Error: %v[-:-:-]", err))
+				t.addLine("[gray::-]  Press Ctrl+C to exit.[-:-:-]")
+				t.refreshChatView()
+			})
+			return
 		}
-		mgr.SetSystemPrompt(agentSystem)
-	} else if systemPrompt != "" {
-		mgr.SetSystemPrompt(systemPrompt)
-	}
 
-	var registry *tools.Registry
-	if agentMode {
-		registry = tools.DefaultRegistry()
-	}
+		t.app.QueueUpdateDraw(func() {
+			t.loading = false
+			t.inputField.SetPlaceholder("")
+			t.addLine("")
+			t.refreshChatView()
+		})
+	}()
 
-	completeFn := func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
-		req.Model = model
-		return client.ChatCompletion(ctx, req)
-	}
-
-	streamFn := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
-		req.Model = model
-		return client.StreamCompletion(ctx, req)
-	}
-
-	t := newTuiApp(client, model, mgr, registry, memoryEnabled, maxIterations, agentMode, completeFn, streamFn)
 	return t.run()
 }
 
-func calibrateEstimator(client *apiclient.Client, estimator *chatctx.TokenEstimator) {
+// tuiSlogHandler routes slog records to the TUI chat view.
+type tuiSlogHandler struct {
+	tui   *tuiApp
+	attrs []slog.Attr
+}
+
+func (h *tuiSlogHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+
+func (h *tuiSlogHandler) Handle(_ context.Context, r slog.Record) error {
+	// Collect attrs into a map for easy lookup.
+	attrs := make(map[string]string)
+	for _, a := range h.attrs {
+		attrs[a.Key] = a.Value.String()
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		attrs[a.Key] = a.Value.String()
+		return true
+	})
+
+	// Filter and rewrite messages to be user-friendly.
+	var msg string
+	color := "gray"
+	switch {
+	case r.Level >= slog.LevelError:
+		color = "red"
+		msg = r.Message
+	case r.Level >= slog.LevelWarn:
+		color = "yellow"
+		msg = r.Message
+	case strings.HasPrefix(r.Message, "subprocess still loading"):
+		if s := attrs["elapsed_s"]; s != "" {
+			msg = fmt.Sprintf("Loading model... (%ss)", s)
+		}
+	case r.Message == "subprocess starting":
+		msg = "Starting inference server..."
+	default:
+		return nil // skip noisy INFO messages
+	}
+
+	if msg == "" {
+		return nil
+	}
+	line := fmt.Sprintf("[%s::-]  %s[-:-:-]", color, tview.Escape(msg))
+	h.tui.appendLogLine(line)
+	return nil
+}
+
+func (h *tuiSlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	combined := make([]slog.Attr, len(h.attrs)+len(attrs))
+	copy(combined, h.attrs)
+	copy(combined[len(h.attrs):], attrs)
+	return &tuiSlogHandler{tui: h.tui, attrs: combined}
+}
+
+func (h *tuiSlogHandler) WithGroup(_ string) slog.Handler {
+	return h
+}
+
+func calibrateEstimator(client *apiclient.Client, estimator *chatctx.TokenEstimator, log *startupLog) {
 	tokenizeFn := func(text string) (int, error) {
 		return client.Tokenize(context.Background(), text)
 	}
 	if err := estimator.Calibrate(tokenizeFn); err != nil {
-		fmt.Fprintf(os.Stderr, "Note: token estimation using default ratio (calibration unavailable)\n")
+		log.Warn("Token estimation using default ratio (calibration unavailable)")
 	}
 }
 
-func loadContextFile(mgr *chatctx.Manager, path string) error {
+func loadContextFile(mgr *chatctx.Manager, path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	mgr.AddContextFile(path, string(data))
-	fmt.Printf("Loaded context file: %s (%d bytes)\n", path, len(data))
-	return nil
+	return fmt.Sprintf("Loaded context file: %s (%d bytes)", path, len(data)), nil
 }
 
 func handleREPLCommand(w io.Writer, input string, mgr *chatctx.Manager, client *apiclient.Client, memoryEnabled bool) bool {
@@ -289,8 +453,11 @@ func handleREPLCommand(w io.Writer, input string, mgr *chatctx.Manager, client *
 			fmt.Fprintln(w, "Usage: /context add <file-path>")
 			return true
 		}
-		if err := loadContextFile(mgr, path); err != nil {
+		msg, err := loadContextFile(mgr, path)
+		if err != nil {
 			fmt.Fprintf(w, "Error: %v\n", err)
+		} else {
+			fmt.Fprintln(w, msg)
 		}
 		return true
 

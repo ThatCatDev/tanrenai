@@ -1,218 +1,170 @@
 package ui
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
-	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
-	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
-
-	"github.com/ThatCatDev/tanrenai/desktop/internal/server"
-	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 )
 
-// sidebar builds the settings navigation page.
+// buildSidebar builds the chat history sidebar.
 func (a *App) buildSidebar() *adw.NavigationPage {
-	// Server status row
-	a.statusRow = adw.NewActionRow()
-	a.statusRow.SetTitle("Status")
-	a.statusRow.SetSubtitle("Stopped")
+	// New Chat button
+	newChatBtn := gtk.NewButton()
+	newChatBtn.SetLabel("+ New Chat")
+	newChatBtn.AddCSSClass("new-chat-button")
+	newChatBtn.SetMarginStart(12)
+	newChatBtn.SetMarginEnd(12)
+	newChatBtn.SetMarginTop(12)
+	newChatBtn.ConnectClicked(func() {
+		a.newChat()
+	})
 
-	// Start/Stop button
-	a.serverButton = gtk.NewButtonWithLabel("Start Server")
-	a.serverButton.AddCSSClass("suggested-action")
-	a.serverButton.ConnectClicked(func() {
-		if a.serverMgr.Status() == server.StatusRunning {
-			go a.stopServer()
-		} else {
-			go a.startServer()
+	// Section label
+	chatsLabel := gtk.NewLabel("CHATS")
+	chatsLabel.AddCSSClass("chats-section-label")
+	chatsLabel.SetXAlign(0)
+	chatsLabel.SetMarginStart(16)
+	chatsLabel.SetMarginTop(12)
+	chatsLabel.SetMarginBottom(4)
+
+	// Chat list
+	a.sessionListBox = gtk.NewListBox()
+	a.sessionListBox.AddCSSClass("navigation-sidebar")
+	a.sessionListBox.AddCSSClass("chat-list")
+	a.sessionListBox.SetSelectionMode(gtk.SelectionSingle)
+	a.sessionListBox.ConnectRowActivated(func(row *gtk.ListBoxRow) {
+		idx := row.Index()
+		if idx >= 0 && idx < len(a.sessions) {
+			a.selectSession(a.sessions[idx])
 		}
 	})
 
-	serverGroup := adw.NewPreferencesGroup()
-	serverGroup.SetTitle("Server")
-	serverGroup.Add(a.statusRow)
+	listScroll := gtk.NewScrolledWindow()
+	listScroll.SetChild(a.sessionListBox)
+	listScroll.SetVExpand(true)
+	listScroll.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
 
-	buttonBox := gtk.NewBox(gtk.OrientationHorizontal, 0)
-	buttonBox.SetHAlign(gtk.AlignCenter)
-	buttonBox.SetMarginTop(8)
-	buttonBox.SetMarginBottom(8)
-	buttonBox.Append(a.serverButton)
-
-	// Model selector
-	a.modelDropdown = gtk.NewDropDownFromStrings([]string{"(no models)"})
-	a.modelDropdown.SetSensitive(false)
-	a.modelDropdown.Connect("notify::selected", func(_ coreglib.Objector) {
-		idx := a.modelDropdown.Selected()
-		if idx < uint(len(a.modelList)) {
-			a.selectedModel = a.modelList[idx]
-		}
+	// Settings button at bottom
+	settingsBtn := gtk.NewButton()
+	settingsBtn.SetIconName("emblem-system-symbolic")
+	settingsBtn.SetLabel("Settings")
+	settingsBtn.AddCSSClass("flat")
+	settingsBtn.AddCSSClass("settings-button")
+	settingsBtn.SetMarginStart(12)
+	settingsBtn.SetMarginEnd(12)
+	settingsBtn.SetMarginBottom(12)
+	settingsBtn.ConnectClicked(func() {
+		a.showSettings()
 	})
 
-	modelRow := adw.NewActionRow()
-	modelRow.SetTitle("Model")
-	modelRow.AddSuffix(a.modelDropdown)
-	modelRow.SetActivatableWidget(a.modelDropdown)
-
-	modelGroup := adw.NewPreferencesGroup()
-	modelGroup.SetTitle("Model")
-	modelGroup.Add(modelRow)
-
-	// Download and Import buttons
-	downloadBtn := gtk.NewButtonWithLabel("Download")
-	downloadBtn.AddCSSClass("flat")
-	downloadBtn.ConnectClicked(func() { a.showDownloadDialog() })
-
-	importBtn := gtk.NewButtonWithLabel("Import")
-	importBtn.AddCSSClass("flat")
-	importBtn.ConnectClicked(func() { a.showImportDialog() })
-
-	modelButtonBox := gtk.NewBox(gtk.OrientationHorizontal, 8)
-	modelButtonBox.SetHAlign(gtk.AlignCenter)
-	modelButtonBox.SetMarginTop(4)
-	modelButtonBox.SetMarginBottom(8)
-	modelButtonBox.Append(downloadBtn)
-	modelButtonBox.Append(importBtn)
-
-	// Connection settings
-	a.serverURLEntry = adw.NewEntryRow()
-	a.serverURLEntry.SetTitle("Server URL")
-	a.serverURLEntry.SetText("http://127.0.0.1:8080")
-
-	connGroup := adw.NewPreferencesGroup()
-	connGroup.SetTitle("Connection")
-	connGroup.Add(a.serverURLEntry)
+	sep := gtk.NewSeparator(gtk.OrientationHorizontal)
 
 	// Layout
-	content := gtk.NewBox(gtk.OrientationVertical, 12)
-	content.SetMarginTop(12)
-	content.SetMarginBottom(12)
-	content.SetMarginStart(12)
-	content.SetMarginEnd(12)
-	content.Append(serverGroup)
-	content.Append(buttonBox)
-	content.Append(modelGroup)
-	content.Append(modelButtonBox)
-	content.Append(connGroup)
-	a.sidebarContent = content
-
-	scrolled := gtk.NewScrolledWindow()
-	scrolled.SetChild(content)
-	scrolled.SetVExpand(true)
+	content := gtk.NewBox(gtk.OrientationVertical, 0)
+	content.AddCSSClass("chat-sidebar")
+	content.Append(newChatBtn)
+	content.Append(chatsLabel)
+	content.Append(listScroll)
+	content.Append(sep)
+	content.Append(settingsBtn)
 
 	toolbarView := adw.NewToolbarView()
 	header := adw.NewHeaderBar()
-	header.SetTitleWidget(gtk.NewLabel("Settings"))
+	header.AddCSSClass("chat-sidebar")
+	header.SetTitleWidget(gtk.NewLabel("Tanrenai"))
 	toolbarView.AddTopBar(header)
-	toolbarView.SetContent(scrolled)
+	toolbarView.SetContent(content)
 
-	page := adw.NewNavigationPage(toolbarView, "Settings")
+	page := adw.NewNavigationPage(toolbarView, "Chats")
 	return page
 }
 
-func (a *App) startServer() {
-	glib.IdleAdd(func() {
-		a.statusRow.SetSubtitle("Starting...")
-		a.serverButton.SetSensitive(false)
-	})
-
-	err := a.serverMgr.Start()
-
-	glib.IdleAdd(func() {
-		a.serverButton.SetSensitive(true)
-		if err != nil {
-			a.statusRow.SetSubtitle(fmt.Sprintf("Error: %v", err))
-			a.serverButton.SetLabel("Start Server")
-			a.serverButton.RemoveCSSClass("destructive-action")
-			a.serverButton.AddCSSClass("suggested-action")
-			a.showToast(fmt.Sprintf("Server failed: %v", err))
-		} else {
-			a.statusRow.SetSubtitle("Running")
-			a.serverButton.SetLabel("Stop Server")
-			a.serverButton.RemoveCSSClass("suggested-action")
-			a.serverButton.AddCSSClass("destructive-action")
-
-			// Update client URL
-			url := a.serverMgr.ServerURL()
-			a.client.SetBaseURL(url)
-			a.serverURLEntry.SetText(url)
-
-			a.showToast("Server started")
-			go a.refreshModels()
+// populateSidebarList rebuilds the chat list from sessions.
+func (a *App) populateSidebarList() {
+	// Remove all rows
+	for {
+		row := a.sessionListBox.RowAtIndex(0)
+		if row == nil {
+			break
 		}
-	})
-}
-
-func (a *App) stopServer() {
-	glib.IdleAdd(func() {
-		a.serverButton.SetSensitive(false)
-		a.statusRow.SetSubtitle("Stopping...")
-	})
-
-	_ = a.serverMgr.Stop()
-
-	glib.IdleAdd(func() {
-		a.serverButton.SetSensitive(true)
-		a.statusRow.SetSubtitle("Stopped")
-		a.serverButton.SetLabel("Start Server")
-		a.serverButton.RemoveCSSClass("destructive-action")
-		a.serverButton.AddCSSClass("suggested-action")
-		a.showToast("Server stopped")
-	})
-}
-
-func (a *App) refreshModels() {
-	// Try API first (returns models from running server)
-	var names []string
-	url := a.serverURLEntry.Text()
-	client := apiclient.New(url)
-	if resp, err := client.ListModels(context.Background()); err == nil {
-		for _, m := range resp.Data {
-			names = append(names, m.ID)
-		}
+		a.sessionListBox.Remove(row)
 	}
 
-	// Fall back to scanning the models directory
-	if len(names) == 0 {
-		names = scanLocalModels()
+	for _, s := range a.sessions {
+		label := gtk.NewLabel(s.Title)
+		label.SetXAlign(0)
+		label.SetEllipsize(3) // PANGO_ELLIPSIZE_END
+		label.SetMarginStart(8)
+		label.SetMarginEnd(8)
+		label.SetMarginTop(6)
+		label.SetMarginBottom(6)
+
+		row := gtk.NewListBoxRow()
+		row.SetChild(label)
+		row.AddCSSClass("chat-list-row")
+		a.sessionListBox.Append(row)
 	}
 
-	glib.IdleAdd(func() {
-		a.modelList = names
-
-		display := names
-		if len(display) == 0 {
-			display = []string{"(no models)"}
-			a.modelDropdown.SetSensitive(false)
-		} else {
-			a.modelDropdown.SetSensitive(true)
-		}
-
-		a.modelDropdown.SetModel(gtk.NewStringList(display))
-
-		if len(a.modelList) > 0 && a.selectedModel == "" {
-			a.selectedModel = a.modelList[0]
-		}
-	})
+	// Select active session
+	a.highlightActiveSession()
 }
 
-// scanLocalModels reads .gguf filenames from the models directory.
-func scanLocalModels() []string {
-	var names []string
-	filepath.Walk(modelsDir(), func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
+// highlightActiveSession selects the row corresponding to the active session.
+func (a *App) highlightActiveSession() {
+	if a.activeSession == nil {
+		return
+	}
+	for i, s := range a.sessions {
+		if s.ID == a.activeSession.ID {
+			row := a.sessionListBox.RowAtIndex(i)
+			if row != nil {
+				a.sessionListBox.SelectRow(row)
+			}
+			break
 		}
-		if strings.HasSuffix(strings.ToLower(info.Name()), ".gguf") {
-			name := strings.TrimSuffix(info.Name(), filepath.Ext(info.Name()))
-			names = append(names, name)
+	}
+}
+
+// selectSession switches to a different chat session.
+func (a *App) selectSession(session *ChatSession) {
+	if a.activeSession != nil && a.activeSession.ID == session.ID {
+		return
+	}
+
+	// Stop generation if active
+	if a.generating {
+		a.onStop()
+	}
+
+	a.activeSession = session
+	a.selectedModel = session.Model
+	a.updateChatHeader()
+	a.loadSessionMessages(session)
+	a.highlightActiveSession()
+	a.showChat()
+}
+
+// newChat creates a new session and switches to it.
+func (a *App) newChat() {
+	session := NewSession(a.selectedModel)
+	a.sessions = append([]*ChatSession{session}, a.sessions...)
+	a.populateSidebarList()
+	a.selectSession(session) // also switches to chat view
+	go a.saveSessionsAsync()
+}
+
+// updateSidebarTitle updates the title of the active session in the sidebar list.
+func (a *App) updateSidebarTitle() {
+	if a.activeSession == nil {
+		return
+	}
+	for i, s := range a.sessions {
+		if s.ID == a.activeSession.ID {
+			row := a.sessionListBox.RowAtIndex(i)
+			if row != nil {
+				label := row.Child().(*gtk.Label)
+				label.SetLabel(s.Title)
+			}
+			break
 		}
-		return nil
-	})
-	return names
+	}
 }
