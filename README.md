@@ -1,6 +1,10 @@
-# Tanrenai (鍛錬AI)
+<p align="center">
+  <img src="resources/logo.png" alt="Tanrenai" width="200">
+</p>
 
-A local AI assistant with agentic tool use, context windowing, and memory/RAG. Download a single binary, pull a model, and start chatting.
+<h1 align="center">Tanrenai (鍛錬AI)</h1>
+
+<p align="center">A local AI assistant with agentic tool use, context windowing, and memory/RAG.<br>Download a single binary, pull a model, and start chatting.</p>
 
 ## Install
 
