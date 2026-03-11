@@ -32,9 +32,9 @@ chmod +x tanrenai-cli bin/llama-server
 
 ### Windows
 
-1. Download `tanrenai-cli-windows-amd64.zip` from [Releases](https://github.com/ThatCatDev/tanrenai/releases)
-2. Extract the zip
-3. Open a terminal in the extracted folder (the `bin/` subfolder contains `llama-server.exe` and CUDA DLLs)
+**Installer (recommended):** Download `tanrenai-cli-windows-amd64-setup.exe` from [Releases](https://github.com/ThatCatDev/tanrenai/releases). The installer adds `tanrenai` to your PATH automatically and shows up in Add/Remove Programs.
+
+**Manual:** Download `tanrenai-cli-windows-amd64.zip`, extract it, and run from that folder.
 
 ## Quick Start
 
@@ -167,7 +167,7 @@ A GTK4/Adwaita desktop app is also available from [Releases](https://github.com/
 |----------|-------|
 | Linux | Requires GTK 4 and libadwaita: `sudo apt install libgtk-4-1 libadwaita-1-0` |
 | macOS | Requires GTK 4 and libadwaita: `brew install gtk4 libadwaita` |
-| Windows | Self-contained — all DLLs are bundled |
+| Windows | **Installer:** `tanrenai-desktop-windows-amd64-setup.exe` (adds to PATH + Start Menu). Or use the `.zip` for manual install. |
 
 ## Advanced: Three-Tier Setup
 

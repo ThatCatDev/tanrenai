@@ -148,7 +148,7 @@ jobs:
             tar czf "${NAME}.tar.gz" "${NAME}"
           fi
 
-      - name: Upload to release
+      - name: Upload archive to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -161,6 +161,50 @@ jobs:
           else
             gh release upload "v${VERSION}" "${NAME}.tar.gz" --clobber
           fi
+
+      - name: Upload Windows build for installer
+        if: matrix.goos == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-windows-build
+          path: clients/cli/tanrenai-cli-windows-amd64/
+
+  # ─── Build CLI Windows Installer ─────────────────────────────────
+  build-cli-installer:
+    needs: [release, build-cli]
+    if: needs.release.outputs.new_release == 'true'
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download CLI build
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-windows-build
+          path: staging/
+
+      - name: Build NSIS installer
+        shell: bash
+        run: |
+          # Copy NSIS scripts and icon into staging
+          cp installers/cli.nsi staging/
+          cp installers/EnvVarUpdate.nsh staging/
+          cp resources/logo.ico staging/
+
+      - name: Run NSIS
+        uses: joncloud/makensis-action@v4
+        with:
+          script-file: staging/cli.nsi
+          arguments: "-DVERSION=v${{ env.VERSION }}"
+
+      - name: Upload installer to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${VERSION}" staging/tanrenai-cli-windows-amd64-setup.exe --clobber
 
   # ─── Build Desktop — Linux ───────────────────────────────────────
   build-desktop-linux:
@@ -415,12 +459,28 @@ jobs:
           echo "Total files: $(find bundle -type f | wc -l)"
           echo "Total size: $(du -sh bundle | cut -f1)"
 
-      - name: Package
+      - name: Package zip
         run: |
           cd clients/desktop
           NAME="tanrenai-desktop-windows-amd64"
           mv bundle "${NAME}"
           zip -r "${NAME}.zip" "${NAME}"
+
+      - name: Build NSIS installer
+        shell: bash
+        run: |
+          cd clients/desktop
+          NAME="tanrenai-desktop-windows-amd64"
+          # Copy NSIS scripts and icon into the bundle directory
+          cp ../../installers/desktop.nsi "${NAME}/"
+          cp ../../installers/EnvVarUpdate.nsh "${NAME}/"
+          cp ../../resources/logo.ico "${NAME}/"
+
+      - name: Run NSIS
+        uses: joncloud/makensis-action@v4
+        with:
+          script-file: clients/desktop/tanrenai-desktop-windows-amd64/desktop.nsi
+          arguments: "-DVERSION=v${{ env.VERSION }}"
 
       - name: Upload to release
         shell: bash
@@ -430,3 +490,4 @@ jobs:
           cd clients/desktop
           NAME="tanrenai-desktop-windows-amd64"
           gh release upload "v${VERSION}" "${NAME}.zip" --clobber
+          gh release upload "v${VERSION}" "${NAME}/tanrenai-desktop-windows-amd64-setup.exe" --clobber
