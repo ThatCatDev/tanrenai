@@ -65,6 +65,88 @@ func toolCallKey(tc api.ToolCall) string {
 	return tc.Function.Name + ":" + tc.Function.Arguments
 }
 
+// processToolCalls executes each tool call, tracks error counts for stuck
+// detection, fires hooks, and returns the resulting tool messages plus whether
+// any call succeeded.
+func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *tools.Registry, hooks Hooks, errorCounts map[string]int) (msgs []api.Message, anySuccess bool, err error) {
+	for _, tc := range toolCalls {
+		if hooks.OnToolCall != nil {
+			hooks.OnToolCall(tc)
+		}
+
+		// Check tool approval before executing.
+		if hooks.OnToolApproval != nil {
+			action := hooks.OnToolApproval(tc)
+			if action == ApprovalBlock {
+				result := tools.ErrorResult("Tool call blocked by user.")
+				msgs = append(msgs, api.Message{
+					Role:       "tool",
+					Content:    result.Output,
+					ToolCallID: tc.ID,
+					Name:       tc.Function.Name,
+				})
+				if hooks.OnToolResult != nil {
+					hooks.OnToolResult(tc, result)
+				}
+				continue
+			}
+		}
+
+		tool := registry.Get(tc.Function.Name)
+		var result *tools.ToolResult
+		if tool == nil {
+			result = tools.ErrorResult(fmt.Sprintf("unknown tool: %s", tc.Function.Name))
+		} else {
+			var execErr error
+			result, execErr = tool.Execute(ctx, tc.Function.Arguments)
+			if execErr != nil {
+				// Convert Go-level errors to tool-level errors so the LLM
+				// always sees feedback and can respond or try a different approach.
+				result = tools.ErrorResult(fmt.Sprintf("tool execution error: %v", execErr))
+			}
+		}
+
+		key := toolCallKey(tc)
+		if result.IsError {
+			errorCounts[key]++
+			if errorCounts[key] >= maxConsecutiveErrors {
+				result.Output += "\n\nYou have repeated this exact failing call multiple times. Do NOT retry it. Either try different arguments or respond to the user explaining what went wrong."
+			}
+		} else {
+			delete(errorCounts, key)
+			anySuccess = true
+		}
+
+		if hooks.OnToolResult != nil {
+			hooks.OnToolResult(tc, result)
+		}
+
+		msgs = append(msgs, api.Message{
+			Role:       "tool",
+			Content:    result.Output,
+			ToolCallID: tc.ID,
+			Name:       tc.Function.Name,
+		})
+	}
+	return msgs, anySuccess, nil
+}
+
+// checkStuck returns true when every tool call has hit the error-repeat
+// threshold and at least one has exceeded it.
+func checkStuck(toolCalls []api.ToolCall, errorCounts map[string]int) bool {
+	for _, tc := range toolCalls {
+		if errorCounts[toolCallKey(tc)] < maxConsecutiveErrors {
+			return false
+		}
+	}
+	for _, tc := range toolCalls {
+		if errorCounts[toolCallKey(tc)] > maxConsecutiveErrors {
+			return true
+		}
+	}
+	return false
+}
+
 // Run executes the agentic loop: send messages to the LLM, execute any tool
 // calls it makes, feed results back, and repeat until the model stops calling
 // tools or the iteration limit is reached.
@@ -126,83 +208,14 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 			return messages, nil
 		}
 
-		stuck := true
-		for _, tc := range choice.Message.ToolCalls {
-			if cfg.Hooks.OnToolCall != nil {
-				cfg.Hooks.OnToolCall(tc)
-			}
+		toolMsgs, anySuccess, toolErr := processToolCalls(ctx, choice.Message.ToolCalls, cfg.Tools, cfg.Hooks, errorCounts)
+		messages = append(messages, toolMsgs...)
 
-			// Check tool approval before executing.
-			if cfg.Hooks.OnToolApproval != nil {
-				action := cfg.Hooks.OnToolApproval(tc)
-				if action == ApprovalBlock {
-					blocked := tools.ErrorResult("Tool call blocked by user.")
-					if cfg.Hooks.OnToolResult != nil {
-						cfg.Hooks.OnToolResult(tc, blocked)
-					}
-					messages = append(messages, api.Message{
-						Role:       "tool",
-						Content:    blocked.Output,
-						ToolCallID: tc.ID,
-						Name:       tc.Function.Name,
-					})
-					continue
-				}
-			}
-
-			tool := cfg.Tools.Get(tc.Function.Name)
-			var result *tools.ToolResult
-			if tool == nil {
-				result = tools.ErrorResult(fmt.Sprintf("unknown tool: %s", tc.Function.Name))
-			} else {
-				var execErr error
-				result, execErr = tool.Execute(ctx, tc.Function.Arguments)
-				if execErr != nil {
-					return messages, fmt.Errorf("tool %q execution error: %w", tc.Function.Name, execErr)
-				}
-			}
-
-			key := toolCallKey(tc)
-			if result.IsError {
-				errorCounts[key]++
-				if errorCounts[key] >= maxConsecutiveErrors {
-					result.Output += "\n\nYou have repeated this exact failing call multiple times. Do NOT retry it. Either try different arguments or respond to the user explaining what went wrong."
-				}
-			} else {
-				delete(errorCounts, key)
-				stuck = false
-			}
-
-			if cfg.Hooks.OnToolResult != nil {
-				cfg.Hooks.OnToolResult(tc, result)
-			}
-
-			messages = append(messages, api.Message{
-				Role:       "tool",
-				Content:    result.Output,
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-			})
+		if toolErr != nil {
+			return messages, toolErr
 		}
-
-		allRepeats := true
-		for _, tc := range choice.Message.ToolCalls {
-			if errorCounts[toolCallKey(tc)] < maxConsecutiveErrors {
-				allRepeats = false
-				break
-			}
-		}
-		if stuck && allRepeats {
-			anyOverLimit := false
-			for _, tc := range choice.Message.ToolCalls {
-				if errorCounts[toolCallKey(tc)] > maxConsecutiveErrors {
-					anyOverLimit = true
-					break
-				}
-			}
-			if anyOverLimit {
-				return messages, fmt.Errorf("agent stuck: repeated identical failing tool calls")
-			}
+		if !anySuccess && checkStuck(choice.Message.ToolCalls, errorCounts) {
+			return messages, fmt.Errorf("agent stuck: repeated identical failing tool calls")
 		}
 	}
 
@@ -286,83 +299,14 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			return messages, nil
 		}
 
-		stuck := true
-		for _, tc := range choice.Message.ToolCalls {
-			if cfg.Hooks.OnToolCall != nil {
-				cfg.Hooks.OnToolCall(tc)
-			}
+		toolMsgs, anySuccess, toolErr := processToolCalls(ctx, choice.Message.ToolCalls, cfg.Tools, cfg.Hooks, errorCounts)
+		messages = append(messages, toolMsgs...)
 
-			// Check tool approval before executing.
-			if cfg.Hooks.OnToolApproval != nil {
-				action := cfg.Hooks.OnToolApproval(tc)
-				if action == ApprovalBlock {
-					blocked := tools.ErrorResult("Tool call blocked by user.")
-					if cfg.Hooks.OnToolResult != nil {
-						cfg.Hooks.OnToolResult(tc, blocked)
-					}
-					messages = append(messages, api.Message{
-						Role:       "tool",
-						Content:    blocked.Output,
-						ToolCallID: tc.ID,
-						Name:       tc.Function.Name,
-					})
-					continue
-				}
-			}
-
-			tool := cfg.Tools.Get(tc.Function.Name)
-			var result *tools.ToolResult
-			if tool == nil {
-				result = tools.ErrorResult(fmt.Sprintf("unknown tool: %s", tc.Function.Name))
-			} else {
-				var execErr error
-				result, execErr = tool.Execute(ctx, tc.Function.Arguments)
-				if execErr != nil {
-					return messages, fmt.Errorf("tool %q execution error: %w", tc.Function.Name, execErr)
-				}
-			}
-
-			key := toolCallKey(tc)
-			if result.IsError {
-				errorCounts[key]++
-				if errorCounts[key] >= maxConsecutiveErrors {
-					result.Output += "\n\nYou have repeated this exact failing call multiple times. Do NOT retry it. Either try different arguments or respond to the user explaining what went wrong."
-				}
-			} else {
-				delete(errorCounts, key)
-				stuck = false
-			}
-
-			if cfg.Hooks.OnToolResult != nil {
-				cfg.Hooks.OnToolResult(tc, result)
-			}
-
-			messages = append(messages, api.Message{
-				Role:       "tool",
-				Content:    result.Output,
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-			})
+		if toolErr != nil {
+			return messages, toolErr
 		}
-
-		allRepeats := true
-		for _, tc := range choice.Message.ToolCalls {
-			if errorCounts[toolCallKey(tc)] < maxConsecutiveErrors {
-				allRepeats = false
-				break
-			}
-		}
-		if stuck && allRepeats {
-			anyOverLimit := false
-			for _, tc := range choice.Message.ToolCalls {
-				if errorCounts[toolCallKey(tc)] > maxConsecutiveErrors {
-					anyOverLimit = true
-					break
-				}
-			}
-			if anyOverLimit {
-				return messages, fmt.Errorf("agent stuck: repeated identical failing tool calls")
-			}
+		if !anySuccess && checkStuck(choice.Message.ToolCalls, errorCounts) {
+			return messages, fmt.Errorf("agent stuck: repeated identical failing tool calls")
 		}
 	}
 

@@ -98,7 +98,9 @@ func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *t
 			var execErr error
 			result, execErr = tool.Execute(ctx, tc.Function.Arguments)
 			if execErr != nil {
-				return nil, false, fmt.Errorf("tool %q execution error: %w", tc.Function.Name, execErr)
+				// Convert Go-level errors to tool-level errors so the LLM
+				// always sees feedback and can respond or try a different approach.
+				result = tools.ErrorResult(fmt.Sprintf("tool execution error: %v", execErr))
 			}
 		}
 
