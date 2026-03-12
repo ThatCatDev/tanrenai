@@ -114,7 +114,7 @@ jobs:
             mv "${BIN_PATH}" bin/llama-server
             # For macOS: also extract shared libraries (.dylib)
             if [[ "${{ matrix.goos }}" == "darwin" ]]; then
-              tar xzf "${ASSET}" --wildcards '*.dylib' -C bin/ --strip-components=1 2>/dev/null || true
+              tar xzf "${ASSET}" --wildcards 'llama-*/*.dylib' --strip-components=1 -C bin/ 2>/dev/null || true
             fi
           else
             unzip -j "${ASSET}" "${BIN_PATH}" -d bin/
@@ -379,7 +379,7 @@ jobs:
           tar xzf "${ASSET}" "llama-${V}/llama-server"
           mv "llama-${V}/llama-server" clients/desktop/bin/
           # Also extract shared libraries (.dylib)
-          tar xzf "${ASSET}" --wildcards '*.dylib' 2>/dev/null || true
+          tar xzf "${ASSET}" --wildcards "llama-${V}/*.dylib" 2>/dev/null || true
           mv llama-${V}/*.dylib clients/desktop/bin/ 2>/dev/null || true
           chmod +x clients/desktop/bin/*
           rm -f "${ASSET}"
