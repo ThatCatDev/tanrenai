@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
@@ -10,6 +12,21 @@ import (
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
 )
+
+// debugEnabled returns true when TANRENAI_DEBUG is set.
+func debugEnabled() bool { return os.Getenv("TANRENAI_DEBUG") != "" }
+
+func debugf(format string, args ...any) {
+	if !debugEnabled() {
+		return
+	}
+	f, err := os.OpenFile("/tmp/tanrenai-debug.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "[agent] "+format+"\n", args...)
+}
 
 // CompletionFunc sends a chat completion request and returns the response.
 type CompletionFunc func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error)
@@ -69,7 +86,13 @@ func toolCallKey(tc api.ToolCall) string {
 // detection, fires hooks, and returns the resulting tool messages plus whether
 // any call succeeded.
 func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *tools.Registry, hooks Hooks, errorCounts map[string]int) (msgs []api.Message, anySuccess bool, err error) {
-	for _, tc := range toolCalls {
+	for idx, tc := range toolCalls {
+		// Ensure tool calls have IDs — some backends (e.g. llama-server) may
+		// not generate them, but they're required for matching tool results.
+		if tc.ID == "" {
+			tc.ID = fmt.Sprintf("call_%d", idx)
+			toolCalls[idx] = tc
+		}
 		if hooks.OnToolCall != nil {
 			hooks.OnToolCall(tc)
 		}
@@ -252,6 +275,17 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			MaxTokens: &maxTokens,
 		}
 
+		if debugEnabled() {
+			debugf("iter %d: sending %d messages", i+1, len(req.Messages))
+			for j, m := range req.Messages {
+				debugf("  msg[%d] role=%q content_len=%d tool_calls=%d tool_call_id=%q", j, m.Role, len(m.Content), len(m.ToolCalls), m.ToolCallID)
+			}
+			if i > 0 {
+				reqJSON, _ := json.MarshalIndent(req, "", "  ")
+				debugf("iter %d full request:\n%s", i+1, string(reqJSON))
+			}
+		}
+
 		if cfg.OnThinking != nil {
 			cfg.OnThinking()
 		}
@@ -263,8 +297,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			}
 			return messages, fmt.Errorf("completion request failed: %w", err)
 		}
-
-		resp, err := accumulateWithCallbacks(events, &cfg)
+		resp, hadReasoning, err := accumulateWithCallbacks(events, &cfg)
 		if err != nil {
 			return messages, fmt.Errorf("stream accumulation failed: %w", err)
 		}
@@ -274,6 +307,8 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		}
 
 		choice := resp.Choices[0]
+		debugf("iter %d: finish_reason=%q content_len=%d tool_calls=%d reasoning=%v", i+1, choice.FinishReason, len(choice.Message.Content), len(choice.Message.ToolCalls), hadReasoning)
+
 		stripNarration(&choice.Message)
 		messages = append(messages, choice.Message)
 
@@ -285,14 +320,16 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		}
 
 		if choice.FinishReason != "tool_calls" || len(choice.Message.ToolCalls) == 0 {
-			if nudgeCount < maxNudges && looksLikeContinuation(choice.Message.Content) {
+			// Thinking models may produce only reasoning_content and stop
+			// without visible content. Nudge them to produce a response.
+			if nudgeCount < maxNudges && (looksLikeContinuation(choice.Message.Content) || (choice.Message.Content == "" && hadReasoning)) {
 				nudgeCount++
 				if cfg.OnContentDelta != nil {
 					cfg.OnContentDelta("\n[continuing...]\n")
 				}
 				messages = append(messages, api.Message{
 					Role:    "user",
-					Content: "Do not guess or speculate. Use your tools to gather the actual information, then answer.",
+					Content: "Please provide your response to the user.",
 				})
 				continue
 			}
@@ -313,17 +350,18 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 	return messages, fmt.Errorf("agent loop reached maximum iterations (%d)", cfg.MaxIterations)
 }
 
-func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *StreamingConfig) (*api.ChatCompletionResponse, error) {
+func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *StreamingConfig) (*api.ChatCompletionResponse, bool, error) {
 	var (
-		content       strings.Builder
-		role          string
-		model         string
-		id            string
-		finishReason  string
-		toolCalls     []api.ToolCall
-		toolArgBuf    = make(map[int]*strings.Builder)
-		gotContent    bool
-		thinkingDone  bool
+		content      strings.Builder
+		role         string
+		model        string
+		id           string
+		finishReason string
+		toolCalls    []api.ToolCall
+		toolArgBuf   = make(map[int]*strings.Builder)
+		gotContent   bool
+		gotReasoning bool
+		thinkingDone bool
 	)
 
 	for ev := range events {
@@ -331,7 +369,7 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 			if !thinkingDone && cfg.OnThinkingDone != nil {
 				cfg.OnThinkingDone()
 			}
-			return nil, ev.Err
+			return nil, false, ev.Err
 		}
 		if ev.Done {
 			break
@@ -354,6 +392,12 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 			if choice.FinishReason != nil {
 				finishReason = *choice.FinishReason
 			}
+
+			// Track reasoning_content from thinking models.
+			if choice.Delta.ReasoningContent != "" {
+				gotReasoning = true
+			}
+
 			if choice.Delta.Content != "" {
 				if !thinkingDone && cfg.OnThinkingDone != nil {
 					cfg.OnThinkingDone()
@@ -402,6 +446,8 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 		}
 	}
 
+	debugf("accumulation: reasoning=%v content_len=%d finish=%q", gotReasoning, content.Len(), finishReason)
+
 	if role == "" {
 		role = "assistant"
 	}
@@ -432,7 +478,7 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 				FinishReason: finishReason,
 			},
 		},
-	}, nil
+	}, gotReasoning, nil
 }
 
 func looksLikeContinuation(text string) bool {

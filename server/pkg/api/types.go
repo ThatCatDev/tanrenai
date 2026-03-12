@@ -98,9 +98,10 @@ type ChunkChoice struct {
 
 // MessageDelta is the incremental content in a streaming chunk.
 type MessageDelta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   string          `json:"content,omitempty"`
-	ToolCalls []ToolCallDelta `json:"tool_calls,omitempty"`
+	Role             string          `json:"role,omitempty"`
+	Content          string          `json:"content,omitempty"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 // Usage contains token usage information.

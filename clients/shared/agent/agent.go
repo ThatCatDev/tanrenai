@@ -67,7 +67,13 @@ func toolCallKey(tc api.ToolCall) string {
 // any call succeeded (i.e. the agent is not stuck). A fatal execution error
 // is returned as err.
 func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *tools.Registry, hooks Hooks, errorCounts map[string]int) (msgs []api.Message, anySuccess bool, err error) {
-	for _, tc := range toolCalls {
+	for idx, tc := range toolCalls {
+		// Ensure tool calls have IDs — some backends (e.g. llama-server) may
+		// not generate them, but they're required for matching tool results.
+		if tc.ID == "" {
+			tc.ID = fmt.Sprintf("call_%d", idx)
+			toolCalls[idx] = tc
+		}
 		if hooks.OnToolCall != nil {
 			hooks.OnToolCall(tc)
 		}
@@ -254,8 +260,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			}
 			return messages, fmt.Errorf("completion request failed: %w", err)
 		}
-
-		resp, err := accumulateWithCallbacks(events, &cfg)
+		resp, hadReasoning, err := accumulateWithCallbacks(events, &cfg)
 		if err != nil {
 			return messages, fmt.Errorf("stream accumulation failed: %w", err)
 		}
@@ -265,6 +270,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		}
 
 		choice := resp.Choices[0]
+
 		stripNarration(&choice.Message)
 		messages = append(messages, choice.Message)
 
@@ -276,14 +282,16 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		}
 
 		if choice.FinishReason != "tool_calls" || len(choice.Message.ToolCalls) == 0 {
-			if nudgeCount < maxNudges && looksLikeContinuation(choice.Message.Content) {
+			// Thinking models may produce only reasoning_content and stop
+			// without visible content. Nudge them to produce a response.
+			if nudgeCount < maxNudges && (looksLikeContinuation(choice.Message.Content) || (choice.Message.Content == "" && hadReasoning)) {
 				nudgeCount++
 				if cfg.OnContentDelta != nil {
 					cfg.OnContentDelta("\n[continuing...]\n")
 				}
 				messages = append(messages, api.Message{
 					Role:    "user",
-					Content: "Do not guess or speculate. Use your tools to gather the actual information, then answer.",
+					Content: "Please provide your response to the user.",
 				})
 				continue
 			}
@@ -304,7 +312,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 	return messages, fmt.Errorf("agent loop reached maximum iterations (%d)", cfg.MaxIterations)
 }
 
-func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *StreamingConfig) (*api.ChatCompletionResponse, error) {
+func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *StreamingConfig) (*api.ChatCompletionResponse, bool, error) {
 	var (
 		content      strings.Builder
 		role         string
@@ -314,6 +322,7 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 		toolCalls    []api.ToolCall
 		toolArgBuf   = make(map[int]*strings.Builder)
 		gotContent   bool
+		gotReasoning bool
 		thinkingDone bool
 	)
 
@@ -322,7 +331,7 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 			if !thinkingDone && cfg.OnThinkingDone != nil {
 				cfg.OnThinkingDone()
 			}
-			return nil, ev.Err
+			return nil, false, ev.Err
 		}
 		if ev.Done {
 			break
@@ -344,6 +353,9 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 			}
 			if choice.FinishReason != nil {
 				finishReason = *choice.FinishReason
+			}
+			if choice.Delta.ReasoningContent != "" {
+				gotReasoning = true
 			}
 			if choice.Delta.Content != "" {
 				if !thinkingDone && cfg.OnThinkingDone != nil {
@@ -418,12 +430,12 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 		Model:  model,
 		Choices: []api.Choice{
 			{
-				Index:        0,
+				Index: 0,
 				Message:      msg,
 				FinishReason: finishReason,
 			},
 		},
-	}, nil
+	}, gotReasoning, nil
 }
 
 func looksLikeContinuation(text string) bool {

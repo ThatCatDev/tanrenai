@@ -42,6 +42,12 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 			// Non-fatal — continue to fallback strategies.
 		}
 	}
+	if meta != nil && meta.Tokenizer.ChatTemplate != "" {
+		// The GGUF already contains an embedded chat template — llama-server
+		// reads it directly with --jinja. No need to generate or override.
+		slog.Info("template resolver: GGUF has embedded chat_template, skipping generation")
+		return nil, nil
+	}
 	if meta != nil && meta.General.Architecture != "" {
 		if cfg := MatchFamily(meta.General.Architecture, meta.General.Name); cfg != nil {
 			tpl := GenerateChatML(*cfg)
@@ -58,24 +64,9 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 		}
 	}
 
-	// Step 2: Use the chat template embedded in the GGUF file itself.
-	if meta != nil && meta.Tokenizer.ChatTemplate != "" {
-		name := "gguf-embedded"
-		if meta.General.Name != "" {
-			name = sanitizeName(meta.General.Name)
-		}
-		path, err := WriteTemplateFile(name, meta.Tokenizer.ChatTemplate)
-		if err != nil {
-			return nil, fmt.Errorf("template resolver: write GGUF template: %w", err)
-		}
-		return &TemplateResolution{
-			TemplatePath: path,
-			Source:       "gguf:" + meta.General.Name,
-			Cleanup:      func() { os.Remove(path) },
-		}, nil
-	}
-
-	// Step 3: Try HuggingFace via .meta.json sidecar.
+	// Step 2: Try HuggingFace via .meta.json sidecar.
+	// Note: if the GGUF has a chat_template, llama-server reads it directly —
+	// no need to extract and write it to a file.
 	modelMeta, err := models.LoadMetadata(modelPath)
 	if err != nil {
 		slog.Warn("template resolver: could not load model metadata", "error", err)
