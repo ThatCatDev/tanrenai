@@ -275,9 +275,9 @@ func (t *tuiApp) updateStreamingLine() {
 func (t *tuiApp) refreshChatView() {
 	var parts []string
 
-	// Show forging animation during loading
+	// Show braille logo + spinner during loading
 	if t.anvilFrame >= 0 {
-		parts = append(parts, "", renderAnvilFrame(t.anvilFrame), "")
+		parts = append(parts, renderLoadingArt(t.anvilFrame))
 	}
 
 	if !t.expanded || len(t.toolResults) == 0 {
