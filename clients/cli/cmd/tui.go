@@ -83,6 +83,10 @@ type tuiApp struct {
 	turnCancel    context.CancelFunc
 	cleanupFn     func() // called on app exit (e.g. stop local servers)
 
+	// Loading animation
+	anvilFrame int // current animation frame (-1 = not animating)
+	anvilStop  chan struct{}
+
 	// Progress tracking
 	iterStartTime    time.Time
 	iterHistory      []iterRecord // persists across turns — never reset
@@ -114,6 +118,7 @@ func newTuiApp(modelName string) *tuiApp {
 		focus:         focusChat,
 		modelName:     modelName,
 		permissions:   tools.LoadPermissions(),
+		anvilFrame:    -1, // not animating
 	}
 
 	t.app = tview.NewApplication()
@@ -268,9 +273,15 @@ func (t *tuiApp) updateStreamingLine() {
 }
 
 func (t *tuiApp) refreshChatView() {
-	var content string
+	var parts []string
+
+	// Show forging animation during loading
+	if t.anvilFrame >= 0 {
+		parts = append(parts, "", renderAnvilFrame(t.anvilFrame), "")
+	}
+
 	if !t.expanded || len(t.toolResults) == 0 {
-		content = strings.Join(t.lines, "\n")
+		parts = append(parts, strings.Join(t.lines, "\n"))
 	} else {
 		var built []string
 		for i, line := range t.lines {
@@ -282,9 +293,10 @@ func (t *tuiApp) refreshChatView() {
 				built = append(built, line)
 			}
 		}
-		content = strings.Join(built, "\n")
+		parts = append(parts, strings.Join(built, "\n"))
 	}
-	t.chatView.SetText(content)
+
+	t.chatView.SetText(strings.Join(parts, "\n"))
 	t.chatView.ScrollToEnd()
 }
 

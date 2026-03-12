@@ -304,6 +304,7 @@ var chatCmd = &cobra.Command{
 func startTUI(model string, startup func(t *tuiApp, log *startupLog) error) error {
 	t := newTuiApp(model)
 	t.loading = true
+	t.startLoadingAnimation()
 
 	// Redirect slog to the TUI so embedded server logs appear in the chat view.
 	slog.SetDefault(slog.New(&tuiSlogHandler{tui: t}))
@@ -317,6 +318,7 @@ func startTUI(model string, startup func(t *tuiApp, log *startupLog) error) erro
 
 		if err != nil {
 			t.app.QueueUpdateDraw(func() {
+				t.stopLoadingAnimation()
 				t.addLine(fmt.Sprintf("[red::-]  Error: %v[-:-:-]", err))
 				t.addLine("[gray::-]  Press Ctrl+C to exit.[-:-:-]")
 				t.refreshChatView()
@@ -325,6 +327,7 @@ func startTUI(model string, startup func(t *tuiApp, log *startupLog) error) erro
 		}
 
 		t.app.QueueUpdateDraw(func() {
+			t.stopLoadingAnimation()
 			t.loading = false
 			t.inputField.SetPlaceholder("")
 			t.addLine("")
