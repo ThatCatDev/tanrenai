@@ -110,16 +110,17 @@ jobs:
 
           mkdir -p bin
           if [[ "${ASSET}" == *.tar.gz ]]; then
-            tar xzf "${ASSET}" "${BIN_PATH}"
+            tar xzf "${ASSET}"
             mv "${BIN_PATH}" bin/llama-server
-            # For macOS: also extract shared libraries (.dylib)
+            # For macOS: also copy shared libraries (.dylib)
             if [[ "${{ matrix.goos }}" == "darwin" ]]; then
-              tar xzf "${ASSET}" --wildcards 'llama-*/*.dylib' --strip-components=1 -C bin/ 2>/dev/null || true
+              LLAMA_DIR=$(dirname "${BIN_PATH}")
+              cp "${LLAMA_DIR}"/*.dylib bin/ 2>/dev/null || true
             fi
           else
             unzip -j "${ASSET}" "${BIN_PATH}" -d bin/
           fi
-          chmod +x bin/llama-server* 2>/dev/null || true
+          chmod +x bin/* 2>/dev/null || true
 
           # For Windows CUDA: also download cudart DLLs
           CUDART="${{ matrix.llama_cudart }}"
@@ -131,7 +132,7 @@ jobs:
             unzip -oj "${ASSET}" '*.dll' -d bin/ 2>/dev/null || true
           fi
 
-          rm -f "${ASSET}" "${CUDART}" 2>/dev/null || true
+          rm -rf "${ASSET}" "${CUDART}" "llama-${V}" 2>/dev/null || true
           echo "Bundled llama-server files:"
           ls -lh bin/
 
@@ -376,13 +377,12 @@ jobs:
           ASSET="llama-${V}-bin-macos-arm64.tar.gz"
           gh release download "${V}" --repo ggerganov/llama.cpp --pattern "${ASSET}" --dir .
           mkdir -p clients/desktop/bin
-          tar xzf "${ASSET}" "llama-${V}/llama-server"
+          tar xzf "${ASSET}"
           mv "llama-${V}/llama-server" clients/desktop/bin/
-          # Also extract shared libraries (.dylib)
-          tar xzf "${ASSET}" --wildcards "llama-${V}/*.dylib" 2>/dev/null || true
-          mv llama-${V}/*.dylib clients/desktop/bin/ 2>/dev/null || true
+          # Also copy shared libraries (.dylib)
+          cp llama-${V}/*.dylib clients/desktop/bin/ 2>/dev/null || true
           chmod +x clients/desktop/bin/*
-          rm -f "${ASSET}"
+          rm -rf "${ASSET}" "llama-${V}"
 
       - name: Create macOS app bundle
         run: |
