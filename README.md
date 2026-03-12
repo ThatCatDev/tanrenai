@@ -145,13 +145,27 @@ tanrenai --local run Qwen3-8B-Q4_K_M --agent
 
 ### Tool Permissions
 
-When the agent invokes a tool, you'll be prompted to approve it:
+When the agent invokes a tool, you'll be prompted to approve it. The options depend on the tool's risk level:
 
+**Read-only tools** (`file_read`, `list_dir`, `find_files`, `grep_search`, `git_info`):
 - **Allow** — run this once
-- **Always Allow** — run and remember (saved to `.tanrenai/permissions.json`)
+- **Always Allow** — blanket-approve this tool
 - **Block** — skip the call
 
-Use arrow keys or mouse to select, Enter to confirm. Permissions are loaded from both `~/.tanrenai/permissions.json` (global) and `.tanrenai/permissions.json` (project-local, takes priority).
+**File-writing tools** (`file_write`, `patch_file`):
+- **Allow** — run this once
+- **Always (path)** — always allow this specific file path
+- **Always (all)** — blanket-approve all writes
+- **Block** — skip the call
+
+**Shell commands** (`shell_exec`):
+- **Allow** — run this once
+- **Always (git \*)** — always allow commands starting with `git` (or whichever prefix)
+- **Block** — skip the call
+
+Shell commands cannot be blanket-approved — you must approve by command prefix for safety.
+
+Use arrow keys or mouse to select, Enter to confirm. Permissions are saved to `.tanrenai/permissions.json` in the current directory and merged with `~/.tanrenai/permissions.json` (global).
 
 ## Memory / RAG
 

@@ -461,31 +461,80 @@ func (t *tuiApp) predictDuration(inputTokens int) time.Duration {
 // approveToolCall checks permissions and shows a modal if needed.
 // Called from the agent goroutine — blocks until user responds.
 func (t *tuiApp) approveToolCall(call api.ToolCall) agent.ApprovalAction {
-	if t.permissions.IsAllowed(call.Function.Name) {
+	if t.permissions.IsAllowed(call.Function.Name, call.Function.Arguments) {
 		return agent.ApprovalAllow
 	}
 
 	responseCh := make(chan agent.ApprovalAction, 1)
 
 	t.app.QueueUpdateDraw(func() {
-		// Format args for display (truncate if long)
-		args := call.Function.Arguments
-		if len(args) > 200 {
-			args = args[:200] + "..."
+		toolName := call.Function.Name
+		argsJSON := call.Function.Arguments
+		risk := tools.ToolRisk(toolName)
+		approvalKey := tools.ApprovalKey(toolName)
+		keyValue := tools.ExtractArg(argsJSON, approvalKey)
+
+		// Format display text
+		displayArgs := argsJSON
+		if len(displayArgs) > 300 {
+			displayArgs = displayArgs[:300] + "..."
+		}
+
+		// Build buttons based on risk level
+		var buttons []string
+		switch risk {
+		case tools.RiskReadOnly:
+			buttons = []string{"Allow", "Always Allow", "Block"}
+		case tools.RiskWrite:
+			if keyValue != "" {
+				buttons = []string{"Allow", "Always (path)", "Always (all)", "Block"}
+			} else {
+				buttons = []string{"Allow", "Always Allow", "Block"}
+			}
+		case tools.RiskExecute:
+			if keyValue != "" {
+				prefix := tools.CommandPrefix(keyValue)
+				if prefix != "" {
+					buttons = []string{"Allow", "Always (" + prefix + " *)", "Block"}
+				} else {
+					buttons = []string{"Allow", "Block"}
+				}
+			} else {
+				buttons = []string{"Allow", "Block"}
+			}
+		case tools.RiskNetwork:
+			buttons = []string{"Allow", "Always Allow", "Block"}
+		default:
+			buttons = []string{"Allow", "Block"}
 		}
 
 		modal := tview.NewModal().
 			SetText(fmt.Sprintf("Tool: [yellow::b]%s[-:-:-]\n\n%s",
-				call.Function.Name, tview.Escape(args))).
-			AddButtons([]string{"Allow", "Always Allow", "Block"}).
+				toolName, tview.Escape(displayArgs))).
+			AddButtons(buttons).
 			SetDoneFunc(func(_ int, label string) {
 				t.pages.RemovePage("approval")
 				t.app.SetFocus(t.inputField)
-				switch label {
-				case "Always Allow":
-					_ = t.permissions.Allow(call.Function.Name)
+				switch {
+				case label == "Always Allow":
+					_ = t.permissions.AllowTool(toolName)
 					responseCh <- agent.ApprovalAlwaysAllow
-				case "Block":
+				case label == "Always (all)":
+					_ = t.permissions.AllowTool(toolName)
+					responseCh <- agent.ApprovalAlwaysAllow
+				case label == "Always (path)" && keyValue != "":
+					_ = t.permissions.AllowToolWithArgs(toolName, map[string][]string{
+						approvalKey: {keyValue},
+					})
+					responseCh <- agent.ApprovalAlwaysAllow
+				case strings.HasPrefix(label, "Always (") && strings.HasSuffix(label, " *)"):
+					// "Always (git *)" → save prefix rule
+					prefix := tools.CommandPrefix(keyValue)
+					_ = t.permissions.AllowToolWithArgs(toolName, map[string][]string{
+						approvalKey: {prefix + " *"},
+					})
+					responseCh <- agent.ApprovalAlwaysAllow
+				case label == "Block":
 					responseCh <- agent.ApprovalBlock
 				default:
 					responseCh <- agent.ApprovalAllow
