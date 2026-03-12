@@ -113,9 +113,12 @@ func NewSubprocess(cfg SubprocessConfig) (*Subprocess, error) {
 	// Set library path so CUDA/other shared libs next to llama-server are found.
 	binDir := filepath.Dir(binPath)
 	env := os.Environ()
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		env = append(env, "PATH="+binDir+";"+os.Getenv("PATH"))
-	} else {
+	case "darwin":
+		env = append(env, "DYLD_LIBRARY_PATH="+binDir+":"+os.Getenv("DYLD_LIBRARY_PATH"))
+	default:
 		env = append(env, "LD_LIBRARY_PATH="+binDir+":"+os.Getenv("LD_LIBRARY_PATH"))
 	}
 
