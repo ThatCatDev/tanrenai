@@ -191,6 +191,9 @@ func (s *Subprocess) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start %s: %w", s.label, err)
 	}
 
+	// On Windows, assign to a Job Object so the subprocess is killed if we crash.
+	afterStart(s.cmd)
+
 	// Background goroutine to detect process exit.
 	go func() {
 		s.cmd.Wait()
@@ -257,6 +260,7 @@ func (s *Subprocess) GracefulStop() error {
 	select {
 	case <-s.doneCh:
 		slog.Info("subprocess exited cleanly", "label", s.label)
+		cleanupProcAttr(s.cmd)
 		return nil
 	case <-time.After(5 * time.Second):
 		slog.Warn("subprocess did not exit after SIGTERM, sending SIGKILL", "label", s.label, "pid", pid)
@@ -264,6 +268,7 @@ func (s *Subprocess) GracefulStop() error {
 			return fmt.Errorf("failed to kill %s: %w", s.label, err)
 		}
 		<-s.doneCh
+		cleanupProcAttr(s.cmd)
 		return nil
 	}
 }

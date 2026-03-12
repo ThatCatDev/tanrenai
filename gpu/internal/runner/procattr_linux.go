@@ -12,3 +12,9 @@ func setSysProcAttr(cmd *exec.Cmd) {
 		Pdeathsig: syscall.SIGTERM,
 	}
 }
+
+// afterStart is a no-op on Linux — Pdeathsig handles cleanup automatically.
+func afterStart(cmd *exec.Cmd) {}
+
+// cleanupProcAttr is a no-op on Linux.
+func cleanupProcAttr(cmd *exec.Cmd) {}
