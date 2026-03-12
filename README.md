@@ -52,10 +52,10 @@ curl -fsSL https://raw.githubusercontent.com/ThatCatDev/tanrenai/main/installers
 ```bash
 tar xzf tanrenai-cli-darwin-arm64.tar.gz   # or darwin-amd64 for Intel
 cd tanrenai-cli-darwin-arm64
-chmod +x tanrenai-cli bin/llama-server
+chmod +x tanrenai-cli bin/*
 cp tanrenai-cli ~/.local/bin/tanrenai
 mkdir -p ~/.local/share/tanrenai/bin
-cp bin/llama-server ~/.local/share/tanrenai/bin/
+cp bin/* ~/.local/share/tanrenai/bin/
 ```
 
 ### Windows
