@@ -58,7 +58,24 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 		}
 	}
 
-	// Step 2: Try HuggingFace via .meta.json sidecar.
+	// Step 2: Use the chat template embedded in the GGUF file itself.
+	if meta != nil && meta.Tokenizer.ChatTemplate != "" {
+		name := "gguf-embedded"
+		if meta.General.Name != "" {
+			name = sanitizeName(meta.General.Name)
+		}
+		path, err := WriteTemplateFile(name, meta.Tokenizer.ChatTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("template resolver: write GGUF template: %w", err)
+		}
+		return &TemplateResolution{
+			TemplatePath: path,
+			Source:       "gguf:" + meta.General.Name,
+			Cleanup:      func() { os.Remove(path) },
+		}, nil
+	}
+
+	// Step 3: Try HuggingFace via .meta.json sidecar.
 	modelMeta, err := models.LoadMetadata(modelPath)
 	if err != nil {
 		slog.Warn("template resolver: could not load model metadata", "error", err)
@@ -86,7 +103,7 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 		}
 	}
 
-	// Step 3: No template found — return nil (caller uses whatever is in the GGUF).
+	// Step 4: No template found — return nil (caller uses whatever llama-server defaults to).
 	return nil, nil
 }
 
