@@ -10,7 +10,7 @@ type Config struct {
 	CtxSize          int
 	ChatTemplateFile string // optional Jinja chat template override
 	EmbeddingModel   string // optional embedding model name/path
-	ReasoningFormat  string // optional reasoning format (e.g. "deepseek" for Qwen3.5 thinking mode)
+	ReasoningFormat  string // optional reasoning format (e.g. "deepseek" for thinking/reasoning mode)
 	FlashAttention   bool   // enable flash attention (default true)
 	NoAutoTemplate   bool   // disable automatic template detection from GGUF metadata
 }

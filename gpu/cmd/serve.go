@@ -37,29 +37,22 @@ var serveCmd = &cobra.Command{
 		if tpl, _ := cmd.Flags().GetString("chat-template-file"); tpl != "" {
 			cfg.ChatTemplateFile = tpl
 		}
-		// Named template shortcut — generates from ChatMLConfig instead of static constants.
+		// Named template shortcut — generates a generic ChatML template.
 		if name, _ := cmd.Flags().GetString("chat-template"); name != "" && cfg.ChatTemplateFile == "" {
-			var tplCfg runner.ChatMLConfig
-			var label string
 			switch name {
-			case "qwen2.5", "qwen2", "qwen":
-				tplCfg = runner.DefaultChatMLConfig
-				label = "qwen25"
-			case "qwen3.5", "qwen3":
-				tplCfg = runner.DefaultChatMLConfig
-				tplCfg.SystemAsUser = true
-				label = "qwen35"
+			case "chatml":
+				// OK
 			default:
-				return fmt.Errorf("unknown chat template %q (available: qwen2.5, qwen3.5)", name)
+				return fmt.Errorf("unknown chat template %q (available: chatml; or use --chat-template-file for custom templates)", name)
 			}
-			tpl := runner.GenerateChatML(tplCfg)
-			path, err := runner.WriteTemplateFile(label, tpl)
+			tpl := runner.GenerateChatML(runner.DefaultChatMLConfig)
+			path, err := runner.WriteTemplateFile("chatml", tpl)
 			if err != nil {
 				return fmt.Errorf("failed to write chat template: %w", err)
 			}
 			defer os.Remove(path)
 			cfg.ChatTemplateFile = path
-			fmt.Printf("Using %s native chat template (generated)\n", name)
+			fmt.Printf("Using %s chat template (generated)\n", name)
 		}
 
 		if embModel, _ := cmd.Flags().GetString("embedding-model"); embModel != "" {
@@ -105,7 +98,7 @@ func init() {
 	serveCmd.Flags().Int("port", 11435, "listen port")
 	serveCmd.Flags().Int("gpu-layers", -1, "GPU layers to offload (-1 = auto)")
 	serveCmd.Flags().Int("ctx-size", 4096, "context window size")
-	serveCmd.Flags().String("chat-template", "", "named chat template to use (e.g. qwen2.5)")
+	serveCmd.Flags().String("chat-template", "", "named chat template (e.g. chatml)")
 	serveCmd.Flags().String("chat-template-file", "", "path to custom Jinja chat template file")
 	serveCmd.Flags().String("embedding-model", "", "embedding model name (e.g. nomic-embed-text)")
 	serveCmd.Flags().String("reasoning-format", "", "reasoning format for thinking mode (e.g. deepseek)")

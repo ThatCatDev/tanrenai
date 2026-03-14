@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-func TestGenerateChatML_Qwen25_MatchesStatic(t *testing.T) {
+func TestGenerateChatML_Default(t *testing.T) {
 	cfg := DefaultChatMLConfig
 	tpl := GenerateChatML(cfg)
 
-	// Key structural checks against the known Qwen 2.5 template.
+	// Key structural checks against the default ChatML template.
 	checks := []string{
 		// Tools preamble
 		`{%- if tools %}`,
@@ -34,13 +34,13 @@ func TestGenerateChatML_Qwen25_MatchesStatic(t *testing.T) {
 
 	for _, check := range checks {
 		if !strings.Contains(tpl, check) {
-			t.Errorf("Qwen2.5 template missing expected substring: %q", check)
+			t.Errorf("default ChatML template missing expected substring: %q", check)
 		}
 	}
 
 	// Should NOT have hardcoded 'user' for system messages.
 	if strings.Contains(tpl, `'user\n' + message['content']`) {
-		// This line appears in both, but in Qwen2.5 the user+system branch uses message['role']
+		// This line appears in both, but in default mode the user+system branch uses message['role']
 		// Check more specifically that non-first system isn't forced to 'user'
 		lines := strings.Split(tpl, "\n")
 		for _, line := range lines {
@@ -53,14 +53,14 @@ func TestGenerateChatML_Qwen25_MatchesStatic(t *testing.T) {
 	}
 }
 
-func TestGenerateChatML_Qwen35_SystemAsUser(t *testing.T) {
+func TestGenerateChatML_SystemAsUser(t *testing.T) {
 	cfg := DefaultChatMLConfig
 	cfg.SystemAsUser = true
 	tpl := GenerateChatML(cfg)
 
-	// Qwen 3.5 renders non-first system as 'user' — look for hardcoded user role.
+	// SystemAsUser renders non-first system as 'user' — look for hardcoded user role.
 	if !strings.Contains(tpl, `<|im_start|>user\n' + message['content']`) {
-		t.Error("Qwen3.5 template should hardcode 'user' for system+user messages")
+		t.Error("SystemAsUser template should hardcode 'user' for system+user messages")
 	}
 
 	// Should NOT contain message['role'] in the user/system branch.
@@ -69,7 +69,7 @@ func TestGenerateChatML_Qwen35_SystemAsUser(t *testing.T) {
 	for _, line := range lines {
 		if strings.Contains(line, "message['role'] == 'user'") {
 			if strings.Contains(line, "message['role'] + '\\n'") {
-				t.Error("Qwen3.5 template should not use message['role'] in user/system rendering")
+				t.Error("SystemAsUser template should not use message['role'] in user/system rendering")
 			}
 		}
 	}
@@ -91,53 +91,5 @@ func TestGenerateChatML_CustomTokens(t *testing.T) {
 		if !strings.Contains(tpl, tok) {
 			t.Errorf("custom template missing token: %q", tok)
 		}
-	}
-}
-
-func TestMatchFamily_Qwen2(t *testing.T) {
-	cfg := MatchFamily("qwen2", "Qwen2.5-Coder-32B")
-	if cfg == nil {
-		t.Fatal("expected match for qwen2 architecture")
-	}
-	if cfg.SystemAsUser {
-		t.Error("qwen2 should have SystemAsUser = false")
-	}
-}
-
-func TestMatchFamily_Qwen3(t *testing.T) {
-	cfg := MatchFamily("qwen3", "Qwen3-32B")
-	if cfg == nil {
-		t.Fatal("expected match for qwen3 architecture")
-	}
-	if !cfg.SystemAsUser {
-		t.Error("qwen3 should have SystemAsUser = true")
-	}
-}
-
-func TestMatchFamily_Qwen2ArchWithQwen3Name(t *testing.T) {
-	// Qwen3 models sometimes use qwen2 architecture.
-	cfg := MatchFamily("qwen2", "Qwen3.5-Coder-32B")
-	if cfg == nil {
-		t.Fatal("expected match for qwen2 arch + qwen3 name")
-	}
-	if !cfg.SystemAsUser {
-		t.Error("qwen2 arch + qwen3 name should have SystemAsUser = true")
-	}
-}
-
-func TestMatchFamily_Unknown(t *testing.T) {
-	cfg := MatchFamily("llama", "Llama-3-70B")
-	if cfg != nil {
-		t.Error("expected nil for unknown architecture")
-	}
-}
-
-func TestMatchFamily_CaseInsensitive(t *testing.T) {
-	cfg := MatchFamily("Qwen2", "QWEN3-TEST")
-	if cfg == nil {
-		t.Fatal("expected case-insensitive match")
-	}
-	if !cfg.SystemAsUser {
-		t.Error("should match qwen3 name pattern case-insensitively")
 	}
 }

@@ -28,7 +28,7 @@ type Options struct {
 	ChatTemplateFile string
 
 	// ReasoningFormat specifies the reasoning/thinking format for llama-server
-	// (e.g. "deepseek" for Qwen3.5 thinking mode).
+	// (e.g. "deepseek" for thinking/reasoning mode).
 	ReasoningFormat string
 
 	// Quiet suppresses subprocess stdout/stderr output.

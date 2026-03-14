@@ -16,7 +16,7 @@ type TemplateResolution struct {
 	TemplatePath string
 
 	// Source describes where the template came from.
-	// Examples: "generated:qwen2", "huggingface:Qwen/Qwen2.5-32B-GGUF", "none"
+	// Examples: "generated:chatml", "huggingface:Qwen/Qwen2.5-32B-GGUF", "none"
 	Source string
 
 	// Cleanup removes the temporary template file. May be nil.
@@ -29,11 +29,12 @@ type TemplateResolution struct {
 // could be determined.
 //
 // Resolution chain:
-//  1. Read GGUF metadata → match architecture/name to known family → generate template
-//  2. Load .meta.json sidecar → fetch from HuggingFace if repo info available
-//  3. Return nil if no strategy works
+//  1. If GGUF has embedded tokenizer.chat_template → return nil (llama-server reads it with --jinja)
+//  2. If .meta.json has HF repo → fetch from HuggingFace (model-specific, higher quality)
+//  3. If GGUF has architecture metadata but no template → generic ChatML fallback with warning
+//  4. Return nil if no strategy works
 func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution, error) {
-	// Step 1: Try GGUF metadata → family match → generate.
+	// Step 1: Read GGUF metadata — check for embedded chat template.
 	if meta == nil {
 		var err error
 		meta, err = gguf.ReadMetadata(modelPath)
@@ -48,25 +49,8 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 		slog.Info("template resolver: GGUF has embedded chat_template, skipping generation")
 		return nil, nil
 	}
-	if meta != nil && meta.General.Architecture != "" {
-		if cfg := MatchFamily(meta.General.Architecture, meta.General.Name); cfg != nil {
-			tpl := GenerateChatML(*cfg)
-			name := sanitizeName(meta.General.Architecture)
-			path, err := WriteTemplateFile(name, tpl)
-			if err != nil {
-				return nil, fmt.Errorf("template resolver: write generated template: %w", err)
-			}
-			return &TemplateResolution{
-				TemplatePath: path,
-				Source:       "generated:" + meta.General.Architecture,
-				Cleanup:      func() { os.Remove(path) },
-			}, nil
-		}
-	}
 
 	// Step 2: Try HuggingFace via .meta.json sidecar.
-	// Note: if the GGUF has a chat_template, llama-server reads it directly —
-	// no need to extract and write it to a file.
 	modelMeta, err := models.LoadMetadata(modelPath)
 	if err != nil {
 		slog.Warn("template resolver: could not load model metadata", "error", err)
@@ -92,6 +76,25 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 				Cleanup:      func() { os.Remove(path) },
 			}, nil
 		}
+	}
+
+	// Step 3: Generic ChatML fallback when the GGUF has architecture metadata
+	// but no embedded template and no HuggingFace source.
+	if meta != nil && meta.General.Architecture != "" {
+		slog.Warn("template resolver: no embedded template or HuggingFace source, falling back to generic ChatML",
+			"architecture", meta.General.Architecture, "name", meta.General.Name)
+		cfg := DefaultChatMLConfig
+		tpl := GenerateChatML(cfg)
+		name := sanitizeName(meta.General.Architecture)
+		path, err := WriteTemplateFile(name, tpl)
+		if err != nil {
+			return nil, fmt.Errorf("template resolver: write generated template: %w", err)
+		}
+		return &TemplateResolution{
+			TemplatePath: path,
+			Source:       "generated:chatml",
+			Cleanup:      func() { os.Remove(path) },
+		}, nil
 	}
 
 	// Step 4: No template found — return nil (caller uses whatever llama-server defaults to).

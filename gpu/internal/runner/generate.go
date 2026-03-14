@@ -15,8 +15,8 @@ type ChatMLConfig struct {
 	ToolRespEnd      string // e.g. "</tool_response>"
 	DefaultSysPrompt string // e.g. "You are a helpful assistant."
 	// SystemAsUser renders non-first system messages as the 'user' role instead
-	// of the original role. Required for models like Qwen 3.5 that enforce
-	// system messages only at the beginning.
+	// of the original role. Required for models that enforce system messages
+	// only at the beginning.
 	SystemAsUser bool
 }
 
@@ -80,13 +80,13 @@ func GenerateChatML(cfg ChatMLConfig) string {
 
 	// The role used for non-first system messages and user messages.
 	if cfg.SystemAsUser {
-		// Qwen 3.5 style: both user and non-first system render as 'user'.
+		// SystemAsUser mode: both user and non-first system render as 'user'.
 		fmt.Fprintf(&b, `{%%- for message in messages %%}
     {%%- if message['role'] == 'user' or (message['role'] == 'system' and (not tools or not loop.first)) %%}
         {{- '%suser\n' + message['content'] + '%s' }}`,
 			cfg.StartToken, endRole(cfg))
 	} else {
-		// Qwen 2.5 style: non-first system keeps its original role.
+		// Standard mode: non-first system keeps its original role.
 		fmt.Fprintf(&b, `{%%- for message in messages %%}
     {%%- if (message['role'] == 'user') or (message['role'] == 'system' and (not tools or not loop.first)) %%}
         {{- '%s' + message['role'] + '\n' + message['content'] + '%s' }}`,
@@ -153,65 +153,3 @@ func endRole(cfg ChatMLConfig) string {
 	return cfg.EndToken + `\n`
 }
 
-// FamilyEntry maps a model architecture (and optional name substring) to a ChatMLConfig.
-type FamilyEntry struct {
-	Architecture string   // e.g. "qwen2", "qwen3"
-	NameContains []string // optional: require name to contain one of these substrings (case-insensitive)
-	Config       ChatMLConfig
-}
-
-// familyRegistry is searched in order; more specific entries should come first.
-var familyRegistry = []FamilyEntry{
-	{
-		// Qwen3 models running on qwen2 architecture but with "qwen3" in name
-		Architecture: "qwen2",
-		NameContains: []string{"qwen3"},
-		Config: func() ChatMLConfig {
-			c := DefaultChatMLConfig
-			c.SystemAsUser = true
-			return c
-		}(),
-	},
-	{
-		// Native qwen3 architecture
-		Architecture: "qwen3",
-		Config: func() ChatMLConfig {
-			c := DefaultChatMLConfig
-			c.SystemAsUser = true
-			return c
-		}(),
-	},
-	{
-		// Standard qwen2 architecture
-		Architecture: "qwen2",
-		Config:       DefaultChatMLConfig,
-	},
-}
-
-// MatchFamily finds the ChatMLConfig for the given architecture and model name.
-// Returns nil if no entry matches.
-func MatchFamily(arch, name string) *ChatMLConfig {
-	archLower := strings.ToLower(arch)
-	nameLower := strings.ToLower(name)
-
-	for _, entry := range familyRegistry {
-		if strings.ToLower(entry.Architecture) != archLower {
-			continue
-		}
-		if len(entry.NameContains) > 0 {
-			matched := false
-			for _, sub := range entry.NameContains {
-				if strings.Contains(nameLower, strings.ToLower(sub)) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-		}
-		cfg := entry.Config
-		return &cfg
-	}
-	return nil
-}

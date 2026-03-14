@@ -190,7 +190,7 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) (*LoadResult, 
 	}
 
 	// Always enable reasoning format — it's harmless for non-thinking models
-	// but required for thinking models like Qwen3.5 where <think> tokens would
+	// but required for thinking models where <think> tokens would
 	// silently consume the output budget without producing visible content.
 	if opts.ReasoningFormat == "" {
 		opts.ReasoningFormat = "deepseek"
