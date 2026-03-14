@@ -63,7 +63,7 @@ type tuiApp struct {
 	fileHeader *tview.TextView // 1-line file path + hints
 	fileView   *tview.TextView // scrollable syntax-highlighted content
 
-	inputField *tview.InputField
+	inputArea *tview.TextArea
 	statusBar  *tview.TextView
 	statusText string
 
@@ -74,8 +74,6 @@ type tuiApp struct {
 	expanded      bool                 // Tab toggles full tool output
 	filePath             string               // "" = no file viewer open
 	focus                focusTarget
-	autocompleteActive   bool
-	autocompleteMatches  []string
 	loading       bool // true until startup goroutine completes
 	processing    bool
 	ctrlCPending  bool
@@ -137,48 +135,16 @@ func newTuiApp(modelName string) *tuiApp {
 		SetScrollable(false)
 	t.statusBar.SetBorder(false)
 
-	// Input field
-	t.inputField = tview.NewInputField().
+	// Input area (multiline)
+	t.inputArea = tview.NewTextArea().
 		SetLabel("[blue::b] > [-:-:-]").
 		SetLabelWidth(4).
-		SetFieldBackgroundColor(tcell.ColorDefault).
 		SetPlaceholder("Loading...").
-		SetPlaceholderTextColor(tcell.ColorGray)
-	t.inputField.SetBorder(false)
-
-	// Slash command autocomplete
-	t.inputField.SetAutocompleteFunc(func(currentText string) []string {
-		if !strings.HasPrefix(currentText, "/") {
-			t.autocompleteActive = false
-			t.autocompleteMatches = nil
-			return nil
-		}
-		var entries []string
-		t.autocompleteMatches = nil
-		for _, sc := range slashCommands {
-			if strings.HasPrefix(sc.cmd, currentText) {
-				entries = append(entries, fmt.Sprintf("%-20s %s", strings.TrimRight(sc.cmd, " "), sc.desc))
-				t.autocompleteMatches = append(t.autocompleteMatches, sc.cmd)
-			}
-		}
-		t.autocompleteActive = len(entries) > 0
-		return entries
-	})
-	t.inputField.SetAutocompletedFunc(func(text string, index int, source int) bool {
-		if source == tview.AutocompletedNavigate {
-			return false // just highlight, don't select
-		}
-		if index >= 0 && index < len(t.autocompleteMatches) {
-			t.inputField.SetText(t.autocompleteMatches[index])
-		}
-		t.autocompleteActive = false
-		return true
-	})
-	t.inputField.SetAutocompleteStyles(
-		tcell.ColorDarkSlateGray,
-		tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorDarkSlateGray),
-		tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlue),
-	)
+		SetWordWrap(true).
+		SetWrap(true)
+	t.inputArea.SetBorder(false)
+	t.inputArea.SetBackgroundColor(tcell.ColorDefault)
+	t.inputArea.SetTextStyle(tcell.StyleDefault.Background(tcell.ColorDefault))
 
 	// Build layout
 	t.chatArea = tview.NewFlex().SetDirection(tview.FlexColumn)
@@ -188,7 +154,7 @@ func newTuiApp(modelName string) *tuiApp {
 	t.rootFlex.AddItem(t.chatArea, 0, 1, false)
 	t.rootFlex.AddItem(t.statusBar, 1, 0, false)
 	t.rootFlex.AddItem(newHDivider(), 1, 0, false)
-	t.rootFlex.AddItem(t.inputField, 1, 0, true)
+	t.rootFlex.AddItem(t.inputArea, 3, 0, true)
 	t.rootFlex.AddItem(newHDivider(), 1, 0, false)
 
 	t.pages = tview.NewPages()
@@ -231,7 +197,7 @@ func newVDivider(focused bool) *tview.Box {
 }
 
 func (t *tuiApp) run() error {
-	err := t.app.SetRoot(t.pages, true).EnableMouse(true).Run()
+	err := t.app.SetRoot(t.pages, true).EnableMouse(true).EnablePaste(true).Run()
 	if t.cleanupFn != nil {
 		t.cleanupFn()
 	}

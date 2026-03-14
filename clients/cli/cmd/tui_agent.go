@@ -514,7 +514,7 @@ func (t *tuiApp) approveToolCall(call api.ToolCall) agent.ApprovalAction {
 			AddButtons(buttons).
 			SetDoneFunc(func(_ int, label string) {
 				t.pages.RemovePage("approval")
-				t.app.SetFocus(t.inputField)
+				t.app.SetFocus(t.inputArea)
 				switch {
 				case label == "Always Allow":
 					_ = t.permissions.AllowTool(toolName)

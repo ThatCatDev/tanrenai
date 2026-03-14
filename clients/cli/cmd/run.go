@@ -329,7 +329,7 @@ func startTUI(model string, startup func(t *tuiApp, log *startupLog) error) erro
 		t.app.QueueUpdateDraw(func() {
 			t.stopLoadingAnimation()
 			t.loading = false
-			t.inputField.SetPlaceholder("")
+			t.inputArea.SetPlaceholder("")
 			t.addLine("")
 			t.refreshChatView()
 		})

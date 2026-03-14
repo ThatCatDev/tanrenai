@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -85,12 +86,44 @@ func resolveBinary(binDir string) (string, error) {
 	return "", fmt.Errorf("llama-server not found at %s — place it in the bin/ directory next to the tanrenai executable, or in %s", binPath, binDir)
 }
 
+// checkGPUSupport logs a warning if an NVIDIA GPU is detected but llama-server
+// lacks CUDA support (Linux only).
+func checkGPUSupport(binPath string) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	// Check if NVIDIA GPU is present.
+	if _, err := os.Stat("/dev/nvidiactl"); err != nil {
+		return // no NVIDIA GPU
+	}
+	// Check if llama-server links against CUDA libraries.
+	binDir := filepath.Dir(binPath)
+	hasCUDALib := false
+	entries, _ := os.ReadDir(binDir)
+	for _, e := range entries {
+		name := e.Name()
+		if strings.Contains(name, "cuda") || strings.Contains(name, "cublas") {
+			hasCUDALib = true
+			break
+		}
+	}
+	if !hasCUDALib {
+		// Also check ldd output for the binary itself.
+		out, err := exec.Command("ldd", binPath).Output()
+		if err == nil && !strings.Contains(string(out), "cuda") {
+			slog.Warn("NVIDIA GPU detected but llama-server was built without CUDA — inference will use CPU only. See docs for GPU setup.")
+		}
+	}
+}
+
 // NewSubprocess creates a Subprocess but does not start it. Call Start() next.
 func NewSubprocess(cfg SubprocessConfig) (*Subprocess, error) {
 	binPath, err := resolveBinary(cfg.BinDir)
 	if err != nil {
 		return nil, err
 	}
+
+	checkGPUSupport(binPath)
 
 	port := cfg.Port
 	if port == 0 {

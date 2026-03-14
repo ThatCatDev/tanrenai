@@ -56,9 +56,6 @@ func (t *tuiApp) setupInputCapture() {
 			}
 
 		case tcell.KeyTab:
-			if t.autocompleteActive {
-				return event // let tview handle autocomplete selection
-			}
 			if t.filePath != "" {
 				if t.focus == focusChat {
 					t.focus = focusFileViewer
@@ -73,15 +70,9 @@ func (t *tuiApp) setupInputCapture() {
 			return nil
 
 		case tcell.KeyUp:
-			if t.autocompleteActive {
-				return event
-			}
 			t.scrollFocusedPane(-1)
 			return nil
 		case tcell.KeyDown:
-			if t.autocompleteActive {
-				return event
-			}
 			t.scrollFocusedPane(1)
 			return nil
 		case tcell.KeyPgUp:
@@ -95,14 +86,15 @@ func (t *tuiApp) setupInputCapture() {
 			if t.loading || t.processing {
 				return nil
 			}
-			if t.autocompleteActive {
-				return event // let tview handle autocomplete selection
+			// Shift+Enter inserts a newline (let TextArea handle it)
+			if event.Modifiers()&tcell.ModShift != 0 {
+				return event
 			}
-			text := strings.TrimSpace(t.inputField.GetText())
+			text := strings.TrimSpace(t.inputArea.GetText())
 			if text == "" {
 				return nil
 			}
-			t.inputField.SetText("")
+			t.inputArea.SetText("", false)
 			t.handleEnter(text)
 			return nil
 		}
