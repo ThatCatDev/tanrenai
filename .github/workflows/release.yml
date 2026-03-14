@@ -111,12 +111,11 @@ jobs:
           mkdir -p bin
           if [[ "${ASSET}" == *.tar.gz ]]; then
             tar xzf "${ASSET}"
+            LLAMA_DIR=$(dirname "${BIN_PATH}")
             mv "${BIN_PATH}" bin/llama-server
-            # For macOS: also copy shared libraries (.dylib)
-            if [[ "${{ matrix.goos }}" == "darwin" ]]; then
-              LLAMA_DIR=$(dirname "${BIN_PATH}")
-              cp "${LLAMA_DIR}"/*.dylib bin/ 2>/dev/null || true
-            fi
+            # Copy shared libraries (.so for Linux, .dylib for macOS)
+            cp "${LLAMA_DIR}"/*.so* bin/ 2>/dev/null || true
+            cp "${LLAMA_DIR}"/*.dylib bin/ 2>/dev/null || true
           else
             unzip -j "${ASSET}" "${BIN_PATH}" -d bin/
           fi
@@ -135,6 +134,12 @@ jobs:
           rm -rf "${ASSET}" "${CUDART}" "llama-${V}" 2>/dev/null || true
           echo "Bundled llama-server files:"
           ls -lh bin/
+
+          # Fail the build if llama-server is missing
+          if [ ! -f bin/llama-server ] && [ ! -f bin/llama-server.exe ]; then
+            echo "ERROR: llama-server binary not found in bin/"
+            exit 1
+          fi
 
       - name: Package
         run: |

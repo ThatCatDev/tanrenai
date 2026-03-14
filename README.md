@@ -68,10 +68,21 @@ cp bin/* ~/.local/share/tanrenai/bin/
 
 | Platform | File | GPU Support |
 |----------|------|-------------|
-| Linux x64 | `tanrenai-cli-linux-amd64.tar.gz` | CPU |
+| Linux x64 | `tanrenai-cli-linux-amd64.tar.gz` | CPU only* |
 | macOS Intel | `tanrenai-cli-darwin-amd64.tar.gz` | - |
 | macOS Apple Silicon | `tanrenai-cli-darwin-arm64.tar.gz` | Metal |
 | Windows x64 | `tanrenai-cli-windows-amd64.zip` | NVIDIA CUDA 12.4 |
+
+\* **Linux NVIDIA GPU users:** The bundled `llama-server` is CPU-only. To enable CUDA acceleration, build llama.cpp from source and replace the bundled binary:
+
+```bash
+sudo apt install -y build-essential cmake libcurl4-openssl-dev nvidia-cuda-toolkit
+git clone https://github.com/ggerganov/llama.cpp.git /tmp/llama.cpp
+cd /tmp/llama.cpp
+cmake -B build -DGGML_CUDA=ON
+cmake --build build --config Release -j$(nproc)
+cp /tmp/llama.cpp/build/bin/llama-server ~/.local/share/tanrenai/bin/
+```
 
 ## Quick Start
 
@@ -245,7 +256,55 @@ agent loop             vast.ai mgmt          models, fine-tuning
 
 Three independent Go modules communicating via JSON over HTTP. In `--local` mode, all three are embedded in the CLI binary.
 
-## Building from Source
+## Development Setup
+
+### Prerequisites
+
+**Go** (1.25+):
+
+```bash
+# Option A: Ubuntu/Debian package (may lag behind latest)
+sudo apt install -y golang-go
+
+# Option B: Install latest from go.dev
+curl -fsSL https://go.dev/dl/go1.24.1.linux-amd64.tar.gz -o /tmp/go.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Build tools:**
+
+```bash
+sudo apt install -y build-essential cmake libcurl4-openssl-dev
+```
+
+**NVIDIA CUDA** (required for GPU-accelerated inference):
+
+```bash
+sudo apt install -y nvidia-cuda-toolkit
+```
+
+Verify with `nvcc --version` and `nvidia-smi`.
+
+### Building llama.cpp (CUDA)
+
+The GPU server manages a `llama-server` subprocess. To build it with CUDA support:
+
+```bash
+git clone https://github.com/ggerganov/llama.cpp.git /tmp/llama.cpp
+cd /tmp/llama.cpp
+cmake -B build -DGGML_CUDA=ON
+cmake --build build --config Release -j$(nproc)
+
+# Install the binary where tanrenai expects it
+mkdir -p ~/.local/share/tanrenai/bin
+cp /tmp/llama.cpp/build/bin/llama-server ~/.local/share/tanrenai/bin/
+```
+
+For CPU-only builds, omit `-DGGML_CUDA=ON`.
+
+### Building from Source
 
 ```bash
 # Build and install CLI to ~/.local/bin/
@@ -255,14 +314,24 @@ make install
 make build          # CLI only
 make build-all      # CLI + GPU server + backend
 
+# Or build each module directly
+cd gpu/          && go build -o tanrenai-gpu .
+cd server/       && go build -o tanrenai-server .
+cd clients/cli/  && go build -o tanrenai .
+
 # Desktop (requires GTK4 dev libraries)
 cd clients/desktop/ && go build -o tanrenai-desktop .
 ```
 
-## Testing
+### Testing
 
 ```bash
 make test
+
+# Or per-module
+cd gpu/    && go test ./...
+cd server/ && go test ./...
+cd clients/cli/ && go test ./...
 ```
 
 ## License
