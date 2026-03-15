@@ -81,7 +81,7 @@ type StreamingConfig struct {
 
 const (
 	maxConsecutiveErrors     = 3
-	defaultMaxResponseTokens = 4096
+	defaultMaxResponseTokens = 16384
 	maxRetries               = 3
 )
 
