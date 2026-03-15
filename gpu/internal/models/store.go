@@ -35,7 +35,13 @@ func (s *Store) List() []ModelEntry {
 	}
 	models := map[string]*modelInfo{}
 
-	err := filepath.Walk(s.dir, func(path string, info os.FileInfo, err error) error {
+	// Resolve symlinks so filepath.Walk can traverse
+	dir := s.dir
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
