@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -22,9 +23,17 @@ func (s *Store) Dir() string {
 	return s.dir
 }
 
+// splitSuffix matches split GGUF filenames like "model-00001-of-00003.gguf"
+var splitSuffix = regexp.MustCompile(`-\d{5}-of-\d{5}\.gguf$`)
+
 // List returns all available models by scanning the models directory for .gguf files.
+// Split GGUFs (multi-part) are grouped into a single entry using the first part's path.
 func (s *Store) List() []ModelEntry {
-	var entries []ModelEntry
+	type modelInfo struct {
+		entry ModelEntry
+		parts int
+	}
+	models := map[string]*modelInfo{}
 
 	err := filepath.Walk(s.dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -33,19 +42,43 @@ func (s *Store) List() []ModelEntry {
 		if info.IsDir() || !strings.HasSuffix(strings.ToLower(info.Name()), ".gguf") {
 			return nil
 		}
-		name := strings.TrimSuffix(info.Name(), filepath.Ext(info.Name()))
-		entries = append(entries, ModelEntry{
-			Name:       name,
-			Path:       path,
-			Size:       info.Size(),
-			ModifiedAt: info.ModTime().Unix(),
-		})
+
+		name := info.Name()
+		// Group split GGUFs by base name
+		baseName := splitSuffix.ReplaceAllString(name, "")
+		if baseName == name {
+			// Single file — strip .gguf
+			baseName = strings.TrimSuffix(name, filepath.Ext(name))
+		}
+
+		if m, ok := models[baseName]; ok {
+			m.entry.Size += info.Size()
+			m.parts++
+			// Keep the first part's path for loading
+			if path < m.entry.Path {
+				m.entry.Path = path
+			}
+		} else {
+			models[baseName] = &modelInfo{
+				entry: ModelEntry{
+					Name:       baseName,
+					Path:       path,
+					Size:       info.Size(),
+					ModifiedAt: info.ModTime().Unix(),
+				},
+				parts: 1,
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		// Directory may not exist yet, that's OK
 	}
 
+	entries := make([]ModelEntry, 0, len(models))
+	for _, m := range models {
+		entries = append(entries, m.entry)
+	}
 	return entries
 }
 
