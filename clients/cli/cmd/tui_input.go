@@ -22,8 +22,40 @@ func (t *tuiApp) setupInputCapture() {
 			return event
 		}
 
+		// Autocomplete popup — only intercept navigation keys, let all typing through
+		if t.acActive {
+			switch event.Key() {
+			case tcell.KeyTab, tcell.KeyEnter:
+				t.acceptAutocomplete()
+				return nil
+			case tcell.KeyEscape:
+				t.dismissAutocomplete()
+				return nil
+			case tcell.KeyUp:
+				cur := t.acList.GetCurrentItem()
+				if cur > 0 {
+					t.acList.SetCurrentItem(cur - 1)
+				}
+				return nil
+			case tcell.KeyDown:
+				cur := t.acList.GetCurrentItem()
+				if cur < t.acList.GetItemCount()-1 {
+					t.acList.SetCurrentItem(cur + 1)
+				}
+				return nil
+			}
+			// Everything else (typing, backspace, enter) flows to TextArea normally
+		}
+
 		if event.Key() != tcell.KeyCtrlC {
 			t.ctrlCPending = false
+		}
+
+		// Process panel has focus — delegate key handling
+		if t.focus == focusProcessPanel {
+			if t.handleProcessPanelKey(event) {
+				return nil
+			}
 		}
 
 		switch event.Key() {
@@ -50,8 +82,31 @@ func (t *tuiApp) setupInputCapture() {
 			return nil
 
 		case tcell.KeyEscape:
+			if t.focus == focusProcessPanel {
+				t.focus = focusChat
+				t.app.SetFocus(t.inputArea)
+				return nil
+			}
 			if t.filePath != "" {
 				t.closeFileViewer()
+				return nil
+			}
+
+		case tcell.KeyCtrlP:
+			// Toggle process panel
+			if t.processCount() > 0 {
+				if t.processPanel != nil {
+					if t.focus == focusProcessPanel {
+						t.focus = focusChat
+						t.app.SetFocus(t.inputArea)
+					} else {
+						t.focus = focusProcessPanel
+						t.refreshProcessPanel()
+					}
+				} else {
+					t.showProcessPanel()
+					t.focus = focusProcessPanel
+				}
 				return nil
 			}
 
@@ -73,6 +128,12 @@ func (t *tuiApp) setupInputCapture() {
 			t.scrollFocusedPane(-1)
 			return nil
 		case tcell.KeyDown:
+			// Down arrow: if processes exist and panel isn't shown, show it
+			if t.focus == focusChat && t.processCount() > 0 && t.processPanel == nil {
+				t.showProcessPanel()
+				t.focus = focusProcessPanel
+				return nil
+			}
 			t.scrollFocusedPane(1)
 			return nil
 		case tcell.KeyPgUp:
@@ -83,7 +144,29 @@ func (t *tuiApp) setupInputCapture() {
 			return nil
 
 		case tcell.KeyEnter:
-			if t.loading || t.processing {
+			if t.loading {
+				return nil
+			}
+			// Mid-turn injection for planned agent mode
+			if t.processing && t.userInputCh != nil {
+				if event.Modifiers()&tcell.ModShift != 0 {
+					return event
+				}
+				text := strings.TrimSpace(t.inputArea.GetText())
+				if text == "" {
+					return nil
+				}
+				t.inputArea.SetText("", false)
+				select {
+				case t.userInputCh <- text:
+					t.addLine(fmt.Sprintf("[yellow::b]>>> %s [gray](injected)[-:-:-]", tview.Escape(text)))
+					t.refreshChatView()
+				default:
+					// channel full, drop
+				}
+				return nil
+			}
+			if t.processing {
 				return nil
 			}
 			// Shift+Enter inserts a newline (let TextArea handle it)
@@ -205,6 +288,15 @@ func (t *tuiApp) handleEnter(text string) {
 		return
 	}
 
+	// Catch unknown slash commands — never send them to the LLM
+	if strings.HasPrefix(text, "/") {
+		t.addLine(fmt.Sprintf(" [blue::b]>>>[white] %s", tview.Escape(text)))
+		t.addLine("[gray::-]  Unknown command. Type /help for available commands.[-:-:-]")
+		t.addLine("")
+		t.refreshChatView()
+		return
+	}
+
 	t.addLine(fmt.Sprintf(" [blue::b]>>>[white] %s", tview.Escape(text)))
 	t.addLine("")
 	t.refreshChatView()
@@ -222,7 +314,7 @@ func (t *tuiApp) handleEnter(text string) {
 	t.streaming.Reset()
 
 	if t.agentMode {
-		go t.startAgentTurn(text)
+		go t.startPlannedAgentTurn(text)
 	} else {
 		go t.startChatTurn(text)
 	}
@@ -292,4 +384,107 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 	}
 
 	return false
+}
+
+// ── Autocomplete ────────────────────────────────────────────────────────
+
+// updateAutocomplete is called on every text change. Shows/hides the popup.
+func (t *tuiApp) updateAutocomplete() {
+	if t.acSuppress {
+		return
+	}
+	text := t.inputArea.GetText()
+
+	// Only autocomplete when text starts with "/" and is a single line
+	if !strings.HasPrefix(text, "/") || strings.Contains(text, "\n") {
+		if t.acActive {
+			t.dismissAutocomplete()
+		}
+		return
+	}
+
+	prefix := strings.ToLower(text)
+	var matches []struct{ cmd, desc string }
+	for _, sc := range slashCommands {
+		if strings.HasPrefix(strings.ToLower(sc.cmd), prefix) {
+			matches = append(matches, struct{ cmd, desc string }{sc.cmd, sc.desc})
+		}
+	}
+
+	if len(matches) == 0 {
+		if t.acActive {
+			t.dismissAutocomplete()
+		}
+		return
+	}
+
+	// Build or update the list
+	if t.acList == nil {
+		t.acList = tview.NewList().
+			ShowSecondaryText(true).
+			SetHighlightFullLine(true).
+			SetSelectedBackgroundColor(tcell.ColorDarkBlue).
+			SetSelectedTextColor(tcell.ColorWhite).
+			SetSecondaryTextColor(tcell.ColorGray)
+		t.acList.SetBorder(true).
+			SetBorderColor(tcell.ColorDarkGray).
+			SetTitle(" commands ").
+			SetTitleColor(tcell.ColorGray)
+		t.acList.SetBackgroundColor(tcell.ColorBlack)
+	}
+
+	t.acList.Clear()
+	for _, m := range matches {
+		cmd := m.cmd
+		t.acList.AddItem(cmd, m.desc, 0, nil)
+	}
+
+	// Size: 2 lines per item (main + secondary) + 2 for border, cap at 10
+	height := len(matches)*2 + 2
+	if height > 12 {
+		height = 12
+	}
+
+	if !t.acActive {
+		t.pages.AddPage("autocomplete", t.acList, false, false)
+		t.pages.ShowPage("autocomplete")
+		t.app.SetFocus(t.inputArea)
+		t.acActive = true
+	}
+
+	// Position above the input area
+	_, _, screenW, screenH := t.rootFlex.GetRect()
+	// Input area is at the bottom: 3 rows input + 1 divider below + 1 divider above
+	y := screenH - 3 - 1 - height
+	if y < 0 {
+		y = 0
+	}
+	width := 40
+	if width > screenW-2 {
+		width = screenW - 2
+	}
+	t.acList.SetRect(1, y, width, height)
+}
+
+// acceptAutocomplete inserts the selected command into the input area.
+func (t *tuiApp) acceptAutocomplete() {
+	if t.acList == nil || t.acList.GetItemCount() == 0 {
+		return
+	}
+	idx := t.acList.GetCurrentItem()
+	main, _ := t.acList.GetItemText(idx)
+	t.dismissAutocomplete()
+	t.acSuppress = true
+	t.inputArea.SetText(main, true)
+	t.acSuppress = false
+}
+
+// dismissAutocomplete hides the autocomplete popup.
+func (t *tuiApp) dismissAutocomplete() {
+	if !t.acActive {
+		return
+	}
+	t.pages.RemovePage("autocomplete")
+	t.acActive = false
+	t.app.SetFocus(t.inputArea)
 }

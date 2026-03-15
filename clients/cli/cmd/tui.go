@@ -11,7 +11,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
-	"github.com/ThatCatDev/tanrenai/client/internal/agent"
+	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
@@ -43,6 +43,7 @@ type focusTarget int
 const (
 	focusChat focusTarget = iota
 	focusFileViewer
+	focusProcessPanel
 )
 
 type iterRecord struct {
@@ -63,6 +64,10 @@ type tuiApp struct {
 	fileHeader *tview.TextView // 1-line file path + hints
 	fileView   *tview.TextView // scrollable syntax-highlighted content
 
+	// Process panel (created on demand)
+	procMgr      *tools.ProcessManager
+	processPanel *tview.Table
+
 	inputArea *tview.TextArea
 	statusBar  *tview.TextView
 	statusText string
@@ -80,6 +85,17 @@ type tuiApp struct {
 	streaming     strings.Builder
 	turnCancel    context.CancelFunc
 	cleanupFn     func() // called on app exit (e.g. stop local servers)
+	memoryWg      sync.WaitGroup
+	liveCtxTokens int // live token count from agent loop (0 = use mgr.Budget())
+
+	// Plan-execute agent mode
+	userInputCh chan string // non-nil during planned agent turns
+	plannedMode bool        // true when a planned agent turn is running
+
+	// Slash command autocomplete
+	acList     *tview.List // popup list (added/removed from pages)
+	acActive   bool        // true when autocomplete popup is visible
+	acSuppress bool        // temporarily suppress updateAutocomplete
 
 	// Loading animation
 	anvilFrame int // current animation frame (-1 = not animating)
@@ -145,6 +161,7 @@ func newTuiApp(modelName string) *tuiApp {
 	t.inputArea.SetBorder(false)
 	t.inputArea.SetBackgroundColor(tcell.ColorDefault)
 	t.inputArea.SetTextStyle(tcell.StyleDefault.Background(tcell.ColorDefault))
+	t.inputArea.SetChangedFunc(func() { t.updateAutocomplete() })
 
 	// Build layout
 	t.chatArea = tview.NewFlex().SetDirection(tview.FlexColumn)
@@ -198,6 +215,19 @@ func newVDivider(focused bool) *tview.Box {
 
 func (t *tuiApp) run() error {
 	err := t.app.SetRoot(t.pages, true).EnableMouse(true).EnablePaste(true).Run()
+	// Wait for pending memory stores to finish (up to 2s).
+	done := make(chan struct{})
+	go func() {
+		t.memoryWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+	}
+	if t.procMgr != nil {
+		t.procMgr.KillAll()
+	}
 	if t.cleanupFn != nil {
 		t.cleanupFn()
 	}
@@ -294,4 +324,16 @@ func extractFilePath(call api.ToolCall) string {
 	}
 	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
 	return args.Path
+}
+
+func extractShellCommand(call api.ToolCall) string {
+	var args struct {
+		Command string `json:"command"`
+	}
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+	cmd := args.Command
+	if len(cmd) > 120 {
+		cmd = cmd[:117] + "..."
+	}
+	return cmd
 }

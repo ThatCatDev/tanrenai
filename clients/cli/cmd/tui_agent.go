@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/rivo/tview"
 
-	"github.com/ThatCatDev/tanrenai/client/internal/agent"
+	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
@@ -200,12 +201,17 @@ func (t *tuiApp) startAgentTurn(input string) {
 						t.statusText = display
 						t.updateStatusBar()
 						idx := len(t.lines)
-						if name == "file_read" || name == "file_write" || name == "patch_file" {
+						switch name {
+						case "file_read", "file_write", "patch_file":
 							path := extractFilePath(call)
 							label := "[gray::-]    > " + tview.Escape(display) + " [-:-:-][#00afff::u]" + tview.Escape(path) + "[::U][-:-:-]"
 							t.addLine(label)
 							t.toolCallLines[idx] = call
-						} else {
+						case "shell_exec":
+							cmd := extractShellCommand(call)
+							label := "[gray::-]    > " + tview.Escape(display) + " [-:-:-][yellow::-]$ " + tview.Escape(cmd) + "[-:-:-]"
+							t.addLine(label)
+						default:
 							t.addLine("[gray::-]    > " + tview.Escape(display) + "[-:-:-]")
 						}
 						t.refreshChatView()
@@ -268,6 +274,7 @@ func (t *tuiApp) startAgentTurn(input string) {
 				inputTokens := t.mgr.Estimator().EstimateMessages(messages)
 				t.currentIterTokens = inputTokens
 				t.lastInputTokens = inputTokens
+				t.liveCtxTokens = inputTokens
 				t.currentIterOutput = 0
 
 				// Start timing this iteration
@@ -296,6 +303,13 @@ func (t *tuiApp) startAgentTurn(input string) {
 			t.currentIterOutput += len(delta)
 			contentBuf.WriteString(delta)
 		},
+		OnReasoningDelta: func(delta string) {
+			t.currentIterOutput += len(delta)
+			t.app.QueueUpdateDraw(func() {
+				t.statusText = "Reasoning..."
+				t.updateStatusBar()
+			})
+		},
 	}
 
 	result, err := agent.RunStreaming(turnCtx, t.streamFn, windowedMsgs, cfg)
@@ -315,6 +329,7 @@ func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
 	t.stopProgressTicker()
 	t.processing = false
 	t.statusText = ""
+	t.liveCtxTokens = 0
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -364,8 +379,14 @@ func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
 			}
 			if assistContent != "" && userInput != "" {
 				client := t.client
+				t.memoryWg.Add(1)
 				go func() {
-					_, _ = client.MemoryStore(context.Background(), userInput, assistContent)
+					defer t.memoryWg.Done()
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					if _, err := client.MemoryStore(ctx, userInput, assistContent); err != nil {
+						slog.Error("failed to store memory", "error", err)
+					}
 				}()
 			}
 		}
@@ -374,6 +395,265 @@ func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
 	t.addLine("")
 	t.refreshChatView()
 	t.updateStatusBar()
+}
+
+// ── Planned Agent Turn ──────────────────────────────────────────────────
+
+func (t *tuiApp) startPlannedAgentTurn(input string) {
+	t.mgr.Append(api.Message{Role: "user", Content: input})
+
+	if t.memoryEnabled {
+		results, err := t.client.MemorySearch(context.Background(), input, 3)
+		if err == nil && len(results.Results) > 0 {
+			var memMsgs []api.Message
+			for _, r := range results.Results {
+				userMsg := truncate(r.Entry.UserMsg, 200)
+				assistMsg := truncate(r.Entry.AssistMsg, 500)
+				memContent := fmt.Sprintf("[Memory from %s] User asked: %s\nAssistant replied: %s",
+					r.Entry.Timestamp.Format("2006-01-02"), userMsg, assistMsg)
+				memMsgs = append(memMsgs, api.Message{Role: "system", Content: memContent})
+			}
+			t.mgr.SetMemories(memMsgs)
+		} else {
+			t.mgr.ClearMemories()
+		}
+	}
+
+	if t.mgr.NeedsSummary() {
+		_ = t.mgr.Summarize(context.Background(), chatctx.CompletionFunc(t.completeFn))
+	}
+
+	windowedMsgs := t.mgr.Messages()
+
+	turnCtx, turnCancel := context.WithCancel(context.Background())
+	t.mu.Lock()
+	t.turnCancel = turnCancel
+	t.mu.Unlock()
+
+	// Create user injection channel for mid-turn input
+	userInputCh := make(chan string, 1)
+	t.app.QueueUpdateDraw(func() {
+		t.userInputCh = userInputCh
+		t.plannedMode = true
+	})
+
+	toolCount := 0
+	var contentBuf strings.Builder
+
+	flushContent := func() {
+		if contentBuf.Len() > 0 {
+			text := contentBuf.String()
+			contentBuf.Reset()
+			t.app.QueueUpdateDraw(func() {
+				trimmed := strings.TrimSpace(text)
+				if trimmed != "" {
+					rendered := t.renderMarkdown(trimmed)
+					for _, line := range strings.Split(rendered, "\n") {
+						t.addLine("    " + line)
+					}
+					t.refreshChatView()
+				}
+			})
+		}
+	}
+
+	cfg := agent.PlanAgentConfig{
+		StreamingConfig: agent.StreamingConfig{
+			Config: agent.Config{
+				MaxIterations: t.maxIterations,
+				Tools:         t.registry,
+				Hooks: agent.Hooks{
+					OnToolCall: func(call api.ToolCall) {
+						flushContent()
+						toolCount++
+						t.currentIterOutput += len(call.Function.Name) + len(call.Function.Arguments)
+						display := fmt.Sprintf("%d tools | %s", toolCount, call.Function.Name)
+						name := call.Function.Name
+						t.app.QueueUpdateDraw(func() {
+							t.statusText = display
+							t.updateStatusBar()
+							idx := len(t.lines)
+							switch name {
+							case "file_read", "file_write", "patch_file":
+								path := extractFilePath(call)
+								label := "[gray::-]    > " + tview.Escape(display) + " [-:-:-][#00afff::u]" + tview.Escape(path) + "[::U][-:-:-]"
+								t.addLine(label)
+								t.toolCallLines[idx] = call
+							case "shell_exec":
+								cmd := extractShellCommand(call)
+								label := "[gray::-]    > " + tview.Escape(display) + " [-:-:-][yellow::-]$ " + tview.Escape(cmd) + "[-:-:-]"
+								t.addLine(label)
+							default:
+								t.addLine("[gray::-]    > " + tview.Escape(display) + "[-:-:-]")
+							}
+							t.refreshChatView()
+						})
+					},
+					OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
+						t.app.QueueUpdateDraw(func() {
+							if result.Diff != "" {
+								for _, line := range strings.Split(strings.TrimRight(result.Diff, "\n"), "\n") {
+									if len(line) == 0 {
+										continue
+									}
+									escaped := tview.Escape(line)
+									switch line[0] {
+									case '+':
+										if strings.HasPrefix(line, "+++") {
+											continue
+										}
+										t.addLine("[green:#1a3a1a:-]      " + escaped + "[-:-:-]")
+									case '-':
+										if strings.HasPrefix(line, "---") {
+											continue
+										}
+										t.addLine("[red:#3a1a1a:-]      " + escaped + "[-:-:-]")
+									case '@':
+										t.addLine("[#6688cc::-]      " + escaped + "[-:-:-]")
+									default:
+										t.addLine("[gray::-]      " + escaped + "[-:-:-]")
+									}
+								}
+							} else {
+								preview := strings.TrimSpace(result.Output)
+								preview = strings.Join(strings.Fields(preview), " ")
+								if len(preview) > 120 {
+									preview = preview[:120] + "..."
+								}
+								idx := len(t.lines)
+								t.addLine("[gray::-]      " + tview.Escape(preview) + "[-:-:-]")
+								t.toolResults[idx] = result.Output
+							}
+							t.refreshChatView()
+						})
+					},
+					OnAssistantMessage: func(content string) {},
+					OnToolApproval: func(call api.ToolCall) agent.ApprovalAction {
+						return t.approveToolCall(call)
+					},
+				},
+			},
+			OnIterationStart: func(iteration, maxIter int, messages []api.Message) {
+				flushContent()
+				t.app.QueueUpdateDraw(func() {
+					t.recordIterationEnd()
+					inputTokens := t.mgr.Estimator().EstimateMessages(messages)
+					t.currentIterTokens = inputTokens
+					t.lastInputTokens = inputTokens
+					t.liveCtxTokens = inputTokens
+					t.currentIterOutput = 0
+					t.startProgressTicker()
+					t.iterStartTime = time.Now()
+					t.estimatedDur = t.predictDuration(inputTokens)
+					t.updateStatusBar()
+				})
+			},
+			OnThinking: func() {
+				t.app.QueueUpdateDraw(func() {
+					t.statusText = "Thinking..."
+					t.updateStatusBar()
+				})
+			},
+			OnThinkingDone: func() {
+				t.app.QueueUpdateDraw(func() {
+					t.statusText = "Generating..."
+					t.updateStatusBar()
+				})
+			},
+			OnContentDelta: func(delta string) {
+				t.currentIterOutput += len(delta)
+				contentBuf.WriteString(delta)
+			},
+			OnReasoningDelta: func(delta string) {
+				t.currentIterOutput += len(delta)
+				t.app.QueueUpdateDraw(func() {
+					t.statusText = "Reasoning..."
+					t.updateStatusBar()
+				})
+			},
+		},
+		UserInput: userInputCh,
+		OnPlanningStart: func() {
+			t.app.QueueUpdateDraw(func() {
+				t.statusText = "Planning..."
+				t.updateStatusBar()
+				t.addLine("[blue::b]  -- planning --[-:-:-]")
+				t.refreshChatView()
+			})
+		},
+		OnPlanGenerated: func(plan *agent.Plan) {
+			t.app.QueueUpdateDraw(func() {
+				t.addLine("[blue::b]  Plan:[-:-:-]")
+				for _, step := range plan.Steps {
+					t.addLine(fmt.Sprintf("[gray::-]    %d. %s[-:-:-]", step.Index, tview.Escape(step.Description)))
+				}
+				t.addLine("")
+				t.refreshChatView()
+			})
+		},
+		OnStepStart: func(stepIdx int, step *agent.PlanStep) {
+			flushContent()
+			t.app.QueueUpdateDraw(func() {
+				t.addLine(fmt.Sprintf("[yellow::b]  -- step %d: %s --[-:-:-]", step.Index, tview.Escape(step.Description)))
+				t.refreshChatView()
+				t.statusText = fmt.Sprintf("step %d/%d", step.Index, stepIdx+1)
+				t.updateStatusBar()
+			})
+		},
+		OnStepDone: func(stepIdx int, step *agent.PlanStep) {
+			flushContent()
+			t.app.QueueUpdateDraw(func() {
+				status := step.Status.String()
+				color := "green"
+				if step.Status == agent.StepFailed {
+					color = "red"
+				} else if step.Status == agent.StepSkipped {
+					color = "gray"
+				}
+				t.addLine(fmt.Sprintf("[%s::-]  -- step %d: %s --[-:-:-]", color, step.Index, status))
+				t.addLine("")
+				t.refreshChatView()
+			})
+		},
+		OnReplan: func(reason string, newPlan *agent.Plan) {
+			t.app.QueueUpdateDraw(func() {
+				t.addLine("[yellow::b]  Re-planned:[-:-:-]")
+				for _, step := range newPlan.Steps {
+					statusMark := " "
+					if step.Status == agent.StepDone {
+						statusMark = "[green::-]✓[-:-:-]"
+					} else if step.Status == agent.StepFailed {
+						statusMark = "[red::-]✗[-:-:-]"
+					}
+					t.addLine(fmt.Sprintf("    %s %d. %s", statusMark, step.Index, tview.Escape(step.Description)))
+				}
+				t.addLine("")
+				t.refreshChatView()
+			})
+		},
+		OnSynthesize: func() {
+			flushContent()
+			t.app.QueueUpdateDraw(func() {
+				t.addLine("[blue::b]  -- synthesizing --[-:-:-]")
+				t.refreshChatView()
+				t.statusText = "Synthesizing..."
+				t.updateStatusBar()
+			})
+		},
+	}
+
+	result, err := agent.RunPlannedStreaming(turnCtx, t.streamFn, windowedMsgs, cfg)
+	flushContent()
+	turnCancel()
+	t.mu.Lock()
+	t.turnCancel = nil
+	t.mu.Unlock()
+
+	t.app.QueueUpdateDraw(func() {
+		t.userInputCh = nil
+		t.plannedMode = false
+		t.handleTurnDone(result, windowedMsgs, err)
+	})
 }
 
 // ── Progress Tracking ───────────────────────────────────────────────────

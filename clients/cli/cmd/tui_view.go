@@ -19,6 +19,8 @@ import (
 // ── Status Bar ──────────────────────────────────────────────────────────
 
 func (t *tuiApp) updateStatusBar() {
+	ctx := t.contextUsageString()
+
 	if t.processing && t.statusText != "" {
 		tokenInfo := ""
 		if t.lastInputTokens > 0 {
@@ -29,7 +31,7 @@ func (t *tuiApp) updateStatusBar() {
 			elapsed := time.Since(t.iterStartTime)
 			bar = " " + renderProgressBar(elapsed, t.estimatedDur)
 		}
-		t.statusBar.SetText(" [gray::-]" + tview.Escape(t.statusText+tokenInfo) + "[-:-:-] " + bar)
+		t.statusBar.SetText(" [gray::-]" + tview.Escape(t.statusText+tokenInfo) + "[-:-:-] " + bar + ctx)
 	} else if t.lastInputTokens > 0 || t.lastOutputTokens > 0 {
 		parts := []string{}
 		if t.lastInputTokens > 0 {
@@ -38,10 +40,34 @@ func (t *tuiApp) updateStatusBar() {
 		if t.lastOutputTokens > 0 {
 			parts = append(parts, "~"+formatTokenCount(t.lastOutputTokens)+" out")
 		}
-		t.statusBar.SetText(" [gray::-]" + strings.Join(parts, " / ") + "[-:-:-]")
+		t.statusBar.SetText(" [gray::-]" + strings.Join(parts, " / ") + "[-:-:-]" + ctx)
 	} else {
-		t.statusBar.SetText("")
+		t.statusBar.SetText(ctx)
 	}
+}
+
+func (t *tuiApp) contextUsageString() string {
+	if t.mgr == nil {
+		return ""
+	}
+	b := t.mgr.Budget()
+	if b.Total == 0 {
+		return ""
+	}
+	// During agent iterations, use the live token count from the actual
+	// messages being sent to the model, since mgr isn't updated mid-turn.
+	used := b.Total - b.Available
+	if t.liveCtxTokens > 0 {
+		used = t.liveCtxTokens
+	}
+	pct := used * 100 / b.Total
+	color := "green"
+	if pct > 80 {
+		color = "red"
+	} else if pct > 60 {
+		color = "yellow"
+	}
+	return fmt.Sprintf("  [%s::-]ctx: %s/%s (%d%%)[-:-:-]", color, formatTokenCount(used), formatTokenCount(b.Total), pct)
 }
 
 func formatTokenCount(n int) string {

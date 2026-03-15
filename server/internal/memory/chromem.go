@@ -217,9 +217,7 @@ func (s *ChromemStore) Clear(ctx context.Context) error {
 }
 
 func (s *ChromemStore) Count() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.entries)
+	return s.collection.Count()
 }
 
 func (s *ChromemStore) Close() error {

@@ -2,16 +2,21 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/rivo/tview"
 
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
+	gpuserve "github.com/ThatCatDev/tanrenai/gpu/pkg/serve"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
@@ -37,6 +42,66 @@ func (s *startupLog) Warn(msg string) {
 	} else {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
 	}
+}
+
+const (
+	defaultEmbeddingModel    = "nomic-embed-text-v1.5.Q4_K_M"
+	defaultEmbeddingModelURL = "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf"
+)
+
+// tanrenaiDataDir returns the tanrenai data directory, matching the convention
+// used by the GPU and server modules: ~/.local/share/tanrenai (or TANRENAI_DATA_DIR).
+func tanrenaiDataDir() string {
+	if dir := os.Getenv("TANRENAI_DATA_DIR"); dir != "" {
+		return dir
+	}
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.Getenv("LOCALAPPDATA"), "tanrenai")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "tanrenai")
+}
+
+// projectMemoryDir returns a project-scoped memory directory based on a hash of the working directory.
+func projectMemoryDir() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = "default"
+	}
+	h := sha256.Sum256([]byte(wd))
+	hash16 := fmt.Sprintf("%x", h[:8])
+	return filepath.Join(tanrenaiDataDir(), "memory", hash16)
+}
+
+// ensureEmbeddingModel checks if the embedding model exists and downloads it if not.
+func ensureEmbeddingModel(log *startupLog) error {
+	if _, err := gpuserve.ResolveModel(defaultEmbeddingModel); err == nil {
+		return nil // already exists
+	}
+
+	log.Info("Downloading embedding model " + defaultEmbeddingModel + "...")
+	destDir := gpuserve.ModelsDir()
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("create models dir: %w", err)
+	}
+
+	var lastPct int
+	_, err := gpuserve.DownloadModel(defaultEmbeddingModelURL, destDir, func(downloaded, total int64) {
+		if total <= 0 {
+			return
+		}
+		pct := int(downloaded * 100 / total)
+		if pct >= lastPct+5 {
+			lastPct = pct
+			log.Info(fmt.Sprintf("Downloading embedding model... %d%% (%d/%d MB)",
+				pct, downloaded/(1024*1024), total/(1024*1024)))
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("download embedding model: %w", err)
+	}
+	log.Info("Embedding model downloaded successfully")
+	return nil
 }
 
 const defaultAgentSystemPrompt = `You are a helpful assistant with access to tools for interacting with the filesystem and system.
@@ -83,11 +148,19 @@ var runCmd = &cobra.Command{
 		return startTUI(model, func(t *tuiApp, log *startupLog) error {
 			activeURL := serverURL
 			if local {
-				url, cleanup, err := startLocalServers(ctx, localOpts{
+				opts := localOpts{
 					GPULayers:      gpuLayers,
 					FlashAttention: flashAttn,
 					MemoryEnabled:  memoryEnabled,
-				}, log)
+				}
+				if memoryEnabled {
+					if err := ensureEmbeddingModel(log); err != nil {
+						return err
+					}
+					opts.EmbeddingModel = defaultEmbeddingModel
+					opts.MemoryDir = projectMemoryDir()
+				}
+				url, cleanup, err := startLocalServers(ctx, opts, log)
 				if err != nil {
 					return err
 				}
@@ -156,8 +229,13 @@ var runCmd = &cobra.Command{
 			}
 
 			var registry *tools.Registry
+			var procMgr *tools.ProcessManager
 			if agentMode {
 				registry = tools.DefaultRegistry()
+				procMgr = tools.NewProcessManager()
+				if st, ok := registry.Get("shell_exec").(*tools.ShellExecTool); ok {
+					st.ProcessManager = procMgr
+				}
 			}
 
 			completeFn := func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
@@ -178,6 +256,14 @@ var runCmd = &cobra.Command{
 			t.agentMode = agentMode
 			t.completeFn = completeFn
 			t.streamFn = streamFn
+			if procMgr != nil {
+				t.procMgr = procMgr
+				procMgr.OnChange = func() {
+					t.app.QueueUpdateDraw(func() {
+						t.refreshProcessPanel()
+					})
+				}
+			}
 			return nil
 		})
 	},
@@ -216,11 +302,19 @@ var chatCmd = &cobra.Command{
 		return startTUI(model, func(t *tuiApp, log *startupLog) error {
 			activeURL := serverURL
 			if local {
-				url, cleanup, err := startLocalServers(ctx, localOpts{
+				opts := localOpts{
 					GPULayers:      gpuLayers,
 					FlashAttention: flashAttn,
 					MemoryEnabled:  memoryEnabled,
-				}, log)
+				}
+				if memoryEnabled {
+					if err := ensureEmbeddingModel(log); err != nil {
+						return err
+					}
+					opts.EmbeddingModel = defaultEmbeddingModel
+					opts.MemoryDir = projectMemoryDir()
+				}
+				url, cleanup, err := startLocalServers(ctx, opts, log)
 				if err != nil {
 					return err
 				}
@@ -275,8 +369,13 @@ var chatCmd = &cobra.Command{
 			}
 
 			var registry *tools.Registry
+			var procMgr *tools.ProcessManager
 			if agentMode {
 				registry = tools.DefaultRegistry()
+				procMgr = tools.NewProcessManager()
+				if st, ok := registry.Get("shell_exec").(*tools.ShellExecTool); ok {
+					st.ProcessManager = procMgr
+				}
 			}
 
 			completeFn := func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
@@ -296,6 +395,14 @@ var chatCmd = &cobra.Command{
 			t.agentMode = agentMode
 			t.completeFn = completeFn
 			t.streamFn = streamFn
+			if procMgr != nil {
+				t.procMgr = procMgr
+				procMgr.OnChange = func() {
+					t.app.QueueUpdateDraw(func() {
+						t.refreshProcessPanel()
+					})
+				}
+			}
 			return nil
 		})
 	},
@@ -306,15 +413,27 @@ func startTUI(model string, startup func(t *tuiApp, log *startupLog) error) erro
 	t.loading = true
 	t.startLoadingAnimation()
 
-	// Redirect slog to the TUI so embedded server logs appear in the chat view.
-	slog.SetDefault(slog.New(&tuiSlogHandler{tui: t}))
+	// Set up file + TUI logging.
+	tuiHandler := &tuiSlogHandler{tui: t}
+	logFile, logErr := openLogFile()
+	if logErr != nil {
+		slog.SetDefault(slog.New(tuiHandler))
+	} else {
+		fileHandler := slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelDebug})
+		slog.SetDefault(slog.New(&multiHandler{handlers: []slog.Handler{tuiHandler, fileHandler}}))
+	}
 
 	go func() {
 		log := &startupLog{tui: t}
 		err := startup(t, log)
 
-		// Suppress slog after startup to avoid noisy HTTP request logs.
-		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+		// After startup, stop showing logs in the TUI but keep writing to the file.
+		if logFile != nil {
+			fileHandler := slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelDebug})
+			slog.SetDefault(slog.New(fileHandler))
+		} else {
+			slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+		}
 
 		if err != nil {
 			t.app.QueueUpdateDraw(func() {
@@ -335,7 +454,11 @@ func startTUI(model string, startup func(t *tuiApp, log *startupLog) error) erro
 		})
 	}()
 
-	return t.run()
+	err := t.run()
+	if logFile != nil {
+		logFile.Close()
+	}
+	return err
 }
 
 // tuiSlogHandler routes slog records to the TUI chat view.
@@ -373,6 +496,11 @@ func (h *tuiSlogHandler) Handle(_ context.Context, r slog.Record) error {
 		}
 	case r.Message == "subprocess starting":
 		msg = "Starting inference server..."
+	case strings.HasPrefix(r.Message, "Using GPU acceleration"):
+		color = "green"
+		msg = r.Message
+	case strings.HasPrefix(r.Message, "No GPU detected"):
+		msg = r.Message
 	default:
 		return nil // skip noisy INFO messages
 	}
@@ -394,6 +522,105 @@ func (h *tuiSlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (h *tuiSlogHandler) WithGroup(_ string) slog.Handler {
 	return h
+}
+
+// ── File Logging ─────────────────────────────────────────────────────
+
+const (
+	maxLogSize  = 5 * 1024 * 1024 // 5 MB per log file
+	maxLogFiles = 3               // keep current + 2 rotated
+)
+
+// logDir returns the XDG-compliant state directory for logs.
+func logDir() string {
+	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
+		return filepath.Join(dir, "tanrenai")
+	}
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.Getenv("LOCALAPPDATA"), "tanrenai", "logs")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "state", "tanrenai")
+}
+
+// openLogFile opens the log file, rotating if it exceeds maxLogSize.
+func openLogFile() (*os.File, error) {
+	dir := logDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+
+	logPath := filepath.Join(dir, "tanrenai.log")
+
+	// Rotate if current log is too large.
+	if info, err := os.Stat(logPath); err == nil && info.Size() > maxLogSize {
+		rotated := filepath.Join(dir, fmt.Sprintf("tanrenai.%d.log", time.Now().Unix()))
+		os.Rename(logPath, rotated)
+		cleanupOldLogs(dir)
+	}
+
+	return os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+}
+
+// cleanupOldLogs removes rotated logs beyond maxLogFiles.
+func cleanupOldLogs(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	var rotated []string
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, "tanrenai.") && strings.HasSuffix(name, ".log") && name != "tanrenai.log" {
+			rotated = append(rotated, name)
+		}
+	}
+	if len(rotated) <= maxLogFiles-1 {
+		return
+	}
+	sort.Strings(rotated)
+	for _, name := range rotated[:len(rotated)-(maxLogFiles-1)] {
+		os.Remove(filepath.Join(dir, name))
+	}
+}
+
+// multiHandler fans out slog records to multiple handlers.
+type multiHandler struct {
+	handlers []slog.Handler
+}
+
+func (m *multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	for _, h := range m.handlers {
+		if h.Enabled(ctx, level) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *multiHandler) Handle(ctx context.Context, r slog.Record) error {
+	for _, h := range m.handlers {
+		if h.Enabled(ctx, r.Level) {
+			_ = h.Handle(ctx, r)
+		}
+	}
+	return nil
+}
+
+func (m *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	handlers := make([]slog.Handler, len(m.handlers))
+	for i, h := range m.handlers {
+		handlers[i] = h.WithAttrs(attrs)
+	}
+	return &multiHandler{handlers: handlers}
+}
+
+func (m *multiHandler) WithGroup(name string) slog.Handler {
+	handlers := make([]slog.Handler, len(m.handlers))
+	for i, h := range m.handlers {
+		handlers[i] = h.WithGroup(name)
+	}
+	return &multiHandler{handlers: handlers}
 }
 
 func calibrateEstimator(client *apiclient.Client, estimator *chatctx.TokenEstimator, log *startupLog) {

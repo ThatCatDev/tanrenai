@@ -83,11 +83,15 @@ Three independent Go modules. JSON over HTTP is the contract between them.
 - `internal/vastai/` — vast.ai instance management (client, manager)
 - `internal/server/handlers/` — HTTP handlers (proxy, memory, instance, health)
 
-### Client (`client/`)
-- `internal/apiclient/` — typed HTTP client to backend (stream.go, client.go)
-- `internal/agent/` — agent loop with tool calling and stuck detection
+### Shared (`clients/shared/`)
+- `agent/` — agent loop with tool calling, streaming, stuck detection. **All agent code lives here** — clients (CLI, desktop) import from shared, never duplicate.
+- `apiclient/` — typed HTTP client to backend (stream.go, client.go)
+- `tools/` — tool registry and implementations
+- `pkg/api/` — OpenAI-compatible request/response types
+
+### Client (`clients/cli/`)
 - `internal/chatctx/` — token-budgeted context windowing
-- `internal/tools/` — tool registry and implementations
+- `cmd/` — TUI, REPL commands, startup logic
 
 ## Key Conventions
 
@@ -97,3 +101,4 @@ Three independent Go modules. JSON over HTTP is the contract between them.
 - REPL slash commands (`/memory`, `/context`, `/tokens`, `/clear`) are handled in `client/cmd/run.go`.
 - Data directories: `~/.local/share/tanrenai/{models,bin,memory}` (override with `TANRENAI_DATA_DIR`).
 - `pkg/api/types.go` is duplicated across all three modules (OpenAI-compatible schemas).
+- Agent code must only live in `clients/shared/agent/` — CLI and desktop import from there. Never duplicate agent logic into client-specific packages.

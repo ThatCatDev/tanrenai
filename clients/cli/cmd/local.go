@@ -16,6 +16,8 @@ type localOpts struct {
 	GPULayers      int
 	FlashAttention bool
 	MemoryEnabled  bool
+	EmbeddingModel string
+	MemoryDir      string
 }
 
 // startLocalServers starts embedded GPU and backend servers on ephemeral ports.
@@ -41,6 +43,7 @@ func startLocalServers(ctx context.Context, opts localOpts, log *startupLog) (se
 			Port:           gpuPort,
 			GPULayers:      opts.GPULayers,
 			FlashAttention: opts.FlashAttention,
+			EmbeddingModel: opts.EmbeddingModel,
 		})
 		if err != nil {
 			slog.Error("GPU server exited", "error", err)
@@ -63,6 +66,7 @@ func startLocalServers(ctx context.Context, opts localOpts, log *startupLog) (se
 			Port:          srvPort,
 			GPUURL:        gpuAddr,
 			MemoryEnabled: opts.MemoryEnabled,
+			MemoryDir:     opts.MemoryDir,
 		})
 		if err != nil {
 			slog.Error("backend server exited", "error", err)

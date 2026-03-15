@@ -82,6 +82,7 @@ cd /tmp/llama.cpp
 cmake -B build -DGGML_CUDA=ON
 cmake --build build --config Release -j$(nproc)
 cp /tmp/llama.cpp/build/bin/llama-server ~/.local/share/tanrenai/bin/
+cp /tmp/llama.cpp/build/bin/*.so* ~/.local/share/tanrenai/bin/
 ```
 
 ## Quick Start
@@ -297,9 +298,10 @@ cd /tmp/llama.cpp
 cmake -B build -DGGML_CUDA=ON
 cmake --build build --config Release -j$(nproc)
 
-# Install the binary where tanrenai expects it
+# Install the binary and shared libraries where tanrenai expects them
 mkdir -p ~/.local/share/tanrenai/bin
 cp /tmp/llama.cpp/build/bin/llama-server ~/.local/share/tanrenai/bin/
+cp /tmp/llama.cpp/build/bin/*.so* ~/.local/share/tanrenai/bin/
 ```
 
 For CPU-only builds, omit `-DGGML_CUDA=ON`.

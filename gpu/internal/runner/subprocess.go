@@ -86,33 +86,56 @@ func resolveBinary(binDir string) (string, error) {
 	return "", fmt.Errorf("llama-server not found at %s — place it in the bin/ directory next to the tanrenai executable, or in %s", binPath, binDir)
 }
 
-// checkGPUSupport logs a warning if an NVIDIA GPU is detected but llama-server
-// lacks CUDA support (Linux only).
+// checkGPUSupport detects whether GPU acceleration will be used and logs the result.
 func checkGPUSupport(binPath string) {
-	if runtime.GOOS != "linux" {
+	hasGPU := false
+	hasCUDA := false
+
+	switch runtime.GOOS {
+	case "linux":
+		// Check native Linux and WSL GPU devices.
+		if _, err := os.Stat("/dev/nvidiactl"); err == nil {
+			hasGPU = true
+		} else if _, err := os.Stat("/dev/dxg"); err == nil {
+			// WSL2 exposes GPU via /dev/dxg
+			hasGPU = true
+		} else if err := exec.Command("nvidia-smi").Run(); err == nil {
+			hasGPU = true
+		}
+	case "darwin":
+		// macOS with Apple Silicon always has Metal GPU support.
+		if runtime.GOARCH == "arm64" {
+			slog.Info("Using GPU acceleration (Metal)")
+			return
+		}
+	case "windows":
+		// Check for NVIDIA GPU via nvidia-smi.
+		if err := exec.Command("nvidia-smi").Run(); err == nil {
+			hasGPU = true
+		}
+	}
+
+	if !hasGPU {
+		slog.Info("No GPU detected — using CPU inference")
 		return
 	}
-	// Check if NVIDIA GPU is present.
-	if _, err := os.Stat("/dev/nvidiactl"); err != nil {
-		return // no NVIDIA GPU
-	}
-	// Check if llama-server links against CUDA libraries.
+
+	// Run llama-server --version to check if it actually loads the CUDA backend.
 	binDir := filepath.Dir(binPath)
-	hasCUDALib := false
-	entries, _ := os.ReadDir(binDir)
-	for _, e := range entries {
-		name := e.Name()
-		if strings.Contains(name, "cuda") || strings.Contains(name, "cublas") {
-			hasCUDALib = true
-			break
-		}
+	cmd := exec.Command(binPath, "--version")
+	cmd.Dir = binDir
+	env := os.Environ()
+	env = append(env, "LD_LIBRARY_PATH="+binDir+":"+os.Getenv("LD_LIBRARY_PATH"))
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err == nil && strings.Contains(string(out), "ggml_cuda_init") {
+		hasCUDA = true
 	}
-	if !hasCUDALib {
-		// Also check ldd output for the binary itself.
-		out, err := exec.Command("ldd", binPath).Output()
-		if err == nil && !strings.Contains(string(out), "cuda") {
-			slog.Warn("NVIDIA GPU detected but llama-server was built without CUDA — inference will use CPU only. See docs for GPU setup.")
-		}
+
+	if hasCUDA {
+		slog.Info("Using GPU acceleration (CUDA)")
+	} else {
+		slog.Warn("NVIDIA GPU detected but llama-server lacks CUDA support — using CPU only. See docs for GPU setup.")
 	}
 }
 
@@ -211,6 +234,7 @@ func (s *Subprocess) Start(ctx context.Context) error {
 	}
 
 	s.cmd = exec.Command(s.binPath, args...)
+	s.cmd.Dir = filepath.Dir(s.binPath) // backends are discovered relative to cwd
 	s.cmd.Env = s.env
 	setSysProcAttr(s.cmd)
 

@@ -2,13 +2,37 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
 )
+
+// debugEnabled returns true when TANRENAI_DEBUG is set.
+func debugEnabled() bool { return os.Getenv("TANRENAI_DEBUG") != "" }
+
+func debugf(format string, args ...any) {
+	if !debugEnabled() {
+		return
+	}
+	f, err := os.OpenFile("/tmp/tanrenai-debug.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "[agent] "+format+"\n", args...)
+}
+
+// TokenEstimator is an optional interface for estimating token counts.
+// If provided via Config.TokenEstimator, it enables tool result truncation.
+type TokenEstimator interface {
+	Estimate(text string) int
+	EstimateMessages(msgs []api.Message) int
+}
 
 // CompletionFunc sends a chat completion request and returns the response.
 type CompletionFunc func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error)
@@ -37,7 +61,9 @@ type Config struct {
 	MaxIterations     int
 	Tools             *tools.Registry
 	Hooks             Hooks
-	MaxResponseTokens int // max tokens per generation (0 = default 4096)
+	MaxTokens         int            // 0 = no limit (backward compatible)
+	MaxResponseTokens int            // max tokens per generation (0 = default 4096)
+	TokenEstimator    TokenEstimator // nil = no estimation
 }
 
 // StreamingCompletionFunc returns a channel of stream events instead of blocking.
@@ -50,12 +76,13 @@ type StreamingConfig struct {
 	OnThinking       func()
 	OnThinkingDone   func()
 	OnContentDelta   func(delta string)
+	OnReasoningDelta func(delta string)
 }
 
 const (
 	maxConsecutiveErrors     = 3
 	defaultMaxResponseTokens = 4096
-	maxNudges                = 3
+	maxRetries               = 3
 )
 
 func toolCallKey(tc api.ToolCall) string {
@@ -64,8 +91,7 @@ func toolCallKey(tc api.ToolCall) string {
 
 // processToolCalls executes each tool call, tracks error counts for stuck
 // detection, fires hooks, and returns the resulting tool messages plus whether
-// any call succeeded (i.e. the agent is not stuck). A fatal execution error
-// is returned as err.
+// any call succeeded.
 func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *tools.Registry, hooks Hooks, errorCounts map[string]int) (msgs []api.Message, anySuccess bool, err error) {
 	for idx, tc := range toolCalls {
 		// Ensure tool calls have IDs — some backends (e.g. llama-server) may
@@ -136,14 +162,13 @@ func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *t
 }
 
 // checkStuck returns true when every tool call has hit the error-repeat
-// threshold and at least one has exceeded it, meaning the agent should stop.
+// threshold and at least one has exceeded it.
 func checkStuck(toolCalls []api.ToolCall, errorCounts map[string]int) bool {
 	for _, tc := range toolCalls {
 		if errorCounts[toolCallKey(tc)] < maxConsecutiveErrors {
 			return false
 		}
 	}
-	// All at or above threshold — check if any exceeded it.
 	for _, tc := range toolCalls {
 		if errorCounts[toolCallKey(tc)] > maxConsecutiveErrors {
 			return true
@@ -165,9 +190,13 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 
 	apiTools := cfg.Tools.APITools()
 	errorCounts := make(map[string]int)
-	nudgeCount := 0
+	retryCount := 0
 
 	for i := 0; i < cfg.MaxIterations; i++ {
+		if cfg.MaxTokens > 0 && cfg.TokenEstimator != nil {
+			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
+		}
+
 		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
 			Messages:  messages,
@@ -187,34 +216,46 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 
 		choice := resp.Choices[0]
 		stripNarration(&choice.Message)
-		messages = append(messages, choice.Message)
 
 		if choice.Message.Content != "" && cfg.Hooks.OnAssistantMessage != nil {
 			cfg.Hooks.OnAssistantMessage(choice.Message.Content)
 		}
 
 		if choice.FinishReason == "length" && len(choice.Message.ToolCalls) == 0 {
+			messages = append(messages, choice.Message)
 			continue
 		}
 
 		if choice.FinishReason != "tool_calls" || len(choice.Message.ToolCalls) == 0 {
-			if nudgeCount < maxNudges && looksLikeContinuation(choice.Message.Content) {
-				nudgeCount++
+			isEmpty := choice.Message.Content == ""
+			isContinuation := looksLikeContinuation(choice.Message.Content)
+
+			if retryCount < maxRetries && (isEmpty || isContinuation) {
+				retryCount++
+				if retryCount == 1 {
+					continue
+				}
 				messages = append(messages, api.Message{
 					Role:    "user",
-					Content: "Do not guess or speculate. Use your tools to gather the actual information, then answer.",
+					Content: retryPrompt,
 				})
 				continue
 			}
+			messages = append(messages, choice.Message)
 			return messages, nil
 		}
 
-		toolMsgs, anySuccess, err := processToolCalls(ctx, choice.Message.ToolCalls, cfg.Tools, cfg.Hooks, errorCounts)
-		if err != nil {
-			return messages, err
-		}
+		// Got tool calls — append and execute
+		retryCount = 0
+		messages = removeRetryPrompts(messages)
+		messages = append(messages, choice.Message)
+
+		toolMsgs, anySuccess, toolErr := processToolCalls(ctx, choice.Message.ToolCalls, cfg.Tools, cfg.Hooks, errorCounts)
 		messages = append(messages, toolMsgs...)
 
+		if toolErr != nil {
+			return messages, toolErr
+		}
 		if !anySuccess && checkStuck(choice.Message.ToolCalls, errorCounts) {
 			return messages, fmt.Errorf("agent stuck: repeated identical failing tool calls")
 		}
@@ -234,11 +275,15 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 
 	apiTools := cfg.Tools.APITools()
 	errorCounts := make(map[string]int)
-	nudgeCount := 0
+	retryCount := 0
 
 	for i := 0; i < cfg.MaxIterations; i++ {
 		if cfg.OnIterationStart != nil {
 			cfg.OnIterationStart(i+1, cfg.MaxIterations, messages)
+		}
+
+		if cfg.MaxTokens > 0 && cfg.TokenEstimator != nil {
+			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
 		}
 
 		maxTokens := cfg.MaxResponseTokens
@@ -247,6 +292,17 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			Stream:    true,
 			Tools:     apiTools,
 			MaxTokens: &maxTokens,
+		}
+
+		if debugEnabled() {
+			debugf("iter %d: sending %d messages", i+1, len(req.Messages))
+			for j, m := range req.Messages {
+				debugf("  msg[%d] role=%q content_len=%d tool_calls=%d tool_call_id=%q", j, m.Role, len(m.Content), len(m.ToolCalls), m.ToolCallID)
+			}
+			if i > 0 {
+				reqJSON, _ := json.MarshalIndent(req, "", "  ")
+				debugf("iter %d full request:\n%s", i+1, string(reqJSON))
+			}
 		}
 
 		if cfg.OnThinking != nil {
@@ -270,11 +326,12 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		}
 
 		choice := resp.Choices[0]
+		debugf("iter %d: finish_reason=%q content_len=%d tool_calls=%d reasoning=%v", i+1, choice.FinishReason, len(choice.Message.Content), len(choice.Message.ToolCalls), hadReasoning)
 
 		stripNarration(&choice.Message)
-		messages = append(messages, choice.Message)
 
 		if choice.FinishReason == "length" && len(choice.Message.ToolCalls) == 0 {
+			messages = append(messages, choice.Message)
 			if cfg.OnContentDelta != nil {
 				cfg.OnContentDelta("\n[continuing...]\n")
 			}
@@ -282,28 +339,41 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		}
 
 		if choice.FinishReason != "tool_calls" || len(choice.Message.ToolCalls) == 0 {
-			// Thinking models may produce only reasoning_content and stop
-			// without visible content. Nudge them to produce a response.
-			if nudgeCount < maxNudges && (looksLikeContinuation(choice.Message.Content) || (choice.Message.Content == "" && hadReasoning)) {
-				nudgeCount++
-				if cfg.OnContentDelta != nil {
-					cfg.OnContentDelta("\n[continuing...]\n")
+			isEmpty := choice.Message.Content == ""
+			isContinuation := looksLikeContinuation(choice.Message.Content)
+
+			if retryCount < maxRetries && (isEmpty || isContinuation) {
+				retryCount++
+				debugf("iter %d: retry %d/%d (empty=%v continuation=%v reasoning=%v)", i+1, retryCount, maxRetries, isEmpty, isContinuation, hadReasoning)
+
+				if retryCount == 1 {
+					// First retry: silent (same messages, no injection)
+					continue
 				}
+				// Subsequent retries: inject a short prompt to break the
+				// model out of a reasoning-only loop, then remove it after.
 				messages = append(messages, api.Message{
 					Role:    "user",
-					Content: "Please provide your response to the user.",
+					Content: retryPrompt,
 				})
 				continue
 			}
+			messages = append(messages, choice.Message)
 			return messages, nil
 		}
 
-		toolMsgs, anySuccess, err := processToolCalls(ctx, choice.Message.ToolCalls, cfg.Tools, cfg.Hooks, errorCounts)
-		if err != nil {
-			return messages, err
-		}
+		// Got tool calls — append and execute
+		retryCount = 0
+		// Clean up any injected retry prompts
+		messages = removeRetryPrompts(messages)
+		messages = append(messages, choice.Message)
+
+		toolMsgs, anySuccess, toolErr := processToolCalls(ctx, choice.Message.ToolCalls, cfg.Tools, cfg.Hooks, errorCounts)
 		messages = append(messages, toolMsgs...)
 
+		if toolErr != nil {
+			return messages, toolErr
+		}
 		if !anySuccess && checkStuck(choice.Message.ToolCalls, errorCounts) {
 			return messages, fmt.Errorf("agent stuck: repeated identical failing tool calls")
 		}
@@ -354,9 +424,15 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 			if choice.FinishReason != nil {
 				finishReason = *choice.FinishReason
 			}
+
+			// Track reasoning_content from thinking models.
 			if choice.Delta.ReasoningContent != "" {
 				gotReasoning = true
+				if cfg.OnReasoningDelta != nil {
+					cfg.OnReasoningDelta(choice.Delta.ReasoningContent)
+				}
 			}
+
 			if choice.Delta.Content != "" {
 				if !thinkingDone && cfg.OnThinkingDone != nil {
 					cfg.OnThinkingDone()
@@ -405,6 +481,8 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 		}
 	}
 
+	debugf("accumulation: reasoning=%v content_len=%d finish=%q", gotReasoning, content.Len(), finishReason)
+
 	if role == "" {
 		role = "assistant"
 	}
@@ -430,7 +508,7 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 		Model:  model,
 		Choices: []api.Choice{
 			{
-				Index: 0,
+				Index:        0,
 				Message:      msg,
 				FinishReason: finishReason,
 			},
@@ -468,8 +546,55 @@ func looksLikeContinuation(text string) bool {
 	return specCount >= 2
 }
 
+const retryPrompt = "[system: empty response detected — please use your tools or provide a visible answer]"
+
+// removeRetryPrompts strips any injected retry prompts from the message history.
+func removeRetryPrompts(messages []api.Message) []api.Message {
+	var cleaned []api.Message
+	for _, m := range messages {
+		if m.Role == "user" && m.Content == retryPrompt {
+			continue
+		}
+		cleaned = append(cleaned, m)
+	}
+	return cleaned
+}
+
 func stripNarration(msg *api.Message) {
 	if len(msg.ToolCalls) > 0 && msg.Content != "" {
 		msg.Content = ""
 	}
+}
+
+func truncateToolResults(messages []api.Message, maxTokens int, estimator TokenEstimator) []api.Message {
+	total := estimator.EstimateMessages(messages)
+	if total <= maxTokens {
+		return messages
+	}
+
+	msgs := make([]api.Message, len(messages))
+	copy(msgs, messages)
+
+	for i := range msgs {
+		if msgs[i].Role != "tool" || msgs[i].Content == "" {
+			continue
+		}
+
+		contentTokens := estimator.Estimate(msgs[i].Content)
+		if contentTokens <= 50 {
+			continue
+		}
+
+		maxChars := 50 * 4
+		if len(msgs[i].Content) > maxChars {
+			msgs[i].Content = msgs[i].Content[:maxChars] + "\n[truncated to fit context window]"
+		}
+
+		total = estimator.EstimateMessages(msgs)
+		if total <= maxTokens {
+			break
+		}
+	}
+
+	return msgs
 }
