@@ -6,12 +6,17 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ThatCatDev/tanrenai/gpu/pkg/api"
 )
+
+// splitSuffix matches split GGUF filenames like "model-00001-of-00003.gguf"
+var splitModelSuffix = regexp.MustCompile(`-\d{5}-of-\d{5}\.gguf$`)
 
 const maxRestartAttempts = 3
 
@@ -48,7 +53,14 @@ func (r *ProcessRunner) CrashNotify() <-chan error {
 
 func (r *ProcessRunner) Load(ctx context.Context, modelPath string, opts Options) error {
 	r.modelPath = modelPath
-	r.modelName = filepath.Base(modelPath)
+	name := filepath.Base(modelPath)
+	// Strip split suffix (e.g. "-00001-of-00003.gguf" → "") and .gguf extension
+	if splitModelSuffix.MatchString(name) {
+		name = splitModelSuffix.ReplaceAllString(name, "")
+	} else {
+		name = strings.TrimSuffix(name, ".gguf")
+	}
+	r.modelName = name
 	r.opts = opts
 
 	if err := r.startSubprocess(ctx); err != nil {
