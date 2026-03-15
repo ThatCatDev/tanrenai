@@ -23,12 +23,13 @@ func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []Set
 				`bash -c '
 mkdir -p /root/.local/share/tanrenai
 
-# Find the largest writable mount point for model storage
-# Skip pseudo-filesystems, read-only mounts, and tiny mounts
+# Find the best writable storage for models
+# Prefer persistent disk over RAM-backed tmpfs
 BEST_PATH=""
 BEST_AVAIL=0
+BEST_PERSISTENT=0
 
-for MP in /dev/shm /workspace /mnt/* /data /scratch /tmp; do
+for MP in /root/.local/share /workspace /mnt/* /data /scratch /dev/shm /tmp; do
   [ -d "$MP" ] || continue
   # Check if writable
   touch "$MP/.tanrenai-test" 2>/dev/null || continue
@@ -37,9 +38,17 @@ for MP in /dev/shm /workspace /mnt/* /data /scratch /tmp; do
   AVAIL=$(df --output=avail "$MP" 2>/dev/null | tail -1 | tr -d " ")
   [ -z "$AVAIL" ] && continue
   # Must have at least 50GB free
-  if [ "$AVAIL" -gt 50000000 ] && [ "$AVAIL" -gt "$BEST_AVAIL" ]; then
+  [ "$AVAIL" -gt 50000000 ] || continue
+  # Check if persistent (not tmpfs/devtmpfs)
+  FSTYPE=$(df --output=fstype "$MP" 2>/dev/null | tail -1 | tr -d " ")
+  PERSISTENT=0
+  case "$FSTYPE" in tmpfs|devtmpfs) PERSISTENT=0 ;; *) PERSISTENT=1 ;; esac
+  # Prefer persistent storage, then largest
+  if [ "$PERSISTENT" -gt "$BEST_PERSISTENT" ] || \
+     ([ "$PERSISTENT" -eq "$BEST_PERSISTENT" ] && [ "$AVAIL" -gt "$BEST_AVAIL" ]); then
     BEST_AVAIL=$AVAIL
     BEST_PATH=$MP
+    BEST_PERSISTENT=$PERSISTENT
   fi
 done
 
@@ -48,7 +57,8 @@ if [ -n "$BEST_PATH" ]; then
   rm -rf /root/.local/share/tanrenai/models
   ln -sfn "$BEST_PATH/tanrenai-models" /root/.local/share/tanrenai/models
   AVAIL_GB=$((BEST_AVAIL / 1024 / 1024))
-  echo "Models dir: $BEST_PATH/tanrenai-models (${AVAIL_GB}GB free)"
+  FSTYPE=$(df --output=fstype "$BEST_PATH" 2>/dev/null | tail -1 | tr -d " ")
+  echo "Models dir: $BEST_PATH/tanrenai-models (${AVAIL_GB}GB free, $FSTYPE)"
 else
   mkdir -p /root/.local/share/tanrenai/models
   echo "Models dir: /root/.local/share/tanrenai/models (overlay — WARNING: limited space)"

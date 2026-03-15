@@ -94,7 +94,7 @@ The CLI embeds the GPU server and backend in a single binary — no separate ser
 Download a GGUF model from Hugging Face:
 
 ```bash
-tanrenai --local pull https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
+tanrenai --local pull hf://unsloth/Qwen3-8B-GGUF/Q4_K_M
 ```
 
 Models are stored in `~/.local/share/tanrenai/models/` (Linux/macOS) or `%LOCALAPPDATA%\tanrenai\models\` (Windows).
@@ -232,6 +232,24 @@ A GTK4/Adwaita desktop app is also available from [Releases](https://github.com/
 | macOS | Requires GTK 4 and libadwaita: `brew install gtk4 libadwaita` |
 | Windows | **Installer:** `tanrenai-desktop-windows-amd64-setup.exe` (adds to PATH + Start Menu). Or use the `.zip` for manual install. |
 
+## Pulling Models
+
+Supports HuggingFace GGUF models with `hf://` references:
+
+```bash
+# Auto-pick best quant from a repo
+tanrenai --local pull hf://unsloth/Qwen3.5-27B-GGUF
+
+# Specific quant
+tanrenai --local pull hf://unsloth/Qwen3.5-27B-GGUF/Q4_K_M
+
+# Split GGUF (multi-file, downloads all parts)
+tanrenai --local pull hf://unsloth/Qwen3.5-122B-A10B-GGUF/UD-Q4_K_XL
+
+# Direct URL (still works)
+tanrenai --local pull https://huggingface.co/owner/repo/resolve/main/model.gguf
+```
+
 ## Advanced: Three-Tier Setup
 
 For remote GPU servers or multi-machine setups, run the tiers separately:
@@ -247,15 +265,105 @@ tanrenai-server serve --gpu-url http://gpu-host:11435 --memory --port 8080
 tanrenai run model-name --agent --memory --server-url http://backend-host:8080
 ```
 
+## Cloud Deployment (vast.ai)
+
+Deploy the GPU server to vast.ai with a Headscale/Tailscale mesh network, so both sides can connect without public IPs.
+
+### Infrastructure CLI
+
+```bash
+cd infra/ && go build -o tanrenai-infra .
+```
+
+### Deploy GPU Server
+
+```bash
+# Interactive — pick existing instance or create new
+# --model-size auto-calculates VRAM and disk requirements
+tanrenai-infra deploy \
+  --model-size 120b \
+  --max-cost 3.0 \
+  --network headscale \
+  --headscale-url https://headscale.floretos.com \
+  --headscale-api-key $HEADSCALE_API_KEY
+```
+
+| Model Size | Min VRAM | Disk Allocated |
+|-----------|----------|----------------|
+| 8b | 7 GB | 100 GB |
+| 27b | 19 GB | 100 GB |
+| 72b | 46 GB | 150 GB |
+| 120b | 74 GB | 200 GB |
+
+The deploy process:
+1. Search offers or select existing instance (interactive TUI)
+2. SSH in, install deps, build llama.cpp with CUDA, build tanrenai-gpu
+3. Install Tailscale and join Headscale network
+4. Start GPU server, health check through tunnel
+
+### Run Backend (Docker)
+
+```bash
+docker run -d --name tanrenai-server -p 8080:8080 \
+  -e HEADSCALE_API_KEY="$HEADSCALE_API_KEY" \
+  -e HEADSCALE_URL="https://headscale.floretos.com" \
+  -e TAILSCALE_HOSTNAME="tanrenai-server" \
+  harbor.floret.dev/tanrenai/server-tailscale:latest \
+  serve --memory
+```
+
+The image auto-generates a Headscale auth key, joins the network, discovers the GPU server, and sets `--gpu-url` automatically.
+
+| Env Var | Description |
+|---------|-------------|
+| `HEADSCALE_API_KEY` | Headscale API key (auto-generates auth key) |
+| `HEADSCALE_URL` | Headscale server URL |
+| `TAILSCALE_HOSTNAME` | Node hostname |
+| `GPU_HOSTNAME` | GPU node filter (default: `tanrenai-gpu-`) |
+| `HEADSCALE_USER` | Headscale user (default: `tanrenai`) |
+
+Or pass a pre-generated auth key directly with `TAILSCALE_AUTH_KEY`.
+
+### Pull Model to GPU Server
+
+```bash
+tanrenai pull --server-url http://localhost:8080 hf://unsloth/Qwen3.5-122B-A10B-GGUF/UD-Q4_K_XL
+```
+
+### Other Infra Commands
+
+```bash
+tanrenai-infra list                           # List vast.ai instances
+tanrenai-infra status --vastai-instance-id ID # Instance details
+tanrenai-infra destroy --vastai-instance-id ID # Tear down
+
+tanrenai-infra network auth-key               # Generate Headscale pre-auth key
+tanrenai-infra network nodes                  # List all Headscale nodes
+tanrenai-infra network join --hostname NAME   # Join this machine to network
+```
+
+### Docker Images
+
+| Image | Registry | Size |
+|-------|----------|------|
+| `server` | `harbor.floret.dev/tanrenai/server` | ~10 MB |
+| `server-tailscale` | `harbor.floret.dev/tanrenai/server-tailscale` | ~48 MB |
+
+Built and pushed automatically on merge to main via GitHub Actions.
+
 ## Architecture
 
 ```
 Clients (clients/)  →  Backend (server/)  →  GPU Server (gpu/)
 CLI, Desktop           memory/RAG, proxy,    llama-server,
 agent loop             vast.ai mgmt          models, fine-tuning
+                                    ↑
+                       Infra (infra/)
+                       vast.ai deploy,
+                       Headscale tunnel
 ```
 
-Three independent Go modules communicating via JSON over HTTP. In `--local` mode, all three are embedded in the CLI binary.
+Four independent Go modules communicating via JSON over HTTP. In `--local` mode, all three are embedded in the CLI binary.
 
 ## Development Setup
 
@@ -314,12 +422,13 @@ make install
 
 # Or build individual components
 make build          # CLI only
-make build-all      # CLI + GPU server + backend
+make build-all      # CLI + GPU server + backend + infra
 
 # Or build each module directly
 cd gpu/          && go build -o tanrenai-gpu .
 cd server/       && go build -o tanrenai-server .
 cd clients/cli/  && go build -o tanrenai .
+cd infra/        && go build -o tanrenai-infra .
 
 # Desktop (requires GTK4 dev libraries)
 cd clients/desktop/ && go build -o tanrenai-desktop .
