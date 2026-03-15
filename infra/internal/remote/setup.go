@@ -69,8 +69,9 @@ func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []Set
 			Commands: []string{
 				"[ -f /usr/local/go/bin/go ] || curl -fsSL https://go.dev/dl/go1.25.0.linux-amd64.tar.gz | tar -C /usr/local -xzf -",
 				"export PATH=$PATH:/usr/local/go/bin",
-				"[ -d /opt/tanrenai ] && cd /opt/tanrenai && git fetch && git reset --hard origin/main || git clone --depth 1 https://github.com/ThatCatDev/tanrenai.git /opt/tanrenai",
-				"cd /opt/tanrenai/gpu && /usr/local/go/bin/go clean -cache 2>/dev/null; /usr/local/go/bin/go build -o /usr/local/bin/tanrenai-gpu .",
+				"rm -rf /opt/tanrenai && git clone --depth 1 https://github.com/ThatCatDev/tanrenai.git /opt/tanrenai",
+				"ls /opt/tanrenai/gpu/internal/models/hfresolve.go && echo 'hfresolve.go present' || echo 'WARNING: hfresolve.go MISSING'",
+				"cd /opt/tanrenai/gpu && /usr/local/go/bin/go build -o /usr/local/bin/tanrenai-gpu .",
 			},
 		},
 	}
