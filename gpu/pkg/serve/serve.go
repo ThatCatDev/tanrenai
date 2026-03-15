@@ -4,22 +4,28 @@ package serve
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/ThatCatDev/tanrenai/gpu/internal/config"
 	"github.com/ThatCatDev/tanrenai/gpu/internal/models"
+	"github.com/ThatCatDev/tanrenai/gpu/internal/runner"
 	"github.com/ThatCatDev/tanrenai/gpu/internal/server"
 )
 
 // Config holds the public configuration for the GPU server.
 type Config struct {
-	Host           string
-	Port           int
-	ModelsDir      string
-	BinDir         string
-	GPULayers      int
-	CtxSize        int
-	FlashAttention bool
-	EmbeddingModel string
+	Host             string
+	Port             int
+	ModelsDir        string
+	BinDir           string
+	GPULayers        int
+	CtxSize          int
+	FlashAttention   bool
+	EmbeddingModel   string
+	ChatTemplate     string // named template shortcut (e.g. "chatml")
+	ChatTemplateFile string // path to custom Jinja chat template file
+	ReasoningFormat  string // reasoning format (e.g. "deepseek")
+	NoAutoTemplate   bool   // disable automatic template detection from GGUF metadata
 }
 
 // Start starts the GPU server and blocks until ctx is cancelled.
@@ -46,6 +52,28 @@ func Start(ctx context.Context, cfg Config) error {
 	icfg.FlashAttention = cfg.FlashAttention
 	if cfg.EmbeddingModel != "" {
 		icfg.EmbeddingModel = cfg.EmbeddingModel
+	}
+	if cfg.ReasoningFormat != "" {
+		icfg.ReasoningFormat = cfg.ReasoningFormat
+	}
+	icfg.NoAutoTemplate = cfg.NoAutoTemplate
+
+	// Handle chat template: explicit file takes precedence, then named template.
+	if cfg.ChatTemplateFile != "" {
+		icfg.ChatTemplateFile = cfg.ChatTemplateFile
+	} else if cfg.ChatTemplate != "" {
+		switch cfg.ChatTemplate {
+		case "chatml":
+			tpl := runner.GenerateChatML(runner.DefaultChatMLConfig)
+			path, err := runner.WriteTemplateFile("chatml", tpl)
+			if err != nil {
+				return fmt.Errorf("write chat template: %w", err)
+			}
+			defer os.Remove(path)
+			icfg.ChatTemplateFile = path
+		default:
+			return fmt.Errorf("unknown chat template %q (available: chatml; or use ChatTemplateFile for custom templates)", cfg.ChatTemplate)
+		}
 	}
 
 	if err := config.EnsureDirs(); err != nil {
