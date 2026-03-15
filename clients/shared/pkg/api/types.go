@@ -233,10 +233,12 @@ type PullRequest struct {
 
 // PullEvent is a streaming SSE event during a model download.
 type PullEvent struct {
-	Status     string `json:"status"`               // "downloading", "downloaded", "error"
+	Status     string `json:"status"`               // "resolving", "downloading", "downloaded", "error"
 	Downloaded int64  `json:"downloaded,omitempty"`
 	Total      int64  `json:"total,omitempty"`
 	Percent    int    `json:"percent,omitempty"`
+	File       int    `json:"file,omitempty"`        // current file number (for split GGUFs)
+	TotalFiles int    `json:"total_files,omitempty"` // total file count
 	Path       string `json:"path,omitempty"`
 	Error      string `json:"error,omitempty"`
 }

@@ -37,8 +37,23 @@ func (t *TailscaleProvider) GenerateAuthKey(ctx context.Context) (string, error)
 // InstallCommands returns shell commands to install Tailscale and join the network.
 func (t *TailscaleProvider) InstallCommands(authKey, hostname string) []string {
 	return []string{
-		"curl -fsSL https://tailscale.com/install.sh | sh",
-		fmt.Sprintf("tailscale up --authkey %s --hostname %s", authKey, hostname),
+		"which tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh",
+		fmt.Sprintf(`bash -c '
+set -e
+mkdir -p /var/run/tailscale /var/lib/tailscale
+killall tailscaled 2>/dev/null || true
+sleep 1
+rm -f /var/run/tailscale/tailscaled.sock
+tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock --tun=userspace-networking > /var/log/tailscaled.log 2>&1 &
+TSPID=$!
+for i in $(seq 1 15); do
+  [ -S /var/run/tailscale/tailscaled.sock ] && break
+  echo "waiting for tailscaled socket ($i)..."
+  sleep 1
+done
+tailscale --socket=/var/run/tailscale/tailscaled.sock up --authkey %s --hostname %s
+echo "tailscale connected: $(tailscale --socket=/var/run/tailscale/tailscaled.sock ip -4)"
+'`, authKey, hostname),
 	}
 }
 

@@ -117,10 +117,68 @@ func (h *HeadscaleProvider) getUserID(ctx context.Context, name string) (uint64,
 // InstallCommands returns shell commands to install Tailscale and join the Headscale server.
 func (h *HeadscaleProvider) InstallCommands(authKey, hostname string) []string {
 	return []string{
-		"curl -fsSL https://tailscale.com/install.sh | sh",
-		fmt.Sprintf("tailscale up --login-server %s --authkey %s --hostname %s",
-			h.baseURL, authKey, hostname),
+		"which tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh",
+		fmt.Sprintf(`bash -c '
+set -e
+mkdir -p /var/run/tailscale /var/lib/tailscale
+killall tailscaled 2>/dev/null || true
+sleep 1
+rm -f /var/run/tailscale/tailscaled.sock
+tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock --tun=userspace-networking > /var/log/tailscaled.log 2>&1 &
+TSPID=$!
+for i in $(seq 1 15); do
+  [ -S /var/run/tailscale/tailscaled.sock ] && break
+  echo "waiting for tailscaled socket ($i)..."
+  sleep 1
+done
+tailscale --socket=/var/run/tailscale/tailscaled.sock up --login-server %s --authkey %s --hostname %s
+echo "tailscale connected: $(tailscale --socket=/var/run/tailscale/tailscaled.sock ip -4)"
+'`, h.baseURL, authKey, hostname),
 	}
+}
+
+// Node represents a machine in the Headscale network.
+type Node struct {
+	Name   string
+	Online bool
+	IPs    []string
+}
+
+// ListNodes returns all nodes in the Headscale network.
+func (h *HeadscaleProvider) ListNodes(ctx context.Context) ([]Node, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		h.baseURL+"/api/v1/node", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+h.apiKey)
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("headscale returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Nodes []struct {
+			GivenName   string   `json:"givenName"`
+			IPAddresses []string `json:"ipAddresses"`
+			Online      bool     `json:"online"`
+		} `json:"nodes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	nodes := make([]Node, len(result.Nodes))
+	for i, n := range result.Nodes {
+		nodes[i] = Node{Name: n.GivenName, Online: n.Online, IPs: n.IPAddresses}
+	}
+	return nodes, nil
 }
 
 // WaitForPeer polls the Headscale API until a node with the given hostname appears.

@@ -54,12 +54,14 @@ func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []Set
 		{
 			Name: "build-llama-cpp",
 			Commands: []string{
+				`if [ -f /usr/local/bin/.llama-server-cuda ]; then echo "llama-server (CUDA) already built, skipping"; exit 0; fi`,
 				"[ -d /opt/llama.cpp ] && cd /opt/llama.cpp && git pull || git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp",
 				`CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')`,
 				"rm -rf /opt/llama.cpp/build",
 				`cd /opt/llama.cpp && cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH"`,
 				"cd /opt/llama.cpp && cmake --build build --config Release -j$(nproc) -t llama-server",
 				"cp /opt/llama.cpp/build/bin/llama-server /usr/local/bin/",
+				"touch /usr/local/bin/.llama-server-cuda",
 			},
 		},
 		{
@@ -67,7 +69,7 @@ func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []Set
 			Commands: []string{
 				"[ -f /usr/local/go/bin/go ] || curl -fsSL https://go.dev/dl/go1.25.0.linux-amd64.tar.gz | tar -C /usr/local -xzf -",
 				"export PATH=$PATH:/usr/local/go/bin",
-				"[ -d /opt/tanrenai ] && cd /opt/tanrenai && git pull || git clone --depth 1 https://github.com/ThatCatDev/tanrenai.git /opt/tanrenai",
+				"[ -d /opt/tanrenai ] && cd /opt/tanrenai && git fetch && git reset --hard origin/main || git clone --depth 1 https://github.com/ThatCatDev/tanrenai.git /opt/tanrenai",
 				"cd /opt/tanrenai/gpu && /usr/local/go/bin/go build -o /usr/local/bin/tanrenai-gpu .",
 			},
 		},
@@ -93,7 +95,7 @@ func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []Set
 	stages = append(stages, SetupStage{
 		Name: "start-gpu-server",
 		Commands: []string{
-			fmt.Sprintf("nohup /usr/local/bin/tanrenai-gpu serve --host 0.0.0.0 --port %d > /var/log/tanrenai-gpu.log 2>&1 &", gpuPort),
+			fmt.Sprintf("sh -c 'nohup /usr/local/bin/tanrenai-gpu serve --host 0.0.0.0 --port %d > /var/log/tanrenai-gpu.log 2>&1 &'", gpuPort),
 			"sleep 2",
 			fmt.Sprintf("curl -sf http://localhost:%d/health || echo 'WARNING: health check failed'", gpuPort),
 		},

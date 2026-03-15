@@ -11,8 +11,14 @@ import (
 )
 
 var pullCmd = &cobra.Command{
-	Use:   "pull <url>",
-	Short: "Download a GGUF model via the backend",
+	Use:   "pull <model>",
+	Short: "Download a GGUF model (supports hf://owner/repo/quant or direct URL)",
+	Long: `Download a GGUF model via the backend.
+
+Supports:
+  hf://unsloth/Qwen3.5-27B-GGUF                  auto-pick best quant
+  hf://unsloth/Qwen3.5-122B-A10B-GGUF/UD-Q4_K_XL  specific quant (incl. split files)
+  https://huggingface.co/.../model.gguf             direct URL`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		modelURL := args[0]
@@ -45,8 +51,16 @@ var pullCmd = &cobra.Command{
 				return fmt.Errorf("download failed: %w", ev.Err)
 			}
 			switch ev.Event.Status {
+			case "resolving":
+				if ev.Event.TotalFiles > 1 {
+					fmt.Printf("Downloading %d files...\n", ev.Event.TotalFiles)
+				}
 			case "downloading":
-				printProgress(ev.Event.Percent, ev.Event.Downloaded, ev.Event.Total)
+				prefix := ""
+				if ev.Event.TotalFiles > 1 {
+					prefix = fmt.Sprintf("[%d/%d] ", ev.Event.File, ev.Event.TotalFiles)
+				}
+				printProgress(prefix, ev.Event.Percent, ev.Event.Downloaded, ev.Event.Total)
 			case "downloaded":
 				fmt.Printf("\rDownloaded: %s\n", ev.Event.Path)
 			case "error":
@@ -58,11 +72,11 @@ var pullCmd = &cobra.Command{
 	},
 }
 
-func printProgress(percent int, downloaded, total int64) {
+func printProgress(prefix string, percent int, downloaded, total int64) {
 	const barWidth = 30
 	filled := barWidth * percent / 100
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-	fmt.Printf("\r[%s] %3d%%  %s / %s", bar, percent, formatBytes(downloaded), formatBytes(total))
+	fmt.Printf("\r%s[%s] %3d%%  %s / %s", prefix, bar, percent, formatBytes(downloaded), formatBytes(total))
 }
 
 func formatBytes(b int64) string {
