@@ -21,14 +21,43 @@ func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []Set
 			Name: "install-deps",
 			Commands: []string{
 				"apt-get update -qq",
-				"DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git build-essential cmake curl wget",
+				"DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git build-essential curl wget",
+				// Install recent cmake (distro version is often too old)
+				"[ -f /usr/local/bin/cmake ] || (curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz | tar -xzf - -C /usr/local --strip-components=1)",
+			},
+		},
+		{
+			Name: "cuda-check",
+			Commands: []string{
+				`CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')`,
+				`NVCC_VER=$(/usr/local/cuda/bin/nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+')`,
+				`echo "GPU arch: compute_$CUDA_ARCH, NVCC: $NVCC_VER"`,
+				// Upgrade CUDA toolkit if nvcc is too old for the GPU
+				// compute_120 (Blackwell) needs CUDA 12.8+, compute_100 (Hopper) needs 12.0+
+				`CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.') && ` +
+					`NVCC_MAJOR=$(/usr/local/cuda/bin/nvcc --version | grep -oP 'release \K[0-9]+') && ` +
+					`NVCC_MINOR=$(/usr/local/cuda/bin/nvcc --version | grep -oP 'release [0-9]+\.\K[0-9]+') && ` +
+					`NEED_UPGRADE=0 && ` +
+					`if [ "$CUDA_ARCH" -ge 120 ] && [ "$NVCC_MAJOR" -eq 12 ] && [ "$NVCC_MINOR" -lt 8 ]; then NEED_UPGRADE=1; fi && ` +
+					`if [ "$NEED_UPGRADE" -eq 1 ]; then ` +
+					`echo "Upgrading CUDA toolkit for compute_$CUDA_ARCH..." && ` +
+					`wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && ` +
+					`dpkg -i cuda-keyring_1.1-1_all.deb && ` +
+					`apt-get update -qq && ` +
+					`DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cuda-toolkit-12-8 && ` +
+					`export PATH=/usr/local/cuda-12.8/bin:$PATH && ` +
+					`ln -sfn /usr/local/cuda-12.8 /usr/local/cuda && ` +
+					`echo "Upgraded to $(nvcc --version | grep release)"; ` +
+					`else echo "CUDA toolkit OK"; fi`,
 			},
 		},
 		{
 			Name: "build-llama-cpp",
 			Commands: []string{
 				"[ -d /opt/llama.cpp ] && cd /opt/llama.cpp && git pull || git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp",
-				"cd /opt/llama.cpp && cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=native",
+				`CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')`,
+				"rm -rf /opt/llama.cpp/build",
+				`cd /opt/llama.cpp && cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH"`,
 				"cd /opt/llama.cpp && cmake --build build --config Release -j$(nproc) -t llama-server",
 				"cp /opt/llama.cpp/build/bin/llama-server /usr/local/bin/",
 			},

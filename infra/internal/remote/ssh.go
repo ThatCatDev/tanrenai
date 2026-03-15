@@ -40,7 +40,7 @@ func Connect(ctx context.Context, host string, port int, user string) (*SSHClien
 		Timeout:         30 * time.Second,
 	}
 
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	slog.Info("connecting via SSH", "addr", addr, "user", user)
 
 	var client *ssh.Client
@@ -111,7 +111,7 @@ func (s *SSHClient) Host() string {
 
 // WaitForSSH polls until SSH is reachable on the given host:port.
 func WaitForSSH(ctx context.Context, host string, port int) error {
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
