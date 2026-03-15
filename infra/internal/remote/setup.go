@@ -70,7 +70,7 @@ func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []Set
 				"[ -f /usr/local/go/bin/go ] || curl -fsSL https://go.dev/dl/go1.25.0.linux-amd64.tar.gz | tar -C /usr/local -xzf -",
 				"export PATH=$PATH:/usr/local/go/bin",
 				"[ -d /opt/tanrenai ] && cd /opt/tanrenai && git fetch && git reset --hard origin/main || git clone --depth 1 https://github.com/ThatCatDev/tanrenai.git /opt/tanrenai",
-				"cd /opt/tanrenai/gpu && /usr/local/go/bin/go build -o /usr/local/bin/tanrenai-gpu .",
+				"cd /opt/tanrenai/gpu && /usr/local/go/bin/go clean -cache 2>/dev/null; /usr/local/go/bin/go build -o /usr/local/bin/tanrenai-gpu .",
 			},
 		},
 	}
@@ -95,6 +95,7 @@ func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []Set
 	stages = append(stages, SetupStage{
 		Name: "start-gpu-server",
 		Commands: []string{
+			"killall tanrenai-gpu 2>/dev/null; sleep 1",
 			fmt.Sprintf("sh -c 'nohup /usr/local/bin/tanrenai-gpu serve --host 0.0.0.0 --port %d > /var/log/tanrenai-gpu.log 2>&1 &'", gpuPort),
 			"sleep 2",
 			fmt.Sprintf("curl -sf http://localhost:%d/health || echo 'WARNING: health check failed'", gpuPort),
