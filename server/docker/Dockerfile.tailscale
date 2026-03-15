@@ -1,0 +1,18 @@
+FROM golang:1.25-alpine AS build
+RUN apk add --no-cache git
+WORKDIR /src
+COPY server/ server/
+RUN cd server && CGO_ENABLED=0 go build -o /tanrenai-server .
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates curl iptables ip6tables \
+    && curl -fsSL https://pkgs.tailscale.com/stable/tailscale_latest_amd64.tgz \
+       | tar -xzf - --strip-components=1 \
+    && mv tailscale tailscaled /usr/local/bin/
+
+COPY --from=build /tanrenai-server /usr/local/bin/tanrenai-server
+COPY server/docker/entrypoint-tailscale.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8080
+ENTRYPOINT ["/entrypoint.sh"]

@@ -13,7 +13,10 @@ build-gpu:
 build-server:
 	cd server && go build -o tanrenai-server .
 
-build-all: build build-gpu build-server
+build-infra:
+	cd infra && go build -o tanrenai-infra .
+
+build-all: build build-gpu build-server build-infra
 
 # ── Install ──────────────────────────────────────────────────────────────
 
@@ -41,8 +44,9 @@ test:
 	cd clients/cli && go test ./...
 	cd gpu && go test ./...
 	cd server && go test ./...
+	cd infra && go test ./...
 
 # ── Clean ────────────────────────────────────────────────────────────────
 
 clean:
-	rm -f clients/cli/tanrenai gpu/tanrenai-gpu server/tanrenai-server
+	rm -f clients/cli/tanrenai gpu/tanrenai-gpu server/tanrenai-server infra/tanrenai-infra

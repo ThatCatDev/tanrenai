@@ -44,6 +44,9 @@ cd server/ && go build -o tanrenai-server . && go test ./...
 
 # Client
 cd client/ && go build -o tanrenai . && go test ./...
+
+# Infra
+cd infra/ && go build -o tanrenai-infra . && go test ./...
 ```
 
 ## Running
@@ -65,9 +68,10 @@ cd client/ && ./tanrenai run <model-name> --agent --memory --server-url http://l
 github.com/ThatCatDev/tanrenai/gpu      # GPU server
 github.com/ThatCatDev/tanrenai/server   # Backend
 github.com/ThatCatDev/tanrenai/client   # Client CLI
+github.com/ThatCatDev/tanrenai/infra    # Infrastructure deployment
 ```
 
-Three independent Go modules. JSON over HTTP is the contract between them.
+Four independent Go modules. JSON over HTTP is the contract between them.
 
 ## Key Packages
 
@@ -92,6 +96,29 @@ Three independent Go modules. JSON over HTTP is the contract between them.
 ### Client (`clients/cli/`)
 - `internal/chatctx/` — token-budgeted context windowing
 - `cmd/` — TUI, REPL commands, startup logic
+
+### Infra (`infra/`)
+- `internal/vastai/` — vast.ai client (copied from server, extended with SearchOffers + CreateInstance)
+- `internal/network/` — NetworkProvider interface + implementations (headscale, tailscale, none)
+- `internal/remote/` — SSH client and GPU server setup stages
+- `internal/deploy/` — orchestrates full deploy pipeline (resolve instance → SSH → setup → tunnel → health check)
+- `cmd/` — CLI commands (deploy, status, destroy)
+
+## Deployment Workflow
+
+```bash
+# Deploy GPU server to vast.ai with Headscale tunnel
+cd infra/ && ./tanrenai-infra deploy \
+  --network headscale \
+  --headscale-url https://headscale.floretos.com \
+  --headscale-api-key $HEADSCALE_API_KEY
+
+# Or deploy to an existing instance without tunnel
+cd infra/ && ./tanrenai-infra deploy --network none --vastai-instance-id 12345
+
+# Then start backend with the tunnel IP
+tanrenai-server serve --gpu-url http://<tailscale-ip>:11435 --memory
+```
 
 ## Key Conventions
 

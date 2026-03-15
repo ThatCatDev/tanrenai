@@ -42,6 +42,15 @@ jobs:
           go-version: '1.25'
       - run: cd clients/cli && go build ./... && go test ./... && go vet ./...
 
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: cd infra && go build ./... && go test ./... && go vet ./...
+
   clients-desktop:
     runs-on: ubuntu-latest
     steps:
