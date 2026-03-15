@@ -18,6 +18,45 @@ type SetupStage struct {
 func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []SetupStage {
 	stages := []SetupStage{
 		{
+			Name: "storage-setup",
+			Commands: []string{
+				`bash -c '
+mkdir -p /root/.local/share/tanrenai
+
+# Find the largest writable mount point for model storage
+# Skip pseudo-filesystems, read-only mounts, and tiny mounts
+BEST_PATH=""
+BEST_AVAIL=0
+
+for MP in /dev/shm /workspace /mnt/* /data /scratch /tmp; do
+  [ -d "$MP" ] || continue
+  # Check if writable
+  touch "$MP/.tanrenai-test" 2>/dev/null || continue
+  rm -f "$MP/.tanrenai-test"
+  # Get available space in KB
+  AVAIL=$(df --output=avail "$MP" 2>/dev/null | tail -1 | tr -d " ")
+  [ -z "$AVAIL" ] && continue
+  # Must have at least 50GB free
+  if [ "$AVAIL" -gt 50000000 ] && [ "$AVAIL" -gt "$BEST_AVAIL" ]; then
+    BEST_AVAIL=$AVAIL
+    BEST_PATH=$MP
+  fi
+done
+
+if [ -n "$BEST_PATH" ]; then
+  mkdir -p "$BEST_PATH/tanrenai-models"
+  rm -rf /root/.local/share/tanrenai/models
+  ln -sfn "$BEST_PATH/tanrenai-models" /root/.local/share/tanrenai/models
+  AVAIL_GB=$((BEST_AVAIL / 1024 / 1024))
+  echo "Models dir: $BEST_PATH/tanrenai-models (${AVAIL_GB}GB free)"
+else
+  mkdir -p /root/.local/share/tanrenai/models
+  echo "Models dir: /root/.local/share/tanrenai/models (overlay — WARNING: limited space)"
+fi
+'`,
+			},
+		},
+		{
 			Name: "install-deps",
 			Commands: []string{
 				"apt-get update -qq",
@@ -96,10 +135,29 @@ func GPUServerSetupStages(networkCmds []string, model string, gpuPort int) []Set
 	stages = append(stages, SetupStage{
 		Name: "start-gpu-server",
 		Commands: []string{
-			"killall tanrenai-gpu 2>/dev/null; sleep 1",
-			fmt.Sprintf("sh -c 'nohup /usr/local/bin/tanrenai-gpu serve --host 0.0.0.0 --port %d > /var/log/tanrenai-gpu.log 2>&1 &'", gpuPort),
-			"sleep 2",
-			fmt.Sprintf("curl -sf http://localhost:%d/health || echo 'WARNING: health check failed'", gpuPort),
+			fmt.Sprintf(`python3 -c "
+import subprocess, time, os, signal
+# Kill old GPU server
+try:
+    r = subprocess.run(['pgrep', '-f', 'tanrenai-gpu serve'], capture_output=True, text=True)
+    for pid in r.stdout.strip().split('\n'):
+        if pid and int(pid) != os.getpid():
+            print(f'Stopping old GPU server (PID {pid})...')
+            os.kill(int(pid), signal.SIGTERM)
+    time.sleep(2)
+except: pass
+# Start new GPU server
+print('Starting GPU server on port %d...')
+subprocess.Popen(['nohup', '/usr/local/bin/tanrenai-gpu', 'serve', '--host', '0.0.0.0', '--port', '%d'],
+    stdout=open('/var/log/tanrenai-gpu.log', 'w'), stderr=subprocess.STDOUT,
+    start_new_session=True, preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN))
+time.sleep(3)
+import urllib.request
+try:
+    urllib.request.urlopen('http://localhost:%d/health')
+    print('GPU server healthy')
+except: print('WARNING: health check failed')
+"`, gpuPort, gpuPort, gpuPort),
 		},
 	})
 

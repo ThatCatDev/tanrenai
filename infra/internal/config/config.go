@@ -65,6 +65,24 @@ func VRAMForModelSize(size string) (float64, error) {
 	return math.Ceil(vram), nil
 }
 
+// DiskForModelSize estimates the minimum disk space in GB needed to store a model
+// of the given size at Q4 quantization, plus headroom for OS, build tools, etc.
+func DiskForModelSize(size string) (float64, error) {
+	vram, err := VRAMForModelSize(size)
+	if err != nil {
+		return 0, err
+	}
+	// Model file size ≈ VRAM needed, double it for headroom (partial downloads,
+	// multiple models, build cache, OS, tools), minimum 100GB
+	disk := vram*2 + 50
+	if disk < 100 {
+		disk = 100
+	}
+	// Round up to nearest 50GB
+	disk = math.Ceil(disk/50) * 50
+	return disk, nil
+}
+
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

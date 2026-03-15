@@ -65,7 +65,12 @@ func runDeploy(cmd *cobra.Command, args []string) {
 			exitError("%v", err)
 		}
 		cfg.MinGPURAM = vram
-		fmt.Printf("Model size %s → need %.0f GB VRAM\n", v, vram)
+		// Auto-set disk if not explicitly provided
+		if !cmd.Flags().Changed("disk-gb") {
+			disk, _ := config.DiskForModelSize(v)
+			cfg.DiskGB = disk
+		}
+		fmt.Printf("Model size %s → need %.0f GB VRAM, %.0f GB disk\n", v, vram, cfg.DiskGB)
 	}
 	if v, _ := cmd.Flags().GetFloat64("min-gpu-ram"); cmd.Flags().Changed("min-gpu-ram") {
 		cfg.MinGPURAM = v

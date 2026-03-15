@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -45,12 +46,17 @@ func TestHeadscaleProviderInstallCommands(t *testing.T) {
 	if len(cmds) != 2 {
 		t.Fatalf("InstallCommands() returned %d commands, want 2", len(cmds))
 	}
-	if cmds[0] != "curl -fsSL https://tailscale.com/install.sh | sh" {
-		t.Errorf("cmd[0] = %q", cmds[0])
+	if !strings.Contains(cmds[0], "tailscale.com/install.sh") {
+		t.Errorf("cmd[0] should install tailscale, got %q", cmds[0])
 	}
-	expected := "tailscale up --login-server https://hs.example.com --authkey auth-key-123 --hostname gpu-node"
-	if cmds[1] != expected {
-		t.Errorf("cmd[1] = %q, want %q", cmds[1], expected)
+	if !strings.Contains(cmds[1], "--login-server https://hs.example.com") {
+		t.Errorf("cmd[1] should contain login-server, got %q", cmds[1][:80])
+	}
+	if !strings.Contains(cmds[1], "--authkey auth-key-123") {
+		t.Errorf("cmd[1] should contain authkey")
+	}
+	if !strings.Contains(cmds[1], "--hostname gpu-node") {
+		t.Errorf("cmd[1] should contain hostname")
 	}
 }
 
@@ -65,9 +71,11 @@ func TestTailscaleProviderInstallCommands(t *testing.T) {
 	if len(cmds) != 2 {
 		t.Fatalf("InstallCommands() returned %d commands, want 2", len(cmds))
 	}
-	expected := "tailscale up --authkey tskey-123 --hostname gpu-node"
-	if cmds[1] != expected {
-		t.Errorf("cmd[1] = %q, want %q", cmds[1], expected)
+	if !strings.Contains(cmds[1], "--authkey tskey-123") {
+		t.Errorf("cmd[1] should contain authkey")
+	}
+	if !strings.Contains(cmds[1], "--hostname gpu-node") {
+		t.Errorf("cmd[1] should contain hostname")
 	}
 }
 

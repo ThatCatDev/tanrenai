@@ -237,9 +237,9 @@ func (d *Deployer) resolveInstance(ctx context.Context) (*vastai.Instance, error
 }
 
 func (d *Deployer) createNewInstance(ctx context.Context) (*vastai.Instance, error) {
-	searchLabel := fmt.Sprintf("Searching offers (%.0f GB RAM, $%.2f/hr max)", d.cfg.MinGPURAM, d.cfg.MaxCostPerHr)
+	searchLabel := fmt.Sprintf("Searching offers (%.0f GB RAM, %.0f GB disk, $%.2f/hr max)", d.cfg.MinGPURAM, d.cfg.DiskGB, d.cfg.MaxCostPerHr)
 	if d.cfg.GPUName != "" {
-		searchLabel = fmt.Sprintf("Searching offers (%s, %.0f GB RAM, $%.2f/hr max)", d.cfg.GPUName, d.cfg.MinGPURAM, d.cfg.MaxCostPerHr)
+		searchLabel = fmt.Sprintf("Searching offers (%s, %.0f GB RAM, %.0f GB disk, $%.2f/hr max)", d.cfg.GPUName, d.cfg.MinGPURAM, d.cfg.DiskGB, d.cfg.MaxCostPerHr)
 	}
 
 	var offers []vastai.Offer
@@ -267,7 +267,7 @@ func (d *Deployer) createNewInstance(ctx context.Context) (*vastai.Instance, err
 
 	var inst *vastai.Instance
 	err = tui.RunWithSpinner(d.output,
-		fmt.Sprintf("Creating instance from offer %d (%s)", choice.Offer.ID, choice.Offer.GPUName),
+		fmt.Sprintf("Creating instance from offer %d (%s, %.0f GB disk)", choice.Offer.ID, choice.Offer.GPUName, d.cfg.DiskGB),
 		func() error {
 			var createErr error
 			inst, createErr = d.vastai.CreateInstance(ctx, choice.Offer.ID, vastai.CreateOpts{
