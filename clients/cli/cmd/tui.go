@@ -119,7 +119,8 @@ type tuiApp struct {
 	registry      *tools.Registry
 	permissions   *tools.Permissions
 	memoryEnabled bool
-	maxIterations int
+	maxIterations     int
+	maxResponseTokens int
 	agentMode     bool
 	completeFn    agent.CompletionFunc
 	streamFn      agent.StreamingCompletionFunc

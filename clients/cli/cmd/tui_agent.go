@@ -188,7 +188,8 @@ func (t *tuiApp) startAgentTurn(input string) {
 
 	cfg := agent.StreamingConfig{
 		Config: agent.Config{
-			MaxIterations: t.maxIterations,
+			MaxIterations:     t.maxIterations,
+			MaxResponseTokens: t.maxResponseTokens,
 			Tools:         t.registry,
 			Hooks: agent.Hooks{
 				OnToolCall: func(call api.ToolCall) {

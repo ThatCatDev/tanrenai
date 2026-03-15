@@ -131,6 +131,7 @@ var runCmd = &cobra.Command{
 		contextFiles, _ := cmd.Flags().GetStringSlice("context-file")
 		memoryEnabled, _ := cmd.Flags().GetBool("memory")
 		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
+		maxTokens, _ := cmd.Flags().GetInt("max-tokens")
 		local, _ := cmd.Flags().GetBool("local")
 		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
 		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
@@ -253,6 +254,7 @@ var runCmd = &cobra.Command{
 			t.registry = registry
 			t.memoryEnabled = memoryEnabled
 			t.maxIterations = maxIterations
+			t.maxResponseTokens = maxTokens
 			t.agentMode = agentMode
 			t.completeFn = completeFn
 			t.streamFn = streamFn
@@ -282,6 +284,7 @@ var chatCmd = &cobra.Command{
 		contextFiles, _ := cmd.Flags().GetStringSlice("context-file")
 		memoryEnabled, _ := cmd.Flags().GetBool("memory")
 		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
+		maxTokens, _ := cmd.Flags().GetInt("max-tokens")
 		local, _ := cmd.Flags().GetBool("local")
 		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
 		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
@@ -392,6 +395,7 @@ var chatCmd = &cobra.Command{
 			t.registry = registry
 			t.memoryEnabled = memoryEnabled
 			t.maxIterations = maxIterations
+			t.maxResponseTokens = maxTokens
 			t.agentMode = agentMode
 			t.completeFn = completeFn
 			t.streamFn = streamFn
@@ -811,6 +815,7 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("context-file", nil, "files to load into context")
 	cmd.Flags().Bool("memory", false, "enable memory/RAG")
 	cmd.Flags().Int("max-iterations", 200, "maximum agent tool-call iterations per turn (0 = unlimited)")
+	cmd.Flags().Int("max-tokens", 0, "max tokens per model response (0 = default 16384)")
 }
 
 var _ = time.Now
