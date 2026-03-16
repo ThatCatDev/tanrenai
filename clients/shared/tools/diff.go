@@ -57,5 +57,6 @@ func DiffStats(diff string) (added, removed int) {
 			}
 		}
 	}
+
 	return
 }

@@ -22,17 +22,20 @@ func (h *MemoryHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var req api.MemorySearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+
 		return
 	}
 
 	if req.Query == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "query must not be empty")
+
 		return
 	}
 
 	results, err := h.MemStore.Search(r.Context(), req.Query, req.Limit)
 	if err != nil {
 		writeMemoryError(w, err)
+
 		return
 	}
 
@@ -54,7 +57,7 @@ func (h *MemoryHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(api.MemorySearchResponse{Results: apiResults})
+	_ = json.NewEncoder(w).Encode(api.MemorySearchResponse{Results: apiResults})
 }
 
 // Store handles POST /v1/memory/store.
@@ -64,6 +67,7 @@ func (h *MemoryHandler) Store(w http.ResponseWriter, r *http.Request) {
 	var req api.MemoryStoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+
 		return
 	}
 
@@ -74,11 +78,12 @@ func (h *MemoryHandler) Store(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.MemStore.Add(r.Context(), &entry); err != nil {
 		writeMemoryError(w, err)
+
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(api.MemoryStoreResponse{ID: entry.ID})
+	_ = json.NewEncoder(w).Encode(api.MemoryStoreResponse{ID: entry.ID})
 }
 
 // List handles GET /v1/memory/list.
@@ -91,6 +96,7 @@ func (h *MemoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	entries, err := h.MemStore.List(r.Context(), limit)
 	if err != nil {
 		writeMemoryError(w, err)
+
 		return
 	}
 
@@ -106,7 +112,7 @@ func (h *MemoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(api.MemoryListResponse{
+	_ = json.NewEncoder(w).Encode(api.MemoryListResponse{
 		Entries: apiEntries,
 		Total:   h.MemStore.Count(),
 	})
@@ -117,33 +123,36 @@ func (h *MemoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "memory ID required")
+
 		return
 	}
 
 	if err := h.MemStore.Delete(r.Context(), id); err != nil {
 		writeMemoryError(w, err)
+
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
 
 // Clear handles DELETE /v1/memory.
 func (h *MemoryHandler) Clear(w http.ResponseWriter, r *http.Request) {
 	if err := h.MemStore.Clear(r.Context()); err != nil {
 		writeMemoryError(w, err)
+
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
 }
 
 // Count handles GET /v1/memory/count.
 func (h *MemoryHandler) Count(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(api.MemoryCountResponse{Count: h.MemStore.Count()})
+	_ = json.NewEncoder(w).Encode(api.MemoryCountResponse{Count: h.MemStore.Count()})
 }
 
 // writeMemoryError maps memory sentinel errors to appropriate HTTP status codes.

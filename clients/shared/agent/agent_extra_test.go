@@ -18,7 +18,7 @@ type errorTool struct {
 }
 
 func (e *errorTool) Name() string        { return e.name }
-func (e *errorTool) Description() string  { return "always errors" }
+func (e *errorTool) Description() string { return "always errors" }
 func (e *errorTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
@@ -43,6 +43,7 @@ func (m *mockTokenEstimator) EstimateMessages(msgs []api.Message) int {
 	for _, msg := range msgs {
 		total += m.Estimate(msg.Content)
 	}
+
 	return total
 }
 
@@ -119,8 +120,8 @@ func TestTruncateToolResults_TruncatesLongToolResult(t *testing.T) {
 	// Long tool result: 500 chars → 500 tokens.
 	longContent := strings.Repeat("x", 500)
 	msgs := []api.Message{
-		{Role: "user", Content: "q"},          // 1 token
-		{Role: "tool", Content: longContent},  // 500 tokens
+		{Role: "user", Content: "q"},         // 1 token
+		{Role: "tool", Content: longContent}, // 500 tokens
 	}
 	// Total = 501, limit = 100 → should truncate.
 	result := truncateToolResults(msgs, 100, estimator)
@@ -290,7 +291,7 @@ func TestStripNarration_EmptyContentNoOp(t *testing.T) {
 	msg := &api.Message{
 		Role: "assistant",
 		ToolCalls: []api.ToolCall{{
-			ID: "call_noop",
+			ID:       "call_noop",
 			Function: api.ToolCallFunction{Name: "list_dir", Arguments: "{}"},
 		}},
 	}
@@ -373,6 +374,7 @@ func TestRunStreamingCancel(t *testing.T) {
 			// Then send an error so accumulateWithCallbacks returns.
 			ch <- apiclient.StreamEvent{Err: callCtx.Err()}
 		}()
+
 		return ch, nil
 	}
 
@@ -437,6 +439,7 @@ func TestApprovalHookBlock(t *testing.T) {
 				}, nil
 			}
 		}
+
 		return &api.ChatCompletionResponse{
 			Choices: []api.Choice{{
 				FinishReason: "stop",
@@ -449,6 +452,7 @@ func TestApprovalHookBlock(t *testing.T) {
 	hooks := Hooks{
 		OnToolApproval: func(call api.ToolCall) ApprovalAction {
 			blockedCalls = append(blockedCalls, call.Function.Name)
+
 			return ApprovalBlock
 		},
 	}
@@ -512,6 +516,7 @@ func TestApprovalHookAllow(t *testing.T) {
 				}},
 			}, nil
 		}
+
 		return &api.ChatCompletionResponse{
 			Choices: []api.Choice{{
 				FinishReason: "stop",
@@ -524,6 +529,7 @@ func TestApprovalHookAllow(t *testing.T) {
 	hooks := Hooks{
 		OnToolApproval: func(call api.ToolCall) ApprovalAction {
 			approvedCalls = append(approvedCalls, call.Function.Name)
+
 			return ApprovalAllow
 		},
 	}
@@ -674,6 +680,7 @@ func TestOnToolCallAndResultHooks(t *testing.T) {
 				}},
 			}, nil
 		}
+
 		return &api.ChatCompletionResponse{
 			Choices: []api.Choice{{
 				FinishReason: "stop",
@@ -743,6 +750,7 @@ func TestStreamingMaxIterationsReached(t *testing.T) {
 			}}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -843,6 +851,7 @@ func TestUnknownToolError(t *testing.T) {
 				}},
 			}, nil
 		}
+
 		return &api.ChatCompletionResponse{
 			Choices: []api.Choice{{
 				FinishReason: "stop",
@@ -892,6 +901,7 @@ func TestRunStreaming_NoToolCalls(t *testing.T) {
 			}}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -945,6 +955,7 @@ func TestRunStreaming_ReasoningContent(t *testing.T) {
 			}}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -1007,6 +1018,7 @@ func TestRunStreaming_LengthFinishReason(t *testing.T) {
 			}}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -1117,6 +1129,7 @@ func TestTruncateToolResults_WithTokenBudget(t *testing.T) {
 				}, nil
 			}
 		}
+
 		return &api.ChatCompletionResponse{
 			Choices: []api.Choice{{
 				FinishReason: "stop",
@@ -1129,7 +1142,7 @@ func TestTruncateToolResults_WithTokenBudget(t *testing.T) {
 	cfg := Config{
 		MaxIterations:  5,
 		Tools:          registry,
-		MaxTokens:      50,                               // very small budget
+		MaxTokens:      50,                                // very small budget
 		TokenEstimator: &mockTokenEstimator{perChar: 1.0}, // 1 char = 1 token
 	}
 
@@ -1299,6 +1312,7 @@ func TestRunStreaming_StreamError(t *testing.T) {
 			defer close(ch)
 			ch <- apiclient.StreamEvent{Err: context.DeadlineExceeded}
 		}()
+
 		return ch, nil
 	}
 
@@ -1331,6 +1345,7 @@ func TestRunStreaming_EmptyChoices(t *testing.T) {
 			defer close(ch)
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -1372,6 +1387,7 @@ func TestRunStreaming_OnIterationStartHook(t *testing.T) {
 			}}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -1446,6 +1462,7 @@ func TestRunPlannedStreaming_ContextCancel(t *testing.T) {
 				ch <- apiclient.StreamEvent{Done: true}
 				// Cancel after planning so phase 2 loop exits immediately.
 				cancel()
+
 				return
 			}
 			fr := "stop"
@@ -1457,6 +1474,7 @@ func TestRunPlannedStreaming_ContextCancel(t *testing.T) {
 			}}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -1508,6 +1526,7 @@ func TestRunStreaming_StuckDetection(t *testing.T) {
 			}}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -1573,5 +1592,6 @@ func min(a, b int) int {
 	if a < b {
 		return a
 	}
+
 	return b
 }

@@ -57,6 +57,7 @@ func Match(scrolls []Scroll, input string, maxResults int) []Scroll {
 	for i, r := range results {
 		out[i] = r.scroll
 	}
+
 	return out
 }
 
@@ -107,6 +108,7 @@ func tokenize(s string) []string {
 			tokens = append(tokens, f)
 		}
 	}
+
 	return tokens
 }
 

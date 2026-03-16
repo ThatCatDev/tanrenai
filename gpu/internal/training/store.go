@@ -74,6 +74,7 @@ func (s *RunStore) List() ([]*TrainingRun, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+
 		return nil, fmt.Errorf("read runs dir: %w", err)
 	}
 
@@ -102,5 +103,6 @@ func (s *RunStore) Delete(id string) error {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return fmt.Errorf("run %s not found", id)
 	}
+
 	return os.RemoveAll(dir)
 }

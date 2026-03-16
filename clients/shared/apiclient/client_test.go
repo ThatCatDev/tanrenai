@@ -535,6 +535,7 @@ func TestStreamCompletion(t *testing.T) {
 		}
 		if ev.Done {
 			doneReceived = true
+
 			continue
 		}
 		if ev.Chunk != nil {
@@ -631,5 +632,6 @@ func searchSubstring(s, substr string) bool {
 			return true
 		}
 	}
+
 	return false
 }

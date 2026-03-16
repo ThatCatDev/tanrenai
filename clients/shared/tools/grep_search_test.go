@@ -14,9 +14,9 @@ func setupGrepDir(t *testing.T) string {
 	dir := t.TempDir()
 
 	files := map[string]string{
-		"main.go":      "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n",
-		"utils.go":     "package main\n\nfunc helper() string {\n\treturn \"helper\"\n}\n",
-		"notes.txt":    "TODO: fix the bug\nDone: refactor code\nTODO: add tests\n",
+		"main.go":   "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n",
+		"utils.go":  "package main\n\nfunc helper() string {\n\treturn \"helper\"\n}\n",
+		"notes.txt": "TODO: fix the bug\nDone: refactor code\nTODO: add tests\n",
 	}
 
 	for name, content := range files {
@@ -24,6 +24,7 @@ func setupGrepDir(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
+
 	return dir
 }
 

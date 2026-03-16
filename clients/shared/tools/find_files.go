@@ -61,7 +61,7 @@ func (t *FindFilesTool) Execute(_ context.Context, arguments string) (*ToolResul
 
 	err := filepath.Walk(args.Path, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // intentionally skip walk errors
 		}
 		if count >= args.MaxResults {
 			return filepath.SkipAll
@@ -71,6 +71,7 @@ func (t *FindFilesTool) Execute(_ context.Context, arguments string) (*ToolResul
 			if name == ".git" || name == "node_modules" || name == "vendor" || name == "__pycache__" || name == ".venv" || name == "venv" {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
 
@@ -79,6 +80,7 @@ func (t *FindFilesTool) Execute(_ context.Context, arguments string) (*ToolResul
 			fmt.Fprintf(&b, "%s\n", path)
 			count++
 		}
+
 		return nil
 	})
 

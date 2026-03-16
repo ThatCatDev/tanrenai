@@ -107,6 +107,7 @@ var serveCmd = &cobra.Command{
 		defer stop()
 
 		srv := server.New(cfg, gpu, memStore, provider)
+
 		return srv.Start(ctx)
 	},
 }

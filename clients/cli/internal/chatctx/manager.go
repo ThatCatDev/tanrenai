@@ -58,6 +58,7 @@ func NewManager(cfg Config, estimator *TokenEstimator) *Manager {
 	if cfg.ResponseBudget <= 0 {
 		cfg.ResponseBudget = 512
 	}
+
 	return &Manager{
 		cfg:       cfg,
 		estimator: estimator,
@@ -85,6 +86,7 @@ func (m *Manager) ContextFiles() []string {
 	for i, cf := range m.contextFiles {
 		paths[i] = cf.Path
 	}
+
 	return paths
 }
 
@@ -257,6 +259,7 @@ func (m *Manager) NeedsSummary() bool {
 	}
 
 	totalHistory := m.estimator.EstimateMessages(m.history)
+
 	return totalHistory > available && len(m.history) > 0
 }
 
@@ -340,5 +343,6 @@ func (m *Manager) Summary() string {
 func (m *Manager) History() []api.Message {
 	out := make([]api.Message, len(m.history))
 	copy(out, m.history)
+
 	return out
 }

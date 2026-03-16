@@ -24,6 +24,7 @@ func (e *Entry) Content() string {
 	if len(content) > 1200 {
 		content = content[:1200]
 	}
+
 	return content
 }
 

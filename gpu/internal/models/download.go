@@ -50,7 +50,7 @@ func Download(url, destDir string, progress DownloadProgress) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("download request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return "", fmt.Errorf("download failed with status %d", resp.StatusCode)
@@ -71,7 +71,7 @@ func Download(url, destDir string, progress DownloadProgress) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Copy with progress tracking
 	buf := make([]byte, 32*1024)
@@ -92,12 +92,15 @@ func Download(url, destDir string, progress DownloadProgress) (string, error) {
 			if readErr == io.EOF {
 				break
 			}
+
 			return "", fmt.Errorf("read body: %w", readErr)
 		}
 	}
 
 	// Rename partial to final
-	f.Close()
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("close file: %w", err)
+	}
 	if err := os.Rename(partialPath, destPath); err != nil {
 		return "", fmt.Errorf("rename file: %w", err)
 	}

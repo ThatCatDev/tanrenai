@@ -70,7 +70,7 @@ func runDeploy(cmd *cobra.Command, args []string) {
 			disk, _ := config.DiskForModelSize(v)
 			cfg.DiskGB = disk
 		}
-		fmt.Printf("Model size %s → need %.0f GB VRAM, %.0f GB disk\n", v, vram, cfg.DiskGB)
+		_, _ = fmt.Fprintf(os.Stdout, "Model size %s → need %.0f GB VRAM, %.0f GB disk\n", v, vram, cfg.DiskGB)
 	}
 	if v, _ := cmd.Flags().GetFloat64("min-gpu-ram"); cmd.Flags().Changed("min-gpu-ram") {
 		cfg.MinGPURAM = v
@@ -137,12 +137,12 @@ func runDeploy(cmd *cobra.Command, args []string) {
 		exitError("deploy failed: %v", err)
 	}
 
-	fmt.Println()
-	fmt.Println("=== Deploy Complete ===")
-	fmt.Printf("Instance:  %d\n", result.InstanceID)
-	fmt.Printf("GPU:       %s\n", result.GPUName)
-	fmt.Printf("Cost:      $%.3f/hr\n", result.CostPerHr)
-	fmt.Printf("GPU URL:   %s\n", result.GPUURL)
-	fmt.Println()
-	fmt.Printf("Start backend:\n  tanrenai-server serve --gpu-url %s --memory\n", result.GPUURL)
+	_, _ = fmt.Fprintf(os.Stdout, "\n")
+	_, _ = fmt.Fprintf(os.Stdout, "=== Deploy Complete ===\n")
+	_, _ = fmt.Fprintf(os.Stdout, "Instance:  %d\n", result.InstanceID)
+	_, _ = fmt.Fprintf(os.Stdout, "GPU:       %s\n", result.GPUName)
+	_, _ = fmt.Fprintf(os.Stdout, "Cost:      $%.3f/hr\n", result.CostPerHr)
+	_, _ = fmt.Fprintf(os.Stdout, "GPU URL:   %s\n", result.GPUURL)
+	_, _ = fmt.Fprintf(os.Stdout, "\n")
+	_, _ = fmt.Fprintf(os.Stdout, "Start backend:\n  tanrenai-server serve --gpu-url %s --memory\n", result.GPUURL)
 }

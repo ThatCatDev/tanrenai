@@ -39,6 +39,7 @@ func GlobalConfigDir() string {
 		return d
 	}
 	home, _ := os.UserHomeDir()
+
 	return filepath.Join(home, ".tanrenai")
 }
 
@@ -89,6 +90,7 @@ func (p *Permissions) IsAllowed(toolName string, argsJSON string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -115,6 +117,7 @@ func (p *Permissions) argsMatch(constraints map[string][]string, argsJSON string
 		for _, pattern := range allowed {
 			if matchPattern(pattern, strVal) {
 				matched = true
+
 				break
 			}
 		}
@@ -122,6 +125,7 @@ func (p *Permissions) argsMatch(constraints map[string][]string, argsJSON string
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -133,13 +137,16 @@ func matchPattern(pattern, value string) bool {
 	// Support trailing wildcard: "ls *" matches "ls -la", "ls /tmp"
 	if strings.HasSuffix(pattern, " *") {
 		prefix := strings.TrimSuffix(pattern, " *")
+
 		return strings.HasPrefix(value, prefix+" ") || value == prefix
 	}
 	// Support path prefix: "/home/user/project/*" matches files under that dir
 	if strings.HasSuffix(pattern, "/*") {
 		prefix := strings.TrimSuffix(pattern, "/*")
+
 		return strings.HasPrefix(value, prefix+"/") || value == prefix
 	}
+
 	return false
 }
 
@@ -148,6 +155,7 @@ func (p *Permissions) AllowTool(toolName string) error {
 	p.mu.Lock()
 	p.config.Rules = append(p.config.Rules, PermissionRule{Tool: toolName})
 	p.mu.Unlock()
+
 	return p.save()
 }
 
@@ -161,6 +169,7 @@ func (p *Permissions) AllowToolWithArgs(toolName string, args map[string][]strin
 		AllowedArgs: args,
 	})
 	p.mu.Unlock()
+
 	return p.save()
 }
 
@@ -176,6 +185,7 @@ func (p *Permissions) save() error {
 	if err := os.MkdirAll(filepath.Dir(p.path), 0755); err != nil {
 		return err
 	}
+
 	return os.WriteFile(p.path, data, 0644)
 }
 
@@ -183,10 +193,10 @@ func (p *Permissions) save() error {
 type ToolRiskLevel int
 
 const (
-	RiskReadOnly  ToolRiskLevel = iota // safe to blanket-allow
-	RiskWrite                          // modifies files — show path
-	RiskExecute                        // runs arbitrary code — show full command
-	RiskNetwork                        // network access — show details
+	RiskReadOnly ToolRiskLevel = iota // safe to blanket-allow
+	RiskWrite                         // modifies files — show path
+	RiskExecute                       // runs arbitrary code — show full command
+	RiskNetwork                       // network access — show details
 )
 
 // ToolRisk returns the risk level for a tool, which determines how
@@ -233,6 +243,7 @@ func ExtractArg(argsJSON, key string) string {
 			return s
 		}
 	}
+
 	return ""
 }
 
@@ -243,5 +254,6 @@ func CommandPrefix(cmd string) string {
 	if len(parts) == 0 {
 		return ""
 	}
+
 	return parts[0]
 }

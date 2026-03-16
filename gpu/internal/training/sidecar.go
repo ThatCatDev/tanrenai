@@ -56,7 +56,8 @@ func NewSidecarRunner(ctx context.Context, cfg SidecarConfig) (*SidecarRunner, e
 	}
 
 	if err := r.waitForHealth(ctx, 30*time.Second); err != nil {
-		r.Close()
+		_ = r.Close()
+
 		return nil, fmt.Errorf("training sidecar failed to start: %w", err)
 	}
 
@@ -74,8 +75,9 @@ func (r *SidecarRunner) Close() error {
 		if err := r.cmd.Process.Kill(); err != nil {
 			return fmt.Errorf("failed to kill training sidecar: %w", err)
 		}
-		r.cmd.Wait()
+		_ = r.cmd.Wait()
 	}
+
 	return nil
 }
 
@@ -108,9 +110,10 @@ func (r *SidecarRunner) healthCheck(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check returned %d", resp.StatusCode)
 	}
+
 	return nil
 }

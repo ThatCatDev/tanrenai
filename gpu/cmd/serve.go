@@ -7,10 +7,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/spf13/cobra"
 	"github.com/ThatCatDev/tanrenai/gpu/internal/config"
 	"github.com/ThatCatDev/tanrenai/gpu/internal/runner"
 	"github.com/ThatCatDev/tanrenai/gpu/internal/server"
+	"github.com/spf13/cobra"
 )
 
 var serveCmd = &cobra.Command{
@@ -50,9 +50,9 @@ var serveCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("failed to write chat template: %w", err)
 			}
-			defer os.Remove(path)
+			defer func() { _ = os.Remove(path) }()
 			cfg.ChatTemplateFile = path
-			fmt.Printf("Using %s chat template (generated)\n", name)
+			_, _ = fmt.Fprintf(os.Stdout, "Using %s chat template (generated)\n", name)
 		}
 
 		if embModel, _ := cmd.Flags().GetString("embedding-model"); embModel != "" {

@@ -28,12 +28,14 @@ func LoadMetadata(ggufPath string) (*ModelMetadata, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+
 		return nil, err
 	}
 	var meta ModelMetadata
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, err
 	}
+
 	return &meta, nil
 }
 
@@ -43,6 +45,7 @@ func SaveMetadata(ggufPath string, meta *ModelMetadata) error {
 	if err != nil {
 		return err
 	}
+
 	return os.WriteFile(MetadataPath(ggufPath), data, 0644)
 }
 
@@ -60,5 +63,6 @@ func ParseHFURL(rawURL string) (repo, branch string, ok bool) {
 	if m == nil {
 		return "", "", false
 	}
+
 	return m[1], m[2], true
 }

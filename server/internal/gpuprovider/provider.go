@@ -19,8 +19,8 @@ type Provider interface {
 
 // Status represents the current GPU provider status.
 type Status struct {
-	State    string     `json:"status"`
-	Provider string     `json:"provider"`
-	GPUURL   string     `json:"gpu_url,omitempty"`
+	State     string     `json:"status"`
+	Provider  string     `json:"provider"`
+	GPUURL    string     `json:"gpu_url,omitempty"`
 	IdleSince *time.Time `json:"idle_since,omitempty"`
 }

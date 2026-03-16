@@ -42,6 +42,7 @@ func Load(projectDir, globalDir string) ([]Scroll, error) {
 	for _, s := range byName {
 		scrolls = append(scrolls, s)
 	}
+
 	return scrolls, nil
 }
 
@@ -57,6 +58,7 @@ func loadDir(dir, source string, byName map[string]Scroll) error {
 		}
 		byName[s.Name] = *s
 	}
+
 	return nil
 }
 
@@ -140,5 +142,6 @@ func parseTags(val string) []string {
 			tags = append(tags, t)
 		}
 	}
+
 	return tags
 }

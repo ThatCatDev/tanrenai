@@ -64,11 +64,11 @@ func (t *WebSearchTool) Execute(ctx context.Context, arguments string) (*ToolRes
 	}
 
 	var out strings.Builder
-	out.WriteString(fmt.Sprintf("Search results for %q:\n\n", args.Query))
+	fmt.Fprintf(&out, "Search results for %q:\n\n", args.Query)
 	for i, r := range results {
-		out.WriteString(fmt.Sprintf("%d. %s\n   %s\n", i+1, r.Title, r.URL))
+		fmt.Fprintf(&out, "%d. %s\n   %s\n", i+1, r.Title, r.URL)
 		if r.Snippet != "" {
-			out.WriteString(fmt.Sprintf("   %s\n", r.Snippet))
+			fmt.Fprintf(&out, "   %s\n", r.Snippet)
 		}
 		if i < len(results)-1 {
 			out.WriteString("\n")
@@ -97,7 +97,7 @@ func searchDuckDuckGo(ctx context.Context, query string, maxResults int) ([]sear
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)

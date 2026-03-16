@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -32,9 +31,4 @@ func init() {
 	rootCmd.PersistentFlags().Bool("local", false, "start embedded GPU + backend servers (single-binary mode)")
 	rootCmd.PersistentFlags().Int("gpu-layers", -1, "GPU offload layers (-1 = all); only used with --local")
 	rootCmd.PersistentFlags().Bool("flash-attn", true, "enable flash attention; only used with --local")
-}
-
-func exitError(msg string, args ...any) {
-	fmt.Fprintf(os.Stderr, "Error: "+msg+"\n", args...)
-	os.Exit(1)
 }

@@ -54,6 +54,7 @@ var serveCmd = &cobra.Command{
 		// Wait for GPU server health.
 		if err := waitForHealth(ctx, gpuAddr, 30*time.Second); err != nil {
 			stop()
+
 			return fmt.Errorf("GPU server failed to start: %w", err)
 		}
 		slog.Info("GPU server ready", "port", gpuCfg.Port)
@@ -79,11 +80,13 @@ var serveCmd = &cobra.Command{
 				stop()
 				<-srvErrCh
 				<-gpuErrCh
+
 				return fmt.Errorf("backend server failed to start: %w", err)
 			}
 		case err := <-srvErrCh:
 			stop()
 			<-gpuErrCh
+
 			return fmt.Errorf("backend server failed: %w", err)
 		}
 		slog.Info("Backend server ready", "addr", backendAddr)
@@ -93,14 +96,17 @@ var serveCmd = &cobra.Command{
 		case err := <-srvErrCh:
 			stop()
 			<-gpuErrCh
+
 			return err
 		case err := <-gpuErrCh:
 			stop()
 			<-srvErrCh
+
 			return err
 		case <-ctx.Done():
 			<-srvErrCh
 			<-gpuErrCh
+
 			return nil
 		}
 	},

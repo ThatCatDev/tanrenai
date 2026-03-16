@@ -14,10 +14,10 @@ func setupFindDir(t *testing.T) string {
 	dir := t.TempDir()
 
 	files := map[string]string{
-		"main.go":          "package main",
-		"utils.go":         "package main",
-		"README.md":        "# readme",
-		"sub/handler.go":   "package sub",
+		"main.go":             "package main",
+		"utils.go":            "package main",
+		"README.md":           "# readme",
+		"sub/handler.go":      "package sub",
 		"sub/handler_test.go": "package sub",
 	}
 
@@ -30,6 +30,7 @@ func setupFindDir(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
+
 	return dir
 }
 

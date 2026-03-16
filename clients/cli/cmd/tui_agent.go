@@ -10,8 +10,8 @@ import (
 
 	"github.com/rivo/tview"
 
-	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
+	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/scrolls"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
@@ -51,6 +51,7 @@ func (t *tuiApp) startChatTurn(input string) {
 		t.app.QueueUpdateDraw(func() {
 			t.handleStreamDone("", err)
 		})
+
 		return
 	}
 
@@ -65,6 +66,7 @@ func (t *tuiApp) startChatTurn(input string) {
 			t.app.QueueUpdateDraw(func() {
 				t.handleStreamDone(content, ev.Err)
 			})
+
 			return
 		}
 		if ev.Done {
@@ -118,6 +120,7 @@ func (t *tuiApp) handleStreamDone(content string, err error) {
 		for i := len(t.lines) - 1; i >= 0; i-- {
 			if strings.Contains(t.lines[i], ">>>") {
 				streamStart = i + 2
+
 				break
 			}
 		}
@@ -132,212 +135,6 @@ func (t *tuiApp) handleStreamDone(content string, err error) {
 	t.addLine("")
 	t.refreshChatView()
 	t.updateStatusBar()
-}
-
-// ── Agent Turn ──────────────────────────────────────────────────────────
-
-func (t *tuiApp) startAgentTurn(input string) {
-	t.mgr.Append(api.Message{Role: "user", Content: input})
-
-	if t.scrollsEnabled {
-		matched := scrolls.Match(t.allScrolls, input, 3)
-		if len(matched) > 0 {
-			var scrollMsgs []api.Message
-			for _, s := range matched {
-				content := fmt.Sprintf("[Scroll: %s]\n%s", s.Name, s.Content)
-				scrollMsgs = append(scrollMsgs, api.Message{Role: "system", Content: content})
-			}
-			t.mgr.SetScrolls(scrollMsgs)
-		} else {
-			t.mgr.ClearScrolls()
-		}
-	}
-
-	if t.memoryEnabled {
-		results, err := t.client.MemorySearch(context.Background(), input, 3)
-		if err == nil && len(results.Results) > 0 {
-			var memMsgs []api.Message
-			for _, r := range results.Results {
-				userMsg := truncate(r.Entry.UserMsg, 200)
-				assistMsg := truncate(r.Entry.AssistMsg, 500)
-				memContent := fmt.Sprintf("[Memory from %s] User asked: %s\nAssistant replied: %s",
-					r.Entry.Timestamp.Format("2006-01-02"), userMsg, assistMsg)
-				memMsgs = append(memMsgs, api.Message{Role: "system", Content: memContent})
-			}
-			t.mgr.SetMemories(memMsgs)
-		} else {
-			t.mgr.ClearMemories()
-		}
-	}
-
-	if t.mgr.NeedsSummary() {
-		_ = t.mgr.Summarize(context.Background(), chatctx.CompletionFunc(t.completeFn))
-	}
-
-	windowedMsgs := t.mgr.Messages()
-
-	turnCtx, turnCancel := context.WithCancel(context.Background())
-	t.mu.Lock()
-	t.turnCancel = turnCancel
-	t.mu.Unlock()
-
-	toolCount := 0
-	var contentBuf strings.Builder
-
-	flushContent := func() {
-		if contentBuf.Len() > 0 {
-			text := contentBuf.String()
-			contentBuf.Reset()
-			t.app.QueueUpdateDraw(func() {
-				trimmed := strings.TrimSpace(text)
-				if trimmed != "" {
-					rendered := t.renderMarkdown(trimmed)
-					for _, line := range strings.Split(rendered, "\n") {
-						t.addLine("    " + line)
-					}
-					t.refreshChatView()
-				}
-			})
-		}
-	}
-
-	cfg := agent.StreamingConfig{
-		Config: agent.Config{
-			MaxIterations:     t.maxIterations,
-			MaxResponseTokens: t.maxResponseTokens,
-			Tools:         t.registry,
-			Hooks: agent.Hooks{
-				OnToolCall: func(call api.ToolCall) {
-					flushContent()
-					toolCount++
-					t.currentIterOutput += len(call.Function.Name) + len(call.Function.Arguments)
-					display := fmt.Sprintf("%d tools | %s", toolCount, call.Function.Name)
-					name := call.Function.Name
-					t.app.QueueUpdateDraw(func() {
-						t.statusText = display
-						t.updateStatusBar()
-						idx := len(t.lines)
-						switch name {
-						case "file_read", "file_write", "patch_file":
-							path := extractFilePath(call)
-							label := "[gray::-]    > " + tview.Escape(display) + " [-:-:-][#00afff::u]" + tview.Escape(path) + "[::U][-:-:-]"
-							t.addLine(label)
-							t.toolCallLines[idx] = call
-						case "shell_exec":
-							cmd := extractShellCommand(call)
-							label := "[gray::-]    > " + tview.Escape(display) + " [-:-:-][yellow::-]$ " + tview.Escape(cmd) + "[-:-:-]"
-							t.addLine(label)
-						default:
-							t.addLine("[gray::-]    > " + tview.Escape(display) + "[-:-:-]")
-						}
-						t.refreshChatView()
-					})
-				},
-				OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
-					t.app.QueueUpdateDraw(func() {
-						if result.Diff != "" {
-							// Show colored inline diff with background highlights
-							for _, line := range strings.Split(strings.TrimRight(result.Diff, "\n"), "\n") {
-								if len(line) == 0 {
-									continue
-								}
-								escaped := tview.Escape(line)
-								switch line[0] {
-								case '+':
-									if strings.HasPrefix(line, "+++") {
-										continue
-									}
-									t.addLine("[green:#1a3a1a:-]      " + escaped + "[-:-:-]")
-								case '-':
-									if strings.HasPrefix(line, "---") {
-										continue
-									}
-									t.addLine("[red:#3a1a1a:-]      " + escaped + "[-:-:-]")
-								case '@':
-									t.addLine("[#6688cc::-]      " + escaped + "[-:-:-]")
-								default:
-									t.addLine("[gray::-]      " + escaped + "[-:-:-]")
-								}
-							}
-						} else {
-							preview := strings.TrimSpace(result.Output)
-							preview = strings.Join(strings.Fields(preview), " ")
-							if len(preview) > 120 {
-								preview = preview[:120] + "..."
-							}
-							idx := len(t.lines)
-							t.addLine("[gray::-]      " + tview.Escape(preview) + "[-:-:-]")
-							t.toolResults[idx] = result.Output
-						}
-						t.refreshChatView()
-					})
-				},
-				OnAssistantMessage: func(content string) {
-					// Content already flushed via OnContentDelta; ignore.
-				},
-				OnToolApproval: func(call api.ToolCall) agent.ApprovalAction {
-					return t.approveToolCall(call)
-				},
-			},
-		},
-		OnIterationStart: func(iteration, maxIter int, messages []api.Message) {
-			flushContent()
-			t.app.QueueUpdateDraw(func() {
-				// Record previous iteration duration
-				t.recordIterationEnd()
-
-				// Estimate input tokens for this iteration
-				inputTokens := t.mgr.Estimator().EstimateMessages(messages)
-				t.currentIterTokens = inputTokens
-				t.lastInputTokens = inputTokens
-				t.liveCtxTokens = inputTokens
-				t.currentIterOutput = 0
-
-				// Start timing this iteration
-				t.statusText = fmt.Sprintf("iteration %d, %d tools", iteration, toolCount)
-				t.startProgressTicker()
-				t.iterStartTime = time.Now()
-				t.estimatedDur = t.predictDuration(inputTokens)
-				t.updateStatusBar()
-				t.addLine(fmt.Sprintf("[gray::-]  -- iteration %d --[-:-:-]", iteration))
-				t.refreshChatView()
-			})
-		},
-		OnThinking: func() {
-			t.app.QueueUpdateDraw(func() {
-				t.statusText = "Thinking..."
-				t.updateStatusBar()
-			})
-		},
-		OnThinkingDone: func() {
-			t.app.QueueUpdateDraw(func() {
-				t.statusText = "Generating..."
-				t.updateStatusBar()
-			})
-		},
-		OnContentDelta: func(delta string) {
-			t.currentIterOutput += len(delta)
-			contentBuf.WriteString(delta)
-		},
-		OnReasoningDelta: func(delta string) {
-			t.currentIterOutput += len(delta)
-			t.app.QueueUpdateDraw(func() {
-				t.statusText = "Reasoning..."
-				t.updateStatusBar()
-			})
-		},
-	}
-
-	result, err := agent.RunStreaming(turnCtx, t.streamFn, windowedMsgs, cfg)
-	flushContent()
-	turnCancel()
-	t.mu.Lock()
-	t.turnCancel = nil
-	t.mu.Unlock()
-
-	t.app.QueueUpdateDraw(func() {
-		t.handleTurnDone(result, windowedMsgs, err)
-	})
 }
 
 func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
@@ -355,7 +152,7 @@ func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
 		}
 	}
 
-	if len(result) > len(windowedMsgs) {
+	if len(result) > len(windowedMsgs) { //nolint:nestif
 		newMsgs := result[len(windowedMsgs):]
 		t.mgr.AppendMany(newMsgs)
 
@@ -363,6 +160,7 @@ func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
 		for i := len(newMsgs) - 1; i >= 0; i-- {
 			if newMsgs[i].Role == "assistant" && newMsgs[i].Content != "" {
 				finalContent = newMsgs[i].Content
+
 				break
 			}
 		}
@@ -390,6 +188,7 @@ func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
 			for i := len(newMsgs) - 1; i >= 0; i-- {
 				if newMsgs[i].Role == "user" {
 					userInput = newMsgs[i].Content
+
 					break
 				}
 			}
@@ -521,7 +320,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 					},
 					OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
 						t.app.QueueUpdateDraw(func() {
-							if result.Diff != "" {
+							if result.Diff != "" { //nolint:nestif
 								for _, line := range strings.Split(strings.TrimRight(result.Diff, "\n"), "\n") {
 									if len(line) == 0 {
 										continue
@@ -635,9 +434,10 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 			t.app.QueueUpdateDraw(func() {
 				status := step.Status.String()
 				color := "green"
-				if step.Status == agent.StepFailed {
+				switch step.Status { //nolint:exhaustive
+				case agent.StepFailed:
 					color = "red"
-				} else if step.Status == agent.StepSkipped {
+				case agent.StepSkipped:
 					color = "gray"
 				}
 				t.addLine(fmt.Sprintf("[%s::-]  -- step %d: %s --[-:-:-]", color, step.Index, status))
@@ -650,9 +450,10 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 				t.addLine("[yellow::b]  Re-planned:[-:-:-]")
 				for _, step := range newPlan.Steps {
 					statusMark := " "
-					if step.Status == agent.StepDone {
+					switch step.Status { //nolint:exhaustive
+					case agent.StepDone:
 						statusMark = "[green::-]✓[-:-:-]"
-					} else if step.Status == agent.StepFailed {
+					case agent.StepFailed:
 						statusMark = "[red::-]✗[-:-:-]"
 					}
 					t.addLine(fmt.Sprintf("    %s %d. %s", statusMark, step.Index, tview.Escape(step.Description)))
@@ -742,6 +543,7 @@ func (t *tuiApp) predictDuration(inputTokens int) time.Duration {
 		if r.inputTokens > 0 {
 			return time.Duration(float64(r.duration) * float64(inputTokens) / float64(r.inputTokens))
 		}
+
 		return r.duration
 	}
 	// 2+ data points: least-squares linear regression
@@ -765,6 +567,7 @@ func (t *tuiApp) predictDuration(inputTokens int) time.Duration {
 	if predicted < 0 {
 		predicted = 0
 	}
+
 	return time.Duration(predicted)
 }
 

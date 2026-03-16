@@ -69,6 +69,7 @@ func (c *SidecarClient) Train(ctx context.Context, req TrainRequest) (string, er
 	if err := c.post(ctx, "/train", req, &resp); err != nil {
 		return "", err
 	}
+
 	return resp.RunID, nil
 }
 
@@ -78,18 +79,21 @@ func (c *SidecarClient) Status(ctx context.Context, runID string) (StatusRespons
 	if err := c.get(ctx, "/status/"+runID, &resp); err != nil {
 		return StatusResponse{}, err
 	}
+
 	return resp, nil
 }
 
 // Merge merges a LoRA adapter into a base model.
 func (c *SidecarClient) Merge(ctx context.Context, req MergeRequest) error {
 	var resp map[string]any
+
 	return c.post(ctx, "/merge", req, &resp)
 }
 
 // Convert converts a merged model to GGUF format.
 func (c *SidecarClient) Convert(ctx context.Context, req ConvertRequest) error {
 	var resp map[string]any
+
 	return c.post(ctx, "/convert", req, &resp)
 }
 
@@ -109,10 +113,11 @@ func (c *SidecarClient) post(ctx context.Context, path string, body any, result 
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("sidecar returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -135,10 +140,11 @@ func (c *SidecarClient) get(ctx context.Context, path string, result any) error 
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("sidecar returned %d: %s", resp.StatusCode, string(respBody))
 	}
 

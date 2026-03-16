@@ -85,5 +85,6 @@ func Start(ctx context.Context, cfg Config) error {
 	}
 
 	srv := server.New(icfg, gpu, memStore, provider)
+
 	return srv.Start(ctx)
 }

@@ -180,6 +180,7 @@ func TestSummarization(t *testing.T) {
 	for _, msg := range msgs {
 		if strings.Contains(msg.Content, "[Conversation summary]") {
 			hasSummary = true
+
 			break
 		}
 	}

@@ -31,6 +31,7 @@ func PickOffer(offers []vastai.Offer) (*OfferChoice, error) {
 	if final.quit {
 		return nil, fmt.Errorf("cancelled")
 	}
+
 	return &final.choice, nil
 }
 
@@ -56,6 +57,7 @@ func (m offerPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			m.quit = true
+
 			return m, tea.Quit
 		case "up", "k":
 			if m.cursor > 0 {
@@ -74,9 +76,11 @@ func (m offerPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			offer := m.offers[m.cursor]
 			m.choice = OfferChoice{Offer: &offer}
+
 			return m, tea.Quit
 		}
 	}
+
 	return m, nil
 }
 
@@ -84,11 +88,11 @@ func (m offerPickerModel) View() string {
 	var b strings.Builder
 
 	total := len(m.offers)
-	b.WriteString(fmt.Sprintf("Select a GPU offer (%d available):\n\n", total))
-	b.WriteString(fmt.Sprintf("  %-8s  %-22s  %-5s  %-8s  %-10s  %-6s  %s\n",
-		"ID", "GPU", "GPUs", "RAM", "$/hr", "CUDA", "Reliability"))
-	b.WriteString(fmt.Sprintf("  %-8s  %-22s  %-5s  %-8s  %-10s  %-6s  %s\n",
-		"──", "───", "────", "───", "────", "────", "───────────"))
+	fmt.Fprintf(&b, "Select a GPU offer (%d available):\n\n", total)
+	fmt.Fprintf(&b, "  %-8s  %-22s  %-5s  %-8s  %-10s  %-6s  %s\n",
+		"ID", "GPU", "GPUs", "RAM", "$/hr", "CUDA", "Reliability")
+	fmt.Fprintf(&b, "  %-8s  %-22s  %-5s  %-8s  %-10s  %-6s  %s\n",
+		"──", "───", "────", "───", "────", "────", "───────────")
 
 	end := m.offset + maxVisible
 	if end > total {
@@ -109,16 +113,17 @@ func (m offerPickerModel) View() string {
 		if ram > 500 {
 			ram = ram / 1024 // API returns MB, convert to GB
 		}
-		b.WriteString(fmt.Sprintf("%s%-8d  %-22s  x%-4d  %-4.0f GB  $%-9.3f  %-6.1f  %.0f%%\n",
+		fmt.Fprintf(&b, "%s%-8d  %-22s  x%-4d  %-4.0f GB  $%-9.3f  %-6.1f  %.0f%%\n",
 			cursor, offer.ID, offer.GPUName, offer.NumGPUs,
 			ram, offer.CostPerHr,
-			offer.CUDAVersion, offer.Reliability*100))
+			offer.CUDAVersion, offer.Reliability*100)
 	}
 
 	if end < total {
-		b.WriteString(fmt.Sprintf("  ↓ %d more\n", total-end))
+		fmt.Fprintf(&b, "  ↓ %d more\n", total-end)
 	}
 
 	b.WriteString("\n↑/↓ navigate • enter select • q cancel\n")
+
 	return b.String()
 }

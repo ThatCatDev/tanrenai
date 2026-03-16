@@ -29,15 +29,15 @@ func toolMetaCheck(t *testing.T, tool Tool) {
 	}
 }
 
-func TestFileReadToolMeta(t *testing.T)  { toolMetaCheck(t, &FileReadTool{}) }
-func TestFileWriteToolMeta(t *testing.T) { toolMetaCheck(t, &FileWriteTool{}) }
-func TestPatchFileToolMeta(t *testing.T) { toolMetaCheck(t, &PatchFileTool{}) }
-func TestListDirToolMeta(t *testing.T)   { toolMetaCheck(t, &ListDirTool{}) }
-func TestFindFilesToolMeta(t *testing.T) { toolMetaCheck(t, &FindFilesTool{}) }
+func TestFileReadToolMeta(t *testing.T)   { toolMetaCheck(t, &FileReadTool{}) }
+func TestFileWriteToolMeta(t *testing.T)  { toolMetaCheck(t, &FileWriteTool{}) }
+func TestPatchFileToolMeta(t *testing.T)  { toolMetaCheck(t, &PatchFileTool{}) }
+func TestListDirToolMeta(t *testing.T)    { toolMetaCheck(t, &ListDirTool{}) }
+func TestFindFilesToolMeta(t *testing.T)  { toolMetaCheck(t, &FindFilesTool{}) }
 func TestGrepSearchToolMeta(t *testing.T) { toolMetaCheck(t, &GrepSearchTool{}) }
-func TestGitInfoToolMeta(t *testing.T)   { toolMetaCheck(t, &GitInfoTool{}) }
-func TestShellExecToolMeta(t *testing.T) { toolMetaCheck(t, &ShellExecTool{}) }
-func TestWebSearchToolMeta(t *testing.T) { toolMetaCheck(t, &WebSearchTool{}) }
+func TestGitInfoToolMeta(t *testing.T)    { toolMetaCheck(t, &GitInfoTool{}) }
+func TestShellExecToolMeta(t *testing.T)  { toolMetaCheck(t, &ShellExecTool{}) }
+func TestWebSearchToolMeta(t *testing.T)  { toolMetaCheck(t, &WebSearchTool{}) }
 
 func TestDefaultRegistry(t *testing.T) {
 	r := DefaultRegistry()
@@ -154,7 +154,7 @@ func TestIsRealPathVariants(t *testing.T) {
 		{"../parent", true},
 		{"~/home", true},
 		{"/foo/bar/baz", true},
-		{"just-a-name", false},   // no slash, no space, not . or ..
+		{"just-a-name", false},     // no slash, no space, not . or ..
 		{"name with space", false}, // has spaces
 	}
 

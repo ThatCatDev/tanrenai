@@ -21,6 +21,7 @@ func deterministicEmbed(_ context.Context, _ string) ([]float32, error) {
 	for i := range vec {
 		vec[i] = 0.1
 	}
+
 	return vec, nil
 }
 
@@ -30,6 +31,7 @@ func newTestHandler(t *testing.T) *MemoryHandler {
 	if err != nil {
 		t.Fatalf("NewChromemStoreInMemory: %v", err)
 	}
+
 	return &MemoryHandler{MemStore: store}
 }
 
@@ -53,6 +55,7 @@ func storeEntry(t *testing.T, h *MemoryHandler, userMsg, assistMsg string) strin
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode store response: %v", err)
 	}
+
 	return resp.ID
 }
 

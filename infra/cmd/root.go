@@ -16,6 +16,7 @@ var rootCmd = &cobra.Command{
 
 func Execute() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+
 	return rootCmd.Execute()
 }
 

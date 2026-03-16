@@ -35,7 +35,7 @@ type SearchQuery struct {
 
 // CreateOpts defines options for creating a vast.ai instance.
 type CreateOpts struct {
-	Image    string  // Docker image (e.g. "nvidia/cuda:12.4.1-devel-ubuntu22.04")
-	DiskGB   float64 // disk space to allocate
-	OnStart  string  // onstart script
+	Image   string  // Docker image (e.g. "nvidia/cuda:12.4.1-devel-ubuntu22.04")
+	DiskGB  float64 // disk space to allocate
+	OnStart string  // onstart script
 }

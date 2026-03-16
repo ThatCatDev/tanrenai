@@ -14,14 +14,14 @@ const baseURL = "https://console.vast.ai/api/v0"
 
 // Instance represents a vast.ai instance.
 type Instance struct {
-	ID         int     `json:"id"`
-	Status     string  `json:"actual_status"` // running, exited, loading, etc.
-	SSHHost    string  `json:"ssh_host"`
-	SSHPort    int     `json:"ssh_port"`
-	CurState   string  `json:"cur_state"`
-	GPUName    string  `json:"gpu_name"`
-	NumGPUs    int     `json:"num_gpus"`
-	CostPerHr  float64 `json:"dph_total"`
+	ID        int     `json:"id"`
+	Status    string  `json:"actual_status"` // running, exited, loading, etc.
+	SSHHost   string  `json:"ssh_host"`
+	SSHPort   int     `json:"ssh_port"`
+	CurState  string  `json:"cur_state"`
+	GPUName   string  `json:"gpu_name"`
+	NumGPUs   int     `json:"num_gpus"`
+	CostPerHr float64 `json:"dph_total"`
 }
 
 // Client is a typed HTTP client for the vast.ai REST API.
@@ -46,6 +46,7 @@ func (c *Client) ListInstances(ctx context.Context) ([]Instance, error) {
 	if err := c.get(ctx, "/instances", &result); err != nil {
 		return nil, err
 	}
+
 	return result.Instances, nil
 }
 
@@ -62,6 +63,7 @@ func (c *Client) GetInstance(ctx context.Context, id string) (*Instance, error) 
 			return &inst, nil
 		}
 	}
+
 	return nil, fmt.Errorf("instance %s not found", id)
 }
 
@@ -91,10 +93,11 @@ func (c *Client) get(ctx context.Context, path string, result any) error {
 	if err != nil {
 		return fmt.Errorf("vast.ai request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("vast.ai returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -114,10 +117,11 @@ func (c *Client) put(ctx context.Context, path string, body string) error {
 	if err != nil {
 		return fmt.Errorf("vast.ai request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("vast.ai returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -135,13 +139,13 @@ func (c *Client) delete(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("vast.ai request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("vast.ai returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil
 }
-

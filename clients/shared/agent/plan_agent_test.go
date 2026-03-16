@@ -112,6 +112,7 @@ func searchString(s, sub string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -158,6 +159,7 @@ func mockStreamComplete(content string) StreamingCompletionFunc {
 			}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 }
@@ -192,6 +194,7 @@ func TestRunPlannedStreaming_MultiStep(t *testing.T) {
 			}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -327,6 +330,7 @@ func TestRunPlannedStreaming_StepFailureContinues(t *testing.T) {
 			}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 
@@ -378,6 +382,7 @@ func TestRunPlannedStreaming_SingleStepFallback(t *testing.T) {
 			}
 			ch <- apiclient.StreamEvent{Done: true}
 		}()
+
 		return ch, nil
 	}
 

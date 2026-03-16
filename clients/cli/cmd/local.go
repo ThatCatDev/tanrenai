@@ -53,6 +53,7 @@ func startLocalServers(ctx context.Context, opts localOpts, log *startupLog) (se
 
 	if err := waitForHealth(srvCtx, gpuAddr, 30*time.Second); err != nil {
 		srvCancel()
+
 		return "", nil, fmt.Errorf("GPU server failed to start: %w", err)
 	}
 	log.Info(fmt.Sprintf("Local GPU server ready on :%d", gpuPort))
@@ -76,6 +77,7 @@ func startLocalServers(ctx context.Context, opts localOpts, log *startupLog) (se
 
 	if err := waitForHealth(srvCtx, backendAddr, 30*time.Second); err != nil {
 		srvCancel()
+
 		return "", nil, fmt.Errorf("backend server failed to start: %w", err)
 	}
 	log.Info(fmt.Sprintf("Local backend server ready on :%d", srvPort))
@@ -96,7 +98,8 @@ func freePort() (int, error) {
 		return 0, err
 	}
 	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
+	_ = l.Close()
+
 	return port, nil
 }
 
@@ -111,7 +114,7 @@ func waitForHealth(ctx context.Context, baseURL string, timeout time.Duration) e
 		default:
 			resp, err := http.Get(baseURL + "/health")
 			if err == nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					return nil
 				}

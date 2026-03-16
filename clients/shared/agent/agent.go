@@ -23,8 +23,8 @@ func debugf(format string, args ...any) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	fmt.Fprintf(f, "[agent] "+format+"\n", args...)
+	defer func() { _ = f.Close() }()
+	_, _ = fmt.Fprintf(f, "[agent] "+format+"\n", args...)
 }
 
 // TokenEstimator is an optional interface for estimating token counts.
@@ -118,6 +118,7 @@ func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *t
 				if hooks.OnToolResult != nil {
 					hooks.OnToolResult(tc, result)
 				}
+
 				continue
 			}
 		}
@@ -158,6 +159,7 @@ func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *t
 			Name:       tc.Function.Name,
 		})
 	}
+
 	return msgs, anySuccess, nil
 }
 
@@ -174,6 +176,7 @@ func checkStuck(toolCalls []api.ToolCall, errorCounts map[string]int) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -223,6 +226,7 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 
 		if choice.FinishReason == "length" && len(choice.Message.ToolCalls) == 0 {
 			messages = append(messages, choice.Message)
+
 			continue
 		}
 
@@ -239,9 +243,11 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 					Role:    "user",
 					Content: retryPrompt,
 				})
+
 				continue
 			}
 			messages = append(messages, choice.Message)
+
 			return messages, nil
 		}
 
@@ -314,6 +320,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			if cfg.OnThinkingDone != nil {
 				cfg.OnThinkingDone()
 			}
+
 			return messages, fmt.Errorf("completion request failed: %w", err)
 		}
 		resp, hadReasoning, err := accumulateWithCallbacks(events, &cfg)
@@ -335,6 +342,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			if cfg.OnContentDelta != nil {
 				cfg.OnContentDelta("\n[continuing...]\n")
 			}
+
 			continue
 		}
 
@@ -356,9 +364,11 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 					Role:    "user",
 					Content: retryPrompt,
 				})
+
 				continue
 			}
 			messages = append(messages, choice.Message)
+
 			return messages, nil
 		}
 
@@ -382,6 +392,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 	return messages, fmt.Errorf("agent loop reached maximum iterations (%d)", cfg.MaxIterations)
 }
 
+//nolint:gocyclo
 func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *StreamingConfig) (*api.ChatCompletionResponse, bool, error) {
 	var (
 		content      strings.Builder
@@ -401,6 +412,7 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 			if !thinkingDone && cfg.OnThinkingDone != nil {
 				cfg.OnThinkingDone()
 			}
+
 			return nil, false, ev.Err
 		}
 		if ev.Done {
@@ -543,6 +555,7 @@ func looksLikeContinuation(text string) bool {
 			specCount++
 		}
 	}
+
 	return specCount >= 2
 }
 
@@ -557,6 +570,7 @@ func removeRetryPrompts(messages []api.Message) []api.Message {
 		}
 		cleaned = append(cleaned, m)
 	}
+
 	return cleaned
 }
 

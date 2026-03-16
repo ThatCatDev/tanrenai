@@ -132,7 +132,7 @@ fi
 		stages = append(stages, SetupStage{
 			Name: "pull-model",
 			Commands: []string{
-				fmt.Sprintf("mkdir -p /root/.local/share/tanrenai/models"),
+				"mkdir -p /root/.local/share/tanrenai/models",
 				fmt.Sprintf("/usr/local/bin/tanrenai-gpu pull %s || true", model),
 			},
 		})
@@ -181,12 +181,13 @@ except: print('WARNING: health check failed')
 func RunStages(ctx context.Context, ssh *SSHClient, stages []SetupStage, output io.Writer) error {
 	for _, stage := range stages {
 		slog.Info("running setup stage", "stage", stage.Name)
-		fmt.Fprintf(output, "\n=== %s ===\n", stage.Name)
+		_, _ = fmt.Fprintf(output, "\n=== %s ===\n", stage.Name)
 
 		cmd := strings.Join(stage.Commands, " && ")
 		if err := ssh.Run(ctx, cmd, output); err != nil {
 			return fmt.Errorf("stage %q failed: %w", stage.Name, err)
 		}
 	}
+
 	return nil
 }

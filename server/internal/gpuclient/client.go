@@ -51,10 +51,11 @@ func (c *Client) ChatCompletion(ctx context.Context, req *api.ChatCompletionRequ
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return nil, fmt.Errorf("GPU server returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -62,6 +63,7 @@ func (c *Client) ChatCompletion(ctx context.Context, req *api.ChatCompletionRequ
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
+
 	return &result, nil
 }
 
@@ -87,7 +89,8 @@ func (c *Client) StreamCompletionRaw(ctx context.Context, req *api.ChatCompletio
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
+
 		return nil, fmt.Errorf("GPU server returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -111,10 +114,11 @@ func (c *Client) Tokenize(ctx context.Context, text string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return 0, fmt.Errorf("tokenize returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -124,6 +128,7 @@ func (c *Client) Tokenize(ctx context.Context, text string) (int, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return 0, err
 	}
+
 	return len(result.Tokens), nil
 }
 
@@ -142,10 +147,11 @@ func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("embedding request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return nil, fmt.Errorf("embedding server returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -160,6 +166,7 @@ func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
 
 	vec := result.Data[0].Embedding
 	normalizeVector(vec)
+
 	return vec, nil
 }
 
@@ -170,6 +177,7 @@ func (c *Client) LoadModel(ctx context.Context, model string) (*api.LoadResponse
 	if err := c.postJSON(ctx, "/api/load", body, &result); err != nil {
 		return nil, err
 	}
+
 	return &result, nil
 }
 
@@ -179,6 +187,7 @@ func (c *Client) ListModels(ctx context.Context) (*api.ModelListResponse, error)
 	if err := c.getJSON(ctx, c.baseURL+"/v1/models", &result); err != nil {
 		return nil, err
 	}
+
 	return &result, nil
 }
 
@@ -200,7 +209,8 @@ func (c *Client) PullModelStream(ctx context.Context, url string) (io.ReadCloser
 	// If the GPU server returned an error before streaming, read it.
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
+
 		return nil, fmt.Errorf("GPU server returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -220,6 +230,7 @@ func (c *Client) RawRequest(ctx context.Context, method, path string, body io.Re
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
 	}
+
 	return resp, nil
 }
 
@@ -233,10 +244,11 @@ func (c *Client) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GPU health check returned %d", resp.StatusCode)
 	}
+
 	return nil
 }
 
@@ -251,16 +263,18 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte, result 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("GPU server returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	if result != nil {
 		return json.NewDecoder(resp.Body).Decode(result)
 	}
+
 	return nil
 }
 
@@ -273,10 +287,11 @@ func (c *Client) getJSON(ctx context.Context, url string, result any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
 	}
 

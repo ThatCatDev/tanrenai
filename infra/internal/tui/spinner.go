@@ -33,7 +33,7 @@ func NewSpinner(w io.Writer, msg string) *Spinner {
 				return
 			case <-ticker.C:
 				s.mu.Lock()
-				fmt.Fprintf(s.w, "\r%s %s", frames[i%len(frames)], msg)
+				_, _ = fmt.Fprintf(s.w, "\r%s %s", frames[i%len(frames)], msg)
 				s.mu.Unlock()
 				i++
 			}
@@ -48,7 +48,7 @@ func (s *Spinner) Stop(msg string) {
 	s.cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fmt.Fprintf(s.w, "\r✓ %s\n", msg)
+	_, _ = fmt.Fprintf(s.w, "\r✓ %s\n", msg)
 }
 
 // StopFail stops the spinner and prints a failure message.
@@ -56,7 +56,7 @@ func (s *Spinner) StopFail(msg string) {
 	s.cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fmt.Fprintf(s.w, "\r✗ %s\n", msg)
+	_, _ = fmt.Fprintf(s.w, "\r✗ %s\n", msg)
 }
 
 // RunWithSpinner runs a function while showing a spinner. Returns the function's error.
@@ -68,5 +68,6 @@ func RunWithSpinner(w io.Writer, msg string, fn func() error) error {
 	} else {
 		sp.Stop(msg)
 	}
+
 	return err
 }

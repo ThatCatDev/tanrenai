@@ -131,6 +131,7 @@ func TestSubprocessHealthCheck(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			w.WriteHeader(http.StatusOK)
+
 			return
 		}
 		http.Error(w, "not found", http.StatusNotFound)
@@ -212,6 +213,7 @@ func TestWaitForHealthBecomesHealthy(t *testing.T) {
 		callCount++
 		if callCount < 3 {
 			w.WriteHeader(http.StatusServiceUnavailable)
+
 			return
 		}
 		w.WriteHeader(http.StatusOK)

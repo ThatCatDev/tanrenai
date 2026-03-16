@@ -47,6 +47,7 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 		// The GGUF already contains an embedded chat template — llama-server
 		// reads it directly with --jinja. No need to generate or override.
 		slog.Info("template resolver: GGUF has embedded chat_template, skipping generation")
+
 		return nil, nil
 	}
 
@@ -55,7 +56,7 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 	if err != nil {
 		slog.Warn("template resolver: could not load model metadata", "error", err)
 	}
-	if modelMeta != nil && modelMeta.HFRepo != "" {
+	if modelMeta != nil && modelMeta.HFRepo != "" { //nolint:nestif
 		branch := modelMeta.HFBranch
 		if branch == "" {
 			branch = "main"
@@ -70,10 +71,11 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 			if err != nil {
 				return nil, fmt.Errorf("template resolver: write HF template: %w", err)
 			}
+
 			return &TemplateResolution{
 				TemplatePath: path,
 				Source:       "huggingface:" + modelMeta.HFRepo,
-				Cleanup:      func() { os.Remove(path) },
+				Cleanup:      func() { _ = os.Remove(path) },
 			}, nil
 		}
 	}
@@ -90,10 +92,11 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 		if err != nil {
 			return nil, fmt.Errorf("template resolver: write generated template: %w", err)
 		}
+
 		return &TemplateResolution{
 			TemplatePath: path,
 			Source:       "generated:chatml",
-			Cleanup:      func() { os.Remove(path) },
+			Cleanup:      func() { _ = os.Remove(path) },
 		}, nil
 	}
 
@@ -104,5 +107,6 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 // sanitizeName produces a safe filename component from an architecture or repo name.
 func sanitizeName(s string) string {
 	r := strings.NewReplacer("/", "-", " ", "-", ".", "-")
+
 	return strings.ToLower(r.Replace(s))
 }

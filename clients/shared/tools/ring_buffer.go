@@ -29,6 +29,7 @@ func (r *RingBuffer) Write(p []byte) (int, error) {
 		copy(r.buf, p[n-r.size:])
 		r.pos = 0
 		r.full = true
+
 		return n, nil
 	}
 	end := r.pos + n
@@ -43,6 +44,7 @@ func (r *RingBuffer) Write(p []byte) (int, error) {
 	if end >= r.size {
 		r.full = true
 	}
+
 	return n, nil
 }
 
@@ -56,5 +58,6 @@ func (r *RingBuffer) String() string {
 	out := make([]byte, r.size)
 	n := copy(out, r.buf[r.pos:])
 	copy(out[n:], r.buf[:r.pos])
+
 	return string(out)
 }

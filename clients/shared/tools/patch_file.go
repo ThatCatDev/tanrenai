@@ -55,6 +55,7 @@ func (t *PatchFileTool) Execute(_ context.Context, arguments string) (*ToolResul
 		if os.IsNotExist(err) {
 			return ErrorResult(fmt.Sprintf("file not found: %s", args.Path)), nil
 		}
+
 		return ErrorResult(fmt.Sprintf("failed to read file: %v", err)), nil
 	}
 
@@ -67,6 +68,7 @@ func (t *PatchFileTool) Execute(_ context.Context, arguments string) (*ToolResul
 		if len(snippet) > 500 {
 			snippet = snippet[:500] + "\n...(truncated)"
 		}
+
 		return ErrorResult(fmt.Sprintf("old_string not found in %s. File content starts with:\n%s", args.Path, snippet)), nil
 
 	case 1:
@@ -75,6 +77,7 @@ func (t *PatchFileTool) Execute(_ context.Context, arguments string) (*ToolResul
 		if err := os.WriteFile(args.Path, []byte(newContent), 0644); err != nil {
 			return ErrorResult(fmt.Sprintf("failed to write file: %v", err)), nil
 		}
+
 		return &ToolResult{
 			Output: fmt.Sprintf("Replaced %d characters with %d characters in %s",
 				len(args.OldString), len(args.NewString), args.Path),

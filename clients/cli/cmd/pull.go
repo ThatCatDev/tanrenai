@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,7 +20,7 @@ Supports:
   hf://unsloth/Qwen3.5-27B-GGUF                  auto-pick best quant
   hf://unsloth/Qwen3.5-122B-A10B-GGUF/UD-Q4_K_XL  specific quant (incl. split files)
   https://huggingface.co/.../model.gguf             direct URL`,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		modelURL := args[0]
 
@@ -53,7 +54,7 @@ Supports:
 			switch ev.Event.Status {
 			case "resolving":
 				if ev.Event.TotalFiles > 1 {
-					fmt.Printf("Downloading %d files...\n", ev.Event.TotalFiles)
+					_, _ = fmt.Fprintf(os.Stdout, "Downloading %d files...\n", ev.Event.TotalFiles)
 				}
 			case "downloading":
 				prefix := ""
@@ -62,7 +63,7 @@ Supports:
 				}
 				printProgress(prefix, ev.Event.Percent, ev.Event.Downloaded, ev.Event.Total)
 			case "downloaded":
-				fmt.Printf("\rDownloaded: %s\n", ev.Event.Path)
+				_, _ = fmt.Fprintf(os.Stdout, "\rDownloaded: %s\n", ev.Event.Path)
 			case "error":
 				return fmt.Errorf("download failed: %s", ev.Event.Path)
 			}
@@ -76,7 +77,7 @@ func printProgress(prefix string, percent int, downloaded, total int64) {
 	const barWidth = 30
 	filled := barWidth * percent / 100
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-	fmt.Printf("\r%s[%s] %3d%%  %s / %s", prefix, bar, percent, formatBytes(downloaded), formatBytes(total))
+	_, _ = fmt.Fprintf(os.Stdout, "\r%s[%s] %3d%%  %s / %s", prefix, bar, percent, formatBytes(downloaded), formatBytes(total))
 }
 
 func formatBytes(b int64) string {

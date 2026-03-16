@@ -58,6 +58,7 @@ func (r *Registry) APITools() []api.Tool {
 			},
 		})
 	}
+
 	return out
 }
 
@@ -73,5 +74,6 @@ func DefaultRegistry() *Registry {
 	r.Register(&GitInfoTool{})
 	r.Register(&ShellExecTool{})
 	r.Register(&WebSearchTool{})
+
 	return r
 }

@@ -21,7 +21,7 @@ import (
 func (t *tuiApp) updateStatusBar() {
 	ctx := t.contextUsageString()
 
-	if t.processing && t.statusText != "" {
+	if t.processing && t.statusText != "" { //nolint:nestif
 		tokenInfo := ""
 		if t.lastInputTokens > 0 {
 			tokenInfo = " | ~" + formatTokenCount(t.lastInputTokens) + " in"
@@ -67,6 +67,7 @@ func (t *tuiApp) contextUsageString() string {
 	} else if pct > 60 {
 		color = "yellow"
 	}
+
 	return fmt.Sprintf("  [%s::-]ctx: %s/%s (%d%%)[-:-:-]", color, formatTokenCount(used), formatTokenCount(b.Total), pct)
 }
 
@@ -74,6 +75,7 @@ func formatTokenCount(n int) string {
 	if n >= 1000 {
 		return fmt.Sprintf("%.1fk", float64(n)/1000)
 	}
+
 	return fmt.Sprintf("%d", n)
 }
 
@@ -94,7 +96,7 @@ func renderProgressBar(elapsed, estimated time.Duration) string {
 	empty := barWidth - filled
 
 	remaining := estimated - elapsed
-	countdown := ""
+	var countdown string
 	if remaining > 0 {
 		countdown = fmt.Sprintf("%ds", int(remaining.Seconds()))
 	} else {
@@ -128,6 +130,7 @@ func (t *tuiApp) displayLineToLogicalLine(displayLine int) int {
 					}
 					cur += rows
 				}
+
 				continue
 			}
 		}
@@ -137,6 +140,7 @@ func (t *tuiApp) displayLineToLogicalLine(displayLine int) int {
 		}
 		cur += rows
 	}
+
 	return -1
 }
 
@@ -147,6 +151,7 @@ func wrappedLineRows(taggedLine string, viewWidth int) int {
 	if w <= viewWidth {
 		return 1
 	}
+
 	return (w + viewWidth - 1) / viewWidth
 }
 
@@ -159,6 +164,7 @@ func (t *tuiApp) loadFileViewer(path string) {
 		t.app.QueueUpdateDraw(func() {
 			t.openFileViewerContent(path, "", err)
 		})
+
 		return
 	}
 	content := string(data)
@@ -259,6 +265,7 @@ func highlightContent(path, content string) string {
 	if err := formatter.Format(&buf, style, iterator); err != nil {
 		return content
 	}
+
 	return buf.String()
 }
 
@@ -278,6 +285,7 @@ func addLineNumbers(content string) string {
 			b.WriteString("\n")
 		}
 	}
+
 	return b.String()
 }
 
@@ -304,6 +312,7 @@ func stripTviewUnderline(s string) string {
 		if newAttrs == "" {
 			newAttrs = "-"
 		}
+
 		return "[" + parts[0] + ":" + parts[1] + ":" + newAttrs + "]"
 	})
 }
@@ -328,17 +337,20 @@ func stripANSIUnderline(s string) string {
 			if (p == "38" || p == "48") && i+2 < len(params) && params[i+1] == "5" {
 				out = append(out, p, params[i+1], params[i+2])
 				i += 2
+
 				continue
 			}
 			// 38;2;R;G;B / 48;2;R;G;B: true color — consume all five parts
 			if (p == "38" || p == "48") && i+4 < len(params) && params[i+1] == "2" {
 				out = append(out, p, params[i+1], params[i+2], params[i+3], params[i+4])
 				i += 4
+
 				continue
 			}
 			// 38:5:N / 48:5:N / 38:2:R:G:B / 48:2:R:G:B: colon-style extended color
 			if strings.HasPrefix(p, "38:") || strings.HasPrefix(p, "48:") {
 				out = append(out, p)
+
 				continue
 			}
 			out = append(out, p)
@@ -346,6 +358,7 @@ func stripANSIUnderline(s string) string {
 		if len(out) == 0 {
 			return ""
 		}
+
 		return "\x1b[" + strings.Join(out, ";") + "m"
 	})
 }
@@ -364,5 +377,6 @@ func (t *tuiApp) renderMarkdown(content string) string {
 	}
 	out = stripANSIUnderline(out)
 	translated := tview.TranslateANSI(strings.TrimRight(out, "\n"))
+
 	return stripTviewUnderline(translated)
 }

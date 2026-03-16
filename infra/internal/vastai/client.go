@@ -1,8 +1,8 @@
 package vastai
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,6 +37,7 @@ func (c *Client) ListInstances(ctx context.Context) ([]Instance, error) {
 	if err := c.get(ctx, "/instances", &result); err != nil {
 		return nil, err
 	}
+
 	return result.Instances, nil
 }
 
@@ -53,6 +54,7 @@ func (c *Client) GetInstance(ctx context.Context, id string) (*Instance, error) 
 			return &inst, nil
 		}
 	}
+
 	return nil, fmt.Errorf("instance %s not found", id)
 }
 
@@ -121,6 +123,7 @@ func normalizeGPUName(s string) string {
 		if r == '_' || r == '-' || unicode.IsSpace(r) {
 			return -1
 		}
+
 		return unicode.ToLower(r)
 	}, s)
 }
@@ -183,10 +186,11 @@ func (c *Client) get(ctx context.Context, path string, result any) error {
 	if err != nil {
 		return fmt.Errorf("vast.ai request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("vast.ai returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -206,10 +210,11 @@ func (c *Client) put(ctx context.Context, path string, body string) error {
 	if err != nil {
 		return fmt.Errorf("vast.ai request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("vast.ai returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -233,10 +238,11 @@ func (c *Client) post(ctx context.Context, path string, body any, result any) er
 	if err != nil {
 		return fmt.Errorf("vast.ai request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("vast.ai returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -254,10 +260,11 @@ func (c *Client) delete(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("vast.ai request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("vast.ai returned %d: %s", resp.StatusCode, string(respBody))
 	}
 

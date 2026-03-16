@@ -11,8 +11,8 @@ type stubTool struct {
 	name string
 }
 
-func (s *stubTool) Name() string             { return s.name }
-func (s *stubTool) Description() string       { return "stub: " + s.name }
+func (s *stubTool) Name() string                { return s.name }
+func (s *stubTool) Description() string         { return "stub: " + s.name }
 func (s *stubTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 func (s *stubTool) Execute(_ context.Context, _ string) (*ToolResult, error) {
 	return &ToolResult{Output: "ok"}, nil

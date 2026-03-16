@@ -18,10 +18,10 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		Host:      "127.0.0.1",
-		Port:      11435,
-		ModelsDir: ModelsDir(),
-		BinDir:    BinDir(),
+		Host:           "127.0.0.1",
+		Port:           11435,
+		ModelsDir:      ModelsDir(),
+		BinDir:         BinDir(),
 		GPULayers:      -1, // auto
 		CtxSize:        4096,
 		FlashAttention: true,

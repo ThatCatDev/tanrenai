@@ -43,7 +43,7 @@ func (s *Store) List() []ModelEntry {
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		if info.IsDir() || !strings.HasSuffix(strings.ToLower(info.Name()), ".gguf") {
 			return nil
@@ -75,16 +75,16 @@ func (s *Store) List() []ModelEntry {
 				parts: 1,
 			}
 		}
+
 		return nil
 	})
-	if err != nil {
-		// Directory may not exist yet, that's OK
-	}
+	_ = err // Directory may not exist yet, that's OK
 
 	entries := make([]ModelEntry, 0, len(models))
 	for _, m := range models {
 		entries = append(entries, m.entry)
 	}
+
 	return entries
 }
 

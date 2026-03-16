@@ -37,8 +37,8 @@ const (
 
 // PlanAgentConfig configures the plan-execute orchestrator.
 type PlanAgentConfig struct {
-	StreamingConfig                      // embeds existing config (tools, hooks, etc.)
-	UserInput       <-chan string         // non-blocking read for mid-turn injection
+	StreamingConfig               // embeds existing config (tools, hooks, etc.)
+	UserInput       <-chan string // non-blocking read for mid-turn injection
 	OnPlanningStart func()
 	OnPlanGenerated func(plan *Plan)
 	OnStepStart     func(stepIdx int, step *PlanStep)
@@ -55,17 +55,18 @@ type PlanAgentConfig struct {
 // If planning fails or produces a single step, it degrades to normal RunStreaming.
 func RunPlannedStreaming(ctx context.Context, complete StreamingCompletionFunc,
 	messages []api.Message, cfg PlanAgentConfig) ([]api.Message, error) {
-
 	// Extract the original user request (last user message).
 	userRequest := ""
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
 			userRequest = messages[i].Content
+
 			break
 		}
 	}
 	if userRequest == "" || !needsPlanning(userRequest) {
 		debugf("skipping planning: empty=%v needsPlanning=%v", userRequest == "", needsPlanning(userRequest))
+
 		return RunStreaming(ctx, complete, messages, cfg.StreamingConfig)
 	}
 
@@ -87,6 +88,7 @@ func RunPlannedStreaming(ctx context.Context, complete StreamingCompletionFunc,
 		if cfg.OnPlanGenerated != nil {
 			cfg.OnPlanGenerated(&Plan{RawText: "(planning failed, using direct mode)"})
 		}
+
 		return RunStreaming(ctx, complete, messages, cfg.StreamingConfig)
 	}
 
@@ -101,6 +103,7 @@ func RunPlannedStreaming(ctx context.Context, complete StreamingCompletionFunc,
 		if cfg.OnPlanGenerated != nil {
 			cfg.OnPlanGenerated(plan)
 		}
+
 		return RunStreaming(ctx, complete, messages, cfg.StreamingConfig)
 	}
 
@@ -162,17 +165,18 @@ func RunPlannedStreaming(ctx context.Context, complete StreamingCompletionFunc,
 		// Return messages with a summary appended
 		summary := buildFallbackSummary(plan)
 		messages = append(messages, api.Message{Role: "assistant", Content: summary})
+
 		return messages, nil
 	}
 
 	messages = append(messages, api.Message{Role: "assistant", Content: synthResult})
+
 	return messages, nil
 }
 
 // generatePlan calls the LLM with no tools to produce a numbered plan.
 func generatePlan(ctx context.Context, complete StreamingCompletionFunc,
 	messages []api.Message, userRequest string, cfg *PlanAgentConfig) (*Plan, error) {
-
 	planMsgs := []api.Message{
 		{Role: "system", Content: planningSystemPrompt},
 	}
@@ -224,13 +228,13 @@ func generatePlan(ctx context.Context, complete StreamingCompletionFunc,
 	}
 
 	plan := parsePlan(text, userRequest)
+
 	return plan, nil
 }
 
 // executeStep runs a single plan step as an isolated sub-agent.
 func executeStep(ctx context.Context, complete StreamingCompletionFunc,
 	systemMsgs []api.Message, plan *Plan, stepIdx int, cfg *PlanAgentConfig) ([]api.Message, error) {
-
 	step := &plan.Steps[stepIdx]
 	total := len(plan.Steps)
 	summaries := formatStepSummaries(plan.Steps[:stepIdx])
@@ -239,9 +243,7 @@ func executeStep(ctx context.Context, complete StreamingCompletionFunc,
 
 	// Build focused context: system + preamble + step description
 	var stepMsgs []api.Message
-	for _, m := range systemMsgs {
-		stepMsgs = append(stepMsgs, m)
-	}
+	stepMsgs = append(stepMsgs, systemMsgs...)
 	stepMsgs = append(stepMsgs, api.Message{Role: "system", Content: preamble})
 	stepMsgs = append(stepMsgs, api.Message{Role: "user", Content: step.Description})
 
@@ -251,13 +253,10 @@ func executeStep(ctx context.Context, complete StreamingCompletionFunc,
 // synthesize produces a final summary from all step results.
 func synthesize(ctx context.Context, complete StreamingCompletionFunc,
 	systemMsgs []api.Message, plan *Plan, userRequest string, cfg *PlanAgentConfig) (string, error) {
-
 	summaryBlock := formatStepSummaries(plan.Steps)
 
 	var synthMsgs []api.Message
-	for _, m := range systemMsgs {
-		synthMsgs = append(synthMsgs, m)
-	}
+	synthMsgs = append(synthMsgs, systemMsgs...)
 	synthMsgs = append(synthMsgs, api.Message{Role: "system", Content: synthesisSystemPrompt})
 	synthMsgs = append(synthMsgs, api.Message{
 		Role:    "user",
@@ -308,9 +307,11 @@ func extractStepResult(messages []api.Message) string {
 			if len(result) > maxResultLen {
 				result = result[:maxResultLen] + "..."
 			}
+
 			return result
 		}
 	}
+
 	return "(no output)"
 }
 
@@ -332,7 +333,6 @@ func readUserInput(ch <-chan string) string {
 func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 	messages []api.Message, plan *Plan, currentIdx int, input string,
 	userRequest string, cfg *PlanAgentConfig) (*Plan, int) {
-
 	lower := strings.TrimSpace(strings.ToLower(input))
 
 	switch lower {
@@ -341,6 +341,7 @@ func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 		for i := currentIdx; i < len(plan.Steps); i++ {
 			plan.Steps[i].Status = StepSkipped
 		}
+
 		return plan, -1
 
 	case "/skip":
@@ -348,6 +349,7 @@ func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 		if currentIdx+1 < len(plan.Steps) {
 			return plan, currentIdx + 1
 		}
+
 		return plan, -1
 
 	case "/redo":
@@ -357,8 +359,10 @@ func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 			plan.Steps[prev].Status = StepPending
 			plan.Steps[prev].Result = ""
 			plan.Steps[prev].Error = ""
+
 			return plan, prev
 		}
+
 		return plan, currentIdx
 
 	default:
@@ -379,6 +383,7 @@ func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 		events, err := complete(ctx, req)
 		if err != nil {
 			debugf("replan failed: %v", err)
+
 			return plan, currentIdx
 		}
 
@@ -386,6 +391,7 @@ func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 		for ev := range events {
 			if ev.Err != nil {
 				debugf("replan stream error: %v", ev.Err)
+
 				return plan, currentIdx
 			}
 			if ev.Done {
@@ -439,5 +445,6 @@ func buildFallbackSummary(plan *Plan) string {
 		}
 		fmt.Fprintf(&b, "%d. [%s] %s\n   %s\n", s.Index, status, s.Description, result)
 	}
+
 	return b.String()
 }

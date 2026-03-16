@@ -12,6 +12,7 @@ func deterministicEmbed(_ context.Context, _ string) ([]float32, error) {
 	for i := range vec {
 		vec[i] = 0.1
 	}
+
 	return vec, nil
 }
 
@@ -21,6 +22,7 @@ func newTestStore(t *testing.T) *ChromemStore {
 	if err != nil {
 		t.Fatalf("NewChromemStoreInMemory: %v", err)
 	}
+
 	return store
 }
 

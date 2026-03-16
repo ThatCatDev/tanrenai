@@ -30,10 +30,10 @@ type ProcessRunner struct {
 	baseURL   string
 
 	// Crash detection and auto-restart.
-	mu           sync.Mutex
-	restarts     int
-	crashNotify  chan error // receives an error each time the process crashes
-	stopMonitor  chan struct{}
+	mu          sync.Mutex
+	restarts    int
+	crashNotify chan error // receives an error each time the process crashes
+	stopMonitor chan struct{}
 }
 
 // NewProcessRunner creates a new ProcessRunner.
@@ -105,6 +105,7 @@ func (r *ProcessRunner) startSubprocess(ctx context.Context) error {
 	r.opts.Port = sub.Port()
 
 	slog.Info("llama-server ready", "port", sub.Port(), "model", r.modelName)
+
 	return nil
 }
 
@@ -171,6 +172,7 @@ func (r *ProcessRunner) monitorCrashes() {
 
 			if attempt > maxRestartAttempts {
 				slog.Error("llama-server max restart attempts reached, giving up", "max_attempts", maxRestartAttempts)
+
 				return
 			}
 
@@ -180,6 +182,7 @@ func (r *ProcessRunner) monitorCrashes() {
 			if err := r.startSubprocess(restartCtx); err != nil {
 				slog.Error("llama-server restart failed", "error", err)
 				cancel()
+
 				return
 			}
 			cancel()
@@ -192,16 +195,19 @@ func (r *ProcessRunner) Health(ctx context.Context) error {
 	if r.sub == nil {
 		return fmt.Errorf("llama-server not started")
 	}
+
 	return r.sub.healthCheck(ctx)
 }
 
 func (r *ProcessRunner) ChatCompletion(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
 	req.Stream = false
+
 	return r.client.ChatCompletion(ctx, req)
 }
 
 func (r *ProcessRunner) ChatCompletionStream(ctx context.Context, req *api.ChatCompletionRequest, w io.Writer) error {
 	req.Stream = true
+
 	return r.client.ChatCompletionStream(ctx, req, w)
 }
 
@@ -225,5 +231,6 @@ func (r *ProcessRunner) Close() error {
 	if r.sub != nil {
 		return r.sub.GracefulStop()
 	}
+
 	return nil
 }

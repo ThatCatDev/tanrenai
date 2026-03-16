@@ -48,10 +48,10 @@ func runDestroy(cmd *cobra.Command, args []string) {
 
 	client := vastai.NewClient(cfg.VastaiAPIKey)
 
-	fmt.Printf("Destroying instance %s...\n", cfg.VastaiInstance)
+	_, _ = fmt.Fprintf(os.Stdout, "Destroying instance %s...\n", cfg.VastaiInstance)
 	if err := client.DestroyInstance(ctx, cfg.VastaiInstance); err != nil {
 		exitError("destroy instance: %v", err)
 	}
 
-	fmt.Println("Instance destroyed.")
+	_, _ = fmt.Fprintf(os.Stdout, "Instance destroyed.\n")
 }

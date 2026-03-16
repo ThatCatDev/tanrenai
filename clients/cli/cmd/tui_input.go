@@ -15,6 +15,7 @@ import (
 
 // ── Input Capture ──────────────────────────────────────────────────────
 
+//nolint:gocyclo
 func (t *tuiApp) setupInputCapture() {
 	t.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		// When a modal is showing, let tview handle all input (arrow keys, enter, etc.)
@@ -24,24 +25,28 @@ func (t *tuiApp) setupInputCapture() {
 
 		// Autocomplete popup — only intercept navigation keys, let all typing through
 		if t.acActive {
-			switch event.Key() {
+			switch event.Key() { //nolint:exhaustive
 			case tcell.KeyTab, tcell.KeyEnter:
 				t.acceptAutocomplete()
+
 				return nil
 			case tcell.KeyEscape:
 				t.dismissAutocomplete()
+
 				return nil
 			case tcell.KeyUp:
 				cur := t.acList.GetCurrentItem()
 				if cur > 0 {
 					t.acList.SetCurrentItem(cur - 1)
 				}
+
 				return nil
 			case tcell.KeyDown:
 				cur := t.acList.GetCurrentItem()
 				if cur < t.acList.GetItemCount()-1 {
 					t.acList.SetCurrentItem(cur + 1)
 				}
+
 				return nil
 			}
 			// Everything else (typing, backspace, enter) flows to TextArea normally
@@ -58,7 +63,7 @@ func (t *tuiApp) setupInputCapture() {
 			}
 		}
 
-		switch event.Key() {
+		switch event.Key() { //nolint:exhaustive
 		case tcell.KeyCtrlC:
 			if t.processing {
 				t.mu.Lock()
@@ -66,35 +71,41 @@ func (t *tuiApp) setupInputCapture() {
 					t.turnCancel()
 				}
 				t.mu.Unlock()
+
 				return nil
 			}
 			if t.ctrlCPending {
 				t.app.Stop()
+
 				return nil
 			}
 			t.ctrlCPending = true
 			t.addLine("[gray::-]  Press Ctrl+C again to quit.[-:-:-]")
 			t.refreshChatView()
+
 			return nil
 
 		case tcell.KeyCtrlD:
 			t.app.Stop()
+
 			return nil
 
 		case tcell.KeyEscape:
 			if t.focus == focusProcessPanel {
 				t.focus = focusChat
 				t.app.SetFocus(t.inputArea)
+
 				return nil
 			}
 			if t.filePath != "" {
 				t.closeFileViewer()
+
 				return nil
 			}
 
 		case tcell.KeyCtrlP:
 			// Toggle process panel
-			if t.processCount() > 0 {
+			if t.processCount() > 0 { //nolint:nestif
 				if t.processPanel != nil {
 					if t.focus == focusProcessPanel {
 						t.focus = focusChat
@@ -107,6 +118,7 @@ func (t *tuiApp) setupInputCapture() {
 					t.showProcessPanel()
 					t.focus = focusProcessPanel
 				}
+
 				return nil
 			}
 
@@ -118,29 +130,36 @@ func (t *tuiApp) setupInputCapture() {
 					t.focus = focusChat
 				}
 				t.rebuildFileViewer()
+
 				return nil
 			}
 			t.expanded = !t.expanded
 			t.refreshChatView()
+
 			return nil
 
 		case tcell.KeyUp:
 			t.scrollFocusedPane(-1)
+
 			return nil
 		case tcell.KeyDown:
 			// Down arrow: if processes exist and panel isn't shown, show it
 			if t.focus == focusChat && t.processCount() > 0 && t.processPanel == nil {
 				t.showProcessPanel()
 				t.focus = focusProcessPanel
+
 				return nil
 			}
 			t.scrollFocusedPane(1)
+
 			return nil
 		case tcell.KeyPgUp:
 			t.scrollFocusedPane(-10)
+
 			return nil
 		case tcell.KeyPgDn:
 			t.scrollFocusedPane(10)
+
 			return nil
 
 		case tcell.KeyEnter:
@@ -164,6 +183,7 @@ func (t *tuiApp) setupInputCapture() {
 				default:
 					// channel full, drop
 				}
+
 				return nil
 			}
 			if t.processing {
@@ -179,6 +199,7 @@ func (t *tuiApp) setupInputCapture() {
 			}
 			t.inputArea.SetText("", false)
 			t.handleEnter(text)
+
 			return nil
 		}
 
@@ -210,7 +231,7 @@ func (t *tuiApp) setupMouseCapture() {
 	t.app.SetMouseCapture(func(event *tcell.EventMouse, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
 		mx, my := event.Position()
 
-		switch action {
+		switch action { //nolint:exhaustive
 		case tview.MouseScrollUp, tview.MouseScrollDown:
 			delta := 3
 			if action == tview.MouseScrollUp {
@@ -227,6 +248,7 @@ func (t *tuiApp) setupMouseCapture() {
 						newRow = 0
 					}
 					t.fileView.ScrollTo(newRow, col)
+
 					return nil, 0
 				}
 			}
@@ -239,13 +261,14 @@ func (t *tuiApp) setupMouseCapture() {
 					newRow = 0
 				}
 				t.chatView.ScrollTo(newRow, col)
+
 				return nil, 0
 			}
 
 		case tview.MouseLeftClick:
 			// Check if click is in chat area for tool call click-to-open
 			cx, cy, cw, ch := t.chatView.GetRect()
-			if mx >= cx && mx < cx+cw && my >= cy && my < cy+ch {
+			if mx >= cx && mx < cx+cw && my >= cy && my < cy+ch { //nolint:nestif
 				row, _ := t.chatView.GetScrollOffset()
 				displayLine := row + (my - cy)
 				logicalLine := t.displayLineToLogicalLine(displayLine)
@@ -255,6 +278,7 @@ func (t *tuiApp) setupMouseCapture() {
 						if path != "" {
 							t.focus = focusFileViewer
 							go t.loadFileViewer(path)
+
 							return nil, 0
 						}
 					}
@@ -280,11 +304,13 @@ func (t *tuiApp) setupMouseCapture() {
 func (t *tuiApp) handleEnter(text string) {
 	if text == "/quit" || text == "/exit" {
 		t.app.Stop()
+
 		return
 	}
 
 	if t.handleSlashCommand(text) {
 		t.refreshChatView()
+
 		return
 	}
 
@@ -294,6 +320,7 @@ func (t *tuiApp) handleEnter(text string) {
 		t.addLine("[gray::-]  Unknown command. Type /help for available commands.[-:-:-]")
 		t.addLine("")
 		t.refreshChatView()
+
 		return
 	}
 
@@ -332,12 +359,14 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 		t.closeFileViewer()
 		t.addLine("[gray::-]  History cleared.[-:-:-]")
 		t.addLine("")
+
 		return true
 
 	case input == "/compact":
 		if !t.agentMode {
 			t.addLine("[gray::-]  /compact is only available in agent mode.[-:-:-]")
 			t.addLine("")
+
 			return true
 		}
 		if t.mgr.NeedsSummary() {
@@ -353,6 +382,7 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 			t.addLine("[gray::-]  Nothing to compact.[-:-:-]")
 		}
 		t.addLine("")
+
 		return true
 
 	case input == "/scrolls" || input == "/scrolls list":
@@ -370,6 +400,7 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 			}
 		}
 		t.addLine("")
+
 		return true
 
 	case strings.HasPrefix(input, "/scrolls show "):
@@ -377,6 +408,7 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 		if name == "" {
 			t.addLine("[gray::-]  Usage: /scrolls show <name>[-:-:-]")
 			t.addLine("")
+
 			return true
 		}
 		found := false
@@ -392,6 +424,7 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 					t.addLine("[gray::-]  " + tview.Escape(line) + "[-:-:-]")
 				}
 				found = true
+
 				break
 			}
 		}
@@ -399,6 +432,7 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 			t.addLine(fmt.Sprintf("[gray::-]  No scroll named %q[-:-:-]", name))
 		}
 		t.addLine("")
+
 		return true
 
 	case input == "/help":
@@ -417,6 +451,7 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 		t.addLine("[gray::-]    /scrolls show <n>   Show a scroll's content[-:-:-]")
 		t.addLine("[gray::-]    /quit, /exit        Exit[-:-:-]")
 		t.addLine("")
+
 		return true
 	}
 
@@ -428,6 +463,7 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 			}
 		}
 		t.addLine("")
+
 		return true
 	}
 
@@ -448,6 +484,7 @@ func (t *tuiApp) updateAutocomplete() {
 		if t.acActive {
 			t.dismissAutocomplete()
 		}
+
 		return
 	}
 
@@ -463,6 +500,7 @@ func (t *tuiApp) updateAutocomplete() {
 		if t.acActive {
 			t.dismissAutocomplete()
 		}
+
 		return
 	}
 

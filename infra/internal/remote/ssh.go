@@ -80,7 +80,7 @@ func (s *SSHClient) Run(ctx context.Context, cmd string, output io.Writer) error
 	if err != nil {
 		return fmt.Errorf("create SSH session: %w", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	session.Stdout = output
 	session.Stderr = output
@@ -93,6 +93,7 @@ func (s *SSHClient) Run(ctx context.Context, cmd string, output io.Writer) error
 	select {
 	case <-ctx.Done():
 		_ = session.Signal(ssh.SIGTERM)
+
 		return ctx.Err()
 	case err := <-done:
 		return err
@@ -122,7 +123,8 @@ func WaitForSSH(ctx context.Context, host string, port int) error {
 		case <-ticker.C:
 			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 			if err == nil {
-				conn.Close()
+				_ = conn.Close()
+
 				return nil
 			}
 			slog.Debug("waiting for SSH", "addr", addr, "err", err)
@@ -153,6 +155,7 @@ func isAuthError(err error) bool {
 		return false
 	}
 	msg := err.Error()
+
 	return strings.Contains(msg, "unable to authenticate") ||
 		strings.Contains(msg, "no supported methods remain") ||
 		strings.Contains(msg, "handshake failed")

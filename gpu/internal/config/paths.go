@@ -17,6 +17,7 @@ func DataDir() string {
 		return filepath.Join(os.Getenv("LOCALAPPDATA"), "tanrenai")
 	}
 	home, _ := os.UserHomeDir()
+
 	return filepath.Join(home, ".local", "share", "tanrenai")
 }
 
@@ -25,6 +26,7 @@ func ModelsDir() string {
 	if dir := os.Getenv("TANRENAI_MODELS_DIR"); dir != "" {
 		return dir
 	}
+
 	return filepath.Join(DataDir(), "models")
 }
 
@@ -61,5 +63,6 @@ func EnsureDirs() error {
 			return err
 		}
 	}
+
 	return nil
 }

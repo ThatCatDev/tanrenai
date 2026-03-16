@@ -35,7 +35,7 @@ func (h *ModelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // LoadResult contains information returned by a model load.
@@ -56,17 +56,20 @@ func (h *LoadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body")
+
 		return
 	}
 
 	if req.Model == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "model field is required")
+
 		return
 	}
 
 	result, err := h.LoadFunc(r.Context(), req.Model)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "model_error", err.Error())
+
 		return
 	}
 
@@ -79,7 +82,7 @@ func (h *LoadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // PullHandler handles POST /api/pull — download a model.
@@ -95,17 +98,20 @@ func (h *PullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body")
+
 		return
 	}
 
 	if req.URL == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "url field is required")
+
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "server_error", "streaming not supported")
+
 		return
 	}
 
@@ -115,7 +121,7 @@ func (h *PullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	sendEvent := func(evt any) {
 		data, _ := json.Marshal(evt)
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
 
@@ -123,6 +129,7 @@ func (h *PullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	urls, err := models.ResolveHFModel(req.URL)
 	if err != nil {
 		sendEvent(map[string]string{"status": "error", "error": err.Error()})
+
 		return
 	}
 
@@ -142,18 +149,19 @@ func (h *PullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			lastPercent = percent
 			sendEvent(map[string]any{
-				"status":     "downloading",
-				"file":       fileNum,
+				"status":      "downloading",
+				"file":        fileNum,
 				"total_files": len(urls),
-				"downloaded": downloaded,
-				"total":      total,
-				"percent":    percent,
+				"downloaded":  downloaded,
+				"total":       total,
+				"percent":     percent,
 			})
 		}
 
 		path, err := models.Download(dlURL, h.Store.Dir(), progress)
 		if err != nil {
 			sendEvent(map[string]string{"status": "error", "error": err.Error()})
+
 			return
 		}
 		lastPath = path
@@ -165,32 +173,17 @@ func (h *PullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // normalizeModelName strips common extensions (.gguf, etc.) for comparison.
 func normalizeModelName(name string) string {
 	name = strings.TrimSuffix(name, ".gguf")
+
 	return name
 }
 
 func writeError(w http.ResponseWriter, status int, errType, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(api.ErrorResponse{
+	_ = json.NewEncoder(w).Encode(api.ErrorResponse{
 		Error: api.ErrorDetail{
 			Message: message,
 			Type:    errType,
 		},
 	})
-}
-
-// formatSize formats a byte count into human-readable form.
-func formatSize(bytes int64) string {
-	const (
-		MB = 1024 * 1024
-		GB = 1024 * MB
-	)
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.1f GB", float64(bytes)/float64(GB))
-	case bytes >= MB:
-		return fmt.Sprintf("%.1f MB", float64(bytes)/float64(MB))
-	default:
-		return fmt.Sprintf("%d B", bytes)
-	}
 }

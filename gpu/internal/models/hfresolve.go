@@ -65,7 +65,7 @@ func ResolveHFModel(ref string) ([]string, error) {
 	}
 
 	// If quant specified, filter by subfolder or filename match
-	if quant != "" {
+	if quant != "" { //nolint:nestif
 		var matched []HFFileInfo
 		// Try subfolder match first (e.g. "UD-Q4_K_XL/file.gguf")
 		for _, f := range ggufFiles {
@@ -85,6 +85,7 @@ func ResolveHFModel(ref string) ([]string, error) {
 		if len(matched) == 0 {
 			// List available quants
 			quants := availableQuants(ggufFiles)
+
 			return nil, fmt.Errorf("no GGUF files matching %q in %s\navailable: %s", quant, repo, strings.Join(quants, ", "))
 		}
 		ggufFiles = matched
@@ -122,7 +123,7 @@ func listHFFiles(repo string) ([]HFFileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HuggingFace API returned %d", resp.StatusCode)
@@ -160,6 +161,7 @@ func availableQuants(files []HFFileInfo) []string {
 		quants = append(quants, q)
 	}
 	sort.Strings(quants)
+
 	return quants
 }
 
