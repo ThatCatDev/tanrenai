@@ -169,47 +169,44 @@ jobs:
           go-version: '1.25'
       - name: Collect coverage
         run: |
-          declare -A modules=(
-            ["gpu"]="gpu"
-            ["server"]="server"
-            ["clients/shared"]="clients/shared"
-            ["clients/cli"]="clients/cli"
-            ["infra"]="infra"
-          )
-
-          body="## Test Coverage Report\n\n"
-          body+="| Module | Coverage |\n"
-          body+="|--------|----------|\n"
-
-          for name in gpu server clients/shared clients/cli infra; do
-            dir="${modules[$name]}"
-            cov=$(cd "$dir" && go test ./... -coverprofile=/dev/null -covermode=atomic 2>&1 | grep -oP 'coverage: \K[0-9.]+' | head -1 || echo "0.0")
-            if [ -z "$cov" ]; then cov="n/a"; fi
-
-            # Collect all package coverages and average them
-            cd "$dir"
-            total_line=$(go test ./... -coverprofile=cov.out -covermode=atomic 2>/dev/null && go tool cover -func=cov.out 2>/dev/null | grep '^total:' | awk '{print $NF}' | tr -d '%')
-            cd "$GITHUB_WORKSPACE"
-
-            if [ -n "$total_line" ]; then
-              pct="$total_line"
-              if (( $(echo "$pct >= 80" | bc -l) )); then
-                icon="🟢"
-              elif (( $(echo "$pct >= 60" | bc -l) )); then
-                icon="🟡"
-              else
-                icon="🔴"
-              fi
-              body+="| \`$name\` | $icon $pct% |\n"
-            else
-              body+="| \`$name\` | ⚪ n/a |\n"
+          get_coverage() {
+            local dir="$1"
+            cd "$GITHUB_WORKSPACE/$dir"
+            go test ./... -coverprofile=cov.out -covermode=atomic > /dev/null 2>&1 || true
+            if [ -f cov.out ]; then
+              go tool cover -func=cov.out 2>/dev/null | awk '/^total:/{gsub(/%/,"",$NF); print $NF}'
             fi
-          done
+            cd "$GITHUB_WORKSPACE"
+          }
 
-          body+="\n> 🟢 ≥80% · 🟡 ≥60% · 🔴 <60%\n"
-          body+="\n_Updated by CI — $(date -u '+%Y-%m-%d %H:%M UTC')_"
+          {
+            echo "## Test Coverage Report"
+            echo ""
+            echo "| Module | Coverage |"
+            echo "|--------|----------|"
 
-          echo -e "$body" > /tmp/coverage_comment.md
+            for name in gpu server clients/shared clients/cli infra; do
+              pct=$(get_coverage "$name")
+              if [ -n "$pct" ]; then
+                if [ "$(echo "$pct >= 80" | bc -l)" -eq 1 ]; then
+                  icon="🟢"
+                elif [ "$(echo "$pct >= 60" | bc -l)" -eq 1 ]; then
+                  icon="🟡"
+                else
+                  icon="🔴"
+                fi
+                echo "| \`$name\` | $icon $pct% |"
+              else
+                echo "| \`$name\` | ⚪ n/a |"
+              fi
+            done
+
+            echo ""
+            echo "> 🟢 ≥80% · 🟡 ≥60% · 🔴 <60%"
+            echo ""
+            echo "_Updated by CI — $(date -u '+%Y-%m-%d %H:%M UTC')_"
+          } > /tmp/coverage_comment.md
+
           cat /tmp/coverage_comment.md
 
       - name: Post or update PR comment
