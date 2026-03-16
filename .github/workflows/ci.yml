@@ -193,7 +193,7 @@ jobs:
         run: cd clients/desktop && go test ./...
 
   coverage-comment:
-    if: github.event_name == 'pull_request'
+    if: always() && github.event_name == 'pull_request'
     needs: [clients-shared, clients-cli, gpu, server, infra]
     runs-on: ubuntu-latest
     steps:
