@@ -5,7 +5,71 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Lint gpu
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: gpu
+      - name: Lint server
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: server
+      - name: Lint clients/shared
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: clients/shared
+      - name: Lint clients/cli
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: clients/cli
+      - name: Lint infra
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: infra
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: Scan gpu
+        run: cd gpu && gosec -fmt sarif -out ../gpu.sarif ./... || true
+      - name: Scan server
+        run: cd server && gosec -fmt sarif -out ../server.sarif ./... || true
+      - name: Scan clients/shared
+        run: cd clients/shared && gosec -fmt sarif -out ../../shared.sarif ./... || true
+      - name: Scan clients/cli
+        run: cd clients/cli && gosec -fmt sarif -out ../../cli.sarif ./... || true
+      - name: Scan infra
+        run: cd infra && gosec -fmt sarif -out ../infra.sarif ./... || true
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: .
+          category: gosec
+
   gpu:
     runs-on: ubuntu-latest
     steps:
@@ -42,11 +106,20 @@ jobs:
           go test ./... -coverprofile=coverage.out -covermode=atomic
           total=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
           echo "Coverage: ${total}%"
+          echo "SHARED_COV=${total}" >> "$GITHUB_ENV"
           threshold=75
           if [ "$(echo "$total < $threshold" | bc -l)" -eq 1 ]; then
             echo "::error::Coverage ${total}% is below threshold ${threshold}%"
             exit 1
           fi
+      - name: Per-package coverage
+        if: always()
+        run: |
+          cd clients/shared
+          echo "### clients/shared coverage by package" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out | grep -E '(^total:|^github)' | awk '{printf "%-60s %s\n", $1, $NF}' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   clients-cli:
     runs-on: ubuntu-latest
@@ -84,3 +157,63 @@ jobs:
       - run: cd clients/desktop && go build ./... && go vet ./...
       - name: Test
         run: cd clients/desktop && go test ./...
+
+  coverage-comment:
+    if: github.event_name == 'pull_request'
+    needs: [clients-shared, clients-cli, gpu, server, infra]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Collect coverage
+        run: |
+          declare -A modules=(
+            ["gpu"]="gpu"
+            ["server"]="server"
+            ["clients/shared"]="clients/shared"
+            ["clients/cli"]="clients/cli"
+            ["infra"]="infra"
+          )
+
+          body="## Test Coverage Report\n\n"
+          body+="| Module | Coverage |\n"
+          body+="|--------|----------|\n"
+
+          for name in gpu server clients/shared clients/cli infra; do
+            dir="${modules[$name]}"
+            cov=$(cd "$dir" && go test ./... -coverprofile=/dev/null -covermode=atomic 2>&1 | grep -oP 'coverage: \K[0-9.]+' | head -1 || echo "0.0")
+            if [ -z "$cov" ]; then cov="n/a"; fi
+
+            # Collect all package coverages and average them
+            cd "$dir"
+            total_line=$(go test ./... -coverprofile=cov.out -covermode=atomic 2>/dev/null && go tool cover -func=cov.out 2>/dev/null | grep '^total:' | awk '{print $NF}' | tr -d '%')
+            cd "$GITHUB_WORKSPACE"
+
+            if [ -n "$total_line" ]; then
+              pct="$total_line"
+              if (( $(echo "$pct >= 80" | bc -l) )); then
+                icon="🟢"
+              elif (( $(echo "$pct >= 60" | bc -l) )); then
+                icon="🟡"
+              else
+                icon="🔴"
+              fi
+              body+="| \`$name\` | $icon $pct% |\n"
+            else
+              body+="| \`$name\` | ⚪ n/a |\n"
+            fi
+          done
+
+          body+="\n> 🟢 ≥80% · 🟡 ≥60% · 🔴 <60%\n"
+          body+="\n_Updated by CI — $(date -u '+%Y-%m-%d %H:%M UTC')_"
+
+          echo -e "$body" > /tmp/coverage_comment.md
+          cat /tmp/coverage_comment.md
+
+      - name: Post or update PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage-report
+          path: /tmp/coverage_comment.md

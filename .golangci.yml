@@ -1,0 +1,34 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gosimple
+    - gocritic
+    - bodyclose
+    - durationcheck
+    - errname
+    - exportloopref
+    - makezero
+    - nilerr
+    - prealloc
+    - unconvert
+    - unparam
+    - wastedassign
+
+linters-settings:
+  gocritic:
+    enabled-checks:
+      - dupImport
+      - ifElseChain
+      - nestingReduce
+      - unnameResult
+      - truncateCmp
+
+issues:
+  exclude-dirs:
+    - vendor
+  max-issues-per-linter: 20
+  max-same-issues: 5
