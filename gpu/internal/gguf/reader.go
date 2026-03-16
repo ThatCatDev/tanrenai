@@ -124,22 +124,14 @@ func readMetadataFrom(r io.ReadSeeker) (*Metadata, error) {
 	// Read tensor count and KV count.
 	// v2 uses uint32, v3 uses uint64.
 	var tensorCount, kvCount uint64
-	if version == 2 { //nolint:nestif
-		var tc, kc uint32
-		if err := binary.Read(r, binary.LittleEndian, &tc); err != nil {
-			return nil, fmt.Errorf("gguf: read tensor count: %w", err)
-		}
-		if err := binary.Read(r, binary.LittleEndian, &kc); err != nil {
-			return nil, fmt.Errorf("gguf: read kv count: %w", err)
-		}
-		tensorCount, kvCount = uint64(tc), uint64(kc)
+	var err error
+	if version == 2 {
+		tensorCount, kvCount, err = readCountsV2(r)
 	} else {
-		if err := binary.Read(r, binary.LittleEndian, &tensorCount); err != nil {
-			return nil, fmt.Errorf("gguf: read tensor count: %w", err)
-		}
-		if err := binary.Read(r, binary.LittleEndian, &kvCount); err != nil {
-			return nil, fmt.Errorf("gguf: read kv count: %w", err)
-		}
+		tensorCount, kvCount, err = readCountsV3(r)
+	}
+	if err != nil {
+		return nil, err
 	}
 	_ = tensorCount // we only need KV pairs
 
@@ -206,6 +198,31 @@ func readMetadataFrom(r io.ReadSeeker) (*Metadata, error) {
 	meta.Tokenizer.AddEOSToken = mapBool(kvMap, "tokenizer.ggml.add_eos_token")
 
 	return meta, nil
+}
+
+// readCountsV2 reads the tensor count and KV count fields for GGUF v2 (uint32 each).
+func readCountsV2(r io.Reader) (tensorCount, kvCount uint64, err error) {
+	var tc, kc uint32
+	if err = binary.Read(r, binary.LittleEndian, &tc); err != nil {
+		return 0, 0, fmt.Errorf("gguf: read tensor count: %w", err)
+	}
+	if err = binary.Read(r, binary.LittleEndian, &kc); err != nil {
+		return 0, 0, fmt.Errorf("gguf: read kv count: %w", err)
+	}
+
+	return uint64(tc), uint64(kc), nil
+}
+
+// readCountsV3 reads the tensor count and KV count fields for GGUF v3 (uint64 each).
+func readCountsV3(r io.Reader) (tensorCount, kvCount uint64, err error) {
+	if err = binary.Read(r, binary.LittleEndian, &tensorCount); err != nil {
+		return 0, 0, fmt.Errorf("gguf: read tensor count: %w", err)
+	}
+	if err = binary.Read(r, binary.LittleEndian, &kvCount); err != nil {
+		return 0, 0, fmt.Errorf("gguf: read kv count: %w", err)
+	}
+
+	return tensorCount, kvCount, nil
 }
 
 // readString reads a GGUF string (length-prefixed).

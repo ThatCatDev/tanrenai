@@ -152,64 +152,124 @@ func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
 		}
 	}
 
-	if len(result) > len(windowedMsgs) { //nolint:nestif
+	if len(result) > len(windowedMsgs) {
 		newMsgs := result[len(windowedMsgs):]
 		t.mgr.AppendMany(newMsgs)
-
-		var finalContent string
-		for i := len(newMsgs) - 1; i >= 0; i-- {
-			if newMsgs[i].Role == "assistant" && newMsgs[i].Content != "" {
-				finalContent = newMsgs[i].Content
-
-				break
-			}
-		}
-		if finalContent != "" {
-			formatted := fmt.Sprintf(" [purple::b] * [-:-:-]%s", t.renderMarkdown(finalContent))
-			for _, line := range strings.Split(formatted, "\n") {
-				t.addLine(line)
-			}
-		}
-
-		if t.memoryEnabled {
-			var assistContent string
-			for _, msg := range newMsgs {
-				if msg.Role == "assistant" && msg.Content != "" {
-					if assistContent != "" {
-						assistContent += "\n"
-					}
-					assistContent += msg.Content
-				}
-			}
-			if len(assistContent) > 2000 {
-				assistContent = assistContent[:2000]
-			}
-			userInput := ""
-			for i := len(newMsgs) - 1; i >= 0; i-- {
-				if newMsgs[i].Role == "user" {
-					userInput = newMsgs[i].Content
-
-					break
-				}
-			}
-			if assistContent != "" && userInput != "" {
-				client := t.client
-				t.memoryWg.Add(1)
-				go func() {
-					defer t.memoryWg.Done()
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					if _, err := client.MemoryStore(ctx, userInput, assistContent); err != nil {
-						slog.Error("failed to store memory", "error", err)
-					}
-				}()
-			}
-		}
+		t.displayFinalContent(newMsgs)
+		t.maybePersistMemory(newMsgs)
 	}
 
 	t.addLine("")
 	t.refreshChatView()
 	t.updateStatusBar()
+}
+
+// displayFinalContent renders the last assistant message from newMsgs to the chat view.
+func (t *tuiApp) displayFinalContent(newMsgs []api.Message) {
+	var finalContent string
+	for i := len(newMsgs) - 1; i >= 0; i-- {
+		if newMsgs[i].Role == "assistant" && newMsgs[i].Content != "" {
+			finalContent = newMsgs[i].Content
+
+			break
+		}
+	}
+	if finalContent == "" {
+		return
+	}
+	formatted := fmt.Sprintf(" [purple::b] * [-:-:-]%s", t.renderMarkdown(finalContent))
+	for _, line := range strings.Split(formatted, "\n") {
+		t.addLine(line)
+	}
+}
+
+// maybePersistMemory stores a memory entry asynchronously when memory is enabled.
+func (t *tuiApp) maybePersistMemory(newMsgs []api.Message) {
+	if !t.memoryEnabled {
+		return
+	}
+
+	var assistContent string
+	for _, msg := range newMsgs {
+		if msg.Role == "assistant" && msg.Content != "" {
+			if assistContent != "" {
+				assistContent += "\n"
+			}
+			assistContent += msg.Content
+		}
+	}
+	if len(assistContent) > 2000 {
+		assistContent = assistContent[:2000]
+	}
+
+	userInput := ""
+	for i := len(newMsgs) - 1; i >= 0; i-- {
+		if newMsgs[i].Role == "user" {
+			userInput = newMsgs[i].Content
+
+			break
+		}
+	}
+
+	if assistContent == "" || userInput == "" {
+		return
+	}
+
+	client := t.client
+	t.memoryWg.Add(1)
+	go func() {
+		defer t.memoryWg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := client.MemoryStore(ctx, userInput, assistContent); err != nil {
+			slog.Error("failed to store memory", "error", err)
+		}
+	}()
+}
+
+// displayToolResult renders a tool result (diff or output preview) into the chat view.
+// Must be called from within a QueueUpdateDraw callback.
+func (t *tuiApp) displayToolResult(result *tools.ToolResult) {
+	if result.Diff != "" {
+		t.displayDiff(result.Diff)
+
+		return
+	}
+
+	preview := strings.TrimSpace(result.Output)
+	preview = strings.Join(strings.Fields(preview), " ")
+	if len(preview) > 120 {
+		preview = preview[:120] + "..."
+	}
+	idx := len(t.lines)
+	t.addLine("[gray::-]      " + tview.Escape(preview) + "[-:-:-]")
+	t.toolResults[idx] = result.Output
+}
+
+// displayDiff renders a unified diff into the chat view with syntax colouring.
+func (t *tuiApp) displayDiff(diff string) {
+	for _, line := range strings.Split(strings.TrimRight(diff, "\n"), "\n") {
+		if len(line) == 0 {
+			continue
+		}
+		escaped := tview.Escape(line)
+		switch line[0] {
+		case '+':
+			if strings.HasPrefix(line, "+++") {
+				continue
+			}
+			t.addLine("[green:#1a3a1a:-]      " + escaped + "[-:-:-]")
+		case '-':
+			if strings.HasPrefix(line, "---") {
+				continue
+			}
+			t.addLine("[red:#3a1a1a:-]      " + escaped + "[-:-:-]")
+		case '@':
+			t.addLine("[#6688cc::-]      " + escaped + "[-:-:-]")
+		default:
+			t.addLine("[gray::-]      " + escaped + "[-:-:-]")
+		}
+	}
 }
 
 // ── Planned Agent Turn ──────────────────────────────────────────────────
@@ -320,39 +380,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 					},
 					OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
 						t.app.QueueUpdateDraw(func() {
-							if result.Diff != "" { //nolint:nestif
-								for _, line := range strings.Split(strings.TrimRight(result.Diff, "\n"), "\n") {
-									if len(line) == 0 {
-										continue
-									}
-									escaped := tview.Escape(line)
-									switch line[0] {
-									case '+':
-										if strings.HasPrefix(line, "+++") {
-											continue
-										}
-										t.addLine("[green:#1a3a1a:-]      " + escaped + "[-:-:-]")
-									case '-':
-										if strings.HasPrefix(line, "---") {
-											continue
-										}
-										t.addLine("[red:#3a1a1a:-]      " + escaped + "[-:-:-]")
-									case '@':
-										t.addLine("[#6688cc::-]      " + escaped + "[-:-:-]")
-									default:
-										t.addLine("[gray::-]      " + escaped + "[-:-:-]")
-									}
-								}
-							} else {
-								preview := strings.TrimSpace(result.Output)
-								preview = strings.Join(strings.Fields(preview), " ")
-								if len(preview) > 120 {
-									preview = preview[:120] + "..."
-								}
-								idx := len(t.lines)
-								t.addLine("[gray::-]      " + tview.Escape(preview) + "[-:-:-]")
-								t.toolResults[idx] = result.Output
-							}
+							t.displayToolResult(result)
 							t.refreshChatView()
 						})
 					},
@@ -434,11 +462,13 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 			t.app.QueueUpdateDraw(func() {
 				status := step.Status.String()
 				color := "green"
-				switch step.Status { //nolint:exhaustive
+				switch step.Status {
 				case agent.StepFailed:
 					color = "red"
 				case agent.StepSkipped:
 					color = "gray"
+				default:
+					// other statuses keep default color
 				}
 				t.addLine(fmt.Sprintf("[%s::-]  -- step %d: %s --[-:-:-]", color, step.Index, status))
 				t.addLine("")
@@ -450,11 +480,13 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 				t.addLine("[yellow::b]  Re-planned:[-:-:-]")
 				for _, step := range newPlan.Steps {
 					statusMark := " "
-					switch step.Status { //nolint:exhaustive
+					switch step.Status {
 					case agent.StepDone:
 						statusMark = "[green::-]✓[-:-:-]"
 					case agent.StepFailed:
 						statusMark = "[red::-]✗[-:-:-]"
+					default:
+						// other statuses keep default mark
 					}
 					t.addLine(fmt.Sprintf("    %s %d. %s", statusMark, step.Index, tview.Escape(step.Description)))
 				}

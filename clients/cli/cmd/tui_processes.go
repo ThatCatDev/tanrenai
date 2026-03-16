@@ -130,7 +130,7 @@ func (t *tuiApp) handleProcessPanelKey(event *tcell.EventKey) bool {
 
 	row, _ := t.processPanel.GetSelection()
 
-	switch event.Key() { //nolint:exhaustive
+	switch event.Key() {
 	case tcell.KeyUp:
 		if row > 1 {
 			t.processPanel.Select(row-1, 0)
@@ -176,7 +176,11 @@ func (t *tuiApp) handleProcessPanelKey(event *tcell.EventKey) bool {
 			}
 
 			return true
+		default:
+			// other runes not handled
 		}
+	default:
+		// other keys not handled
 	}
 
 	return false

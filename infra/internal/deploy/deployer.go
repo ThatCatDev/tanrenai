@@ -188,26 +188,10 @@ func (d *Deployer) Run(ctx context.Context) (*Result, error) {
 }
 
 func (d *Deployer) resolveInstance(ctx context.Context) (*vastai.Instance, error) {
-	if d.cfg.VastaiInstance != "" { //nolint:nestif
+	if d.cfg.VastaiInstance != "" {
 		slog.Info("using existing instance", "id", d.cfg.VastaiInstance)
-		inst, err := d.vastai.GetInstance(ctx, d.cfg.VastaiInstance)
-		if err != nil {
-			return nil, err
-		}
-		if inst.Status == "exited" {
-			_, _ = fmt.Fprintf(d.output, "Starting stopped instance %d...\n", inst.ID)
-			if err := d.vastai.StartInstance(ctx, d.cfg.VastaiInstance); err != nil {
-				return nil, fmt.Errorf("start instance: %w", err)
-			}
-			// Re-fetch to get updated status
-			time.Sleep(3 * time.Second)
-			inst, err = d.vastai.GetInstance(ctx, d.cfg.VastaiInstance)
-			if err != nil {
-				return nil, err
-			}
-		}
 
-		return inst, nil
+		return d.ensureInstanceRunning(ctx, d.cfg.VastaiInstance)
 	}
 
 	// Fetch existing instances and show interactive picker
@@ -222,26 +206,37 @@ func (d *Deployer) resolveInstance(ctx context.Context) (*vastai.Instance, error
 		return nil, err
 	}
 
-	if choice.Instance != nil { //nolint:nestif
-		inst := choice.Instance
-		if inst.Status == "exited" {
-			_, _ = fmt.Fprintf(d.output, "Starting stopped instance %d...\n", inst.ID)
-			id := fmt.Sprintf("%d", inst.ID)
-			if err := d.vastai.StartInstance(ctx, id); err != nil {
-				return nil, fmt.Errorf("start instance: %w", err)
-			}
-			time.Sleep(3 * time.Second)
-			inst, err = d.vastai.GetInstance(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-		}
+	if choice.Instance == nil {
+		// User chose "Create new instance"
+		return d.createNewInstance(ctx)
+	}
 
+	id := fmt.Sprintf("%d", choice.Instance.ID)
+
+	return d.ensureInstanceRunning(ctx, id)
+}
+
+// ensureInstanceRunning fetches an instance by ID and starts it if it is stopped,
+// returning the latest instance state.
+func (d *Deployer) ensureInstanceRunning(ctx context.Context, id string) (*vastai.Instance, error) {
+	inst, err := d.vastai.GetInstance(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if inst.Status != "exited" {
 		return inst, nil
 	}
 
-	// User chose "Create new instance"
-	return d.createNewInstance(ctx)
+	_, _ = fmt.Fprintf(d.output, "Starting stopped instance %d...\n", inst.ID)
+	if err := d.vastai.StartInstance(ctx, id); err != nil {
+		return nil, fmt.Errorf("start instance: %w", err)
+	}
+
+	// Re-fetch to get updated status
+	time.Sleep(3 * time.Second)
+
+	return d.vastai.GetInstance(ctx, id)
 }
 
 func (d *Deployer) createNewInstance(ctx context.Context) (*vastai.Instance, error) {

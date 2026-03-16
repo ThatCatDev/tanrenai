@@ -15,7 +15,6 @@ import (
 
 // ── Input Capture ──────────────────────────────────────────────────────
 
-//nolint:gocyclo
 func (t *tuiApp) setupInputCapture() {
 	t.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		// When a modal is showing, let tview handle all input (arrow keys, enter, etc.)
@@ -25,28 +24,7 @@ func (t *tuiApp) setupInputCapture() {
 
 		// Autocomplete popup — only intercept navigation keys, let all typing through
 		if t.acActive {
-			switch event.Key() { //nolint:exhaustive
-			case tcell.KeyTab, tcell.KeyEnter:
-				t.acceptAutocomplete()
-
-				return nil
-			case tcell.KeyEscape:
-				t.dismissAutocomplete()
-
-				return nil
-			case tcell.KeyUp:
-				cur := t.acList.GetCurrentItem()
-				if cur > 0 {
-					t.acList.SetCurrentItem(cur - 1)
-				}
-
-				return nil
-			case tcell.KeyDown:
-				cur := t.acList.GetCurrentItem()
-				if cur < t.acList.GetItemCount()-1 {
-					t.acList.SetCurrentItem(cur + 1)
-				}
-
+			if consumed := t.handleAutocompleteKey(event); consumed {
 				return nil
 			}
 			// Everything else (typing, backspace, enter) flows to TextArea normally
@@ -63,148 +41,219 @@ func (t *tuiApp) setupInputCapture() {
 			}
 		}
 
-		switch event.Key() { //nolint:exhaustive
-		case tcell.KeyCtrlC:
-			if t.processing {
-				t.mu.Lock()
-				if t.turnCancel != nil {
-					t.turnCancel()
-				}
-				t.mu.Unlock()
+		return t.handleMainKey(event)
+	})
+}
 
-				return nil
-			}
-			if t.ctrlCPending {
-				t.app.Stop()
+// handleAutocompleteKey handles keys when the autocomplete popup is active.
+// Returns true if the key was consumed.
+func (t *tuiApp) handleAutocompleteKey(event *tcell.EventKey) bool {
+	switch event.Key() {
+	case tcell.KeyTab, tcell.KeyEnter:
+		t.acceptAutocomplete()
 
-				return nil
-			}
-			t.ctrlCPending = true
-			t.addLine("[gray::-]  Press Ctrl+C again to quit.[-:-:-]")
-			t.refreshChatView()
+		return true
+	case tcell.KeyEscape:
+		t.dismissAutocomplete()
 
-			return nil
-
-		case tcell.KeyCtrlD:
-			t.app.Stop()
-
-			return nil
-
-		case tcell.KeyEscape:
-			if t.focus == focusProcessPanel {
-				t.focus = focusChat
-				t.app.SetFocus(t.inputArea)
-
-				return nil
-			}
-			if t.filePath != "" {
-				t.closeFileViewer()
-
-				return nil
-			}
-
-		case tcell.KeyCtrlP:
-			// Toggle process panel
-			if t.processCount() > 0 { //nolint:nestif
-				if t.processPanel != nil {
-					if t.focus == focusProcessPanel {
-						t.focus = focusChat
-						t.app.SetFocus(t.inputArea)
-					} else {
-						t.focus = focusProcessPanel
-						t.refreshProcessPanel()
-					}
-				} else {
-					t.showProcessPanel()
-					t.focus = focusProcessPanel
-				}
-
-				return nil
-			}
-
-		case tcell.KeyTab:
-			if t.filePath != "" {
-				if t.focus == focusChat {
-					t.focus = focusFileViewer
-				} else {
-					t.focus = focusChat
-				}
-				t.rebuildFileViewer()
-
-				return nil
-			}
-			t.expanded = !t.expanded
-			t.refreshChatView()
-
-			return nil
-
-		case tcell.KeyUp:
-			t.scrollFocusedPane(-1)
-
-			return nil
-		case tcell.KeyDown:
-			// Down arrow: if processes exist and panel isn't shown, show it
-			if t.focus == focusChat && t.processCount() > 0 && t.processPanel == nil {
-				t.showProcessPanel()
-				t.focus = focusProcessPanel
-
-				return nil
-			}
-			t.scrollFocusedPane(1)
-
-			return nil
-		case tcell.KeyPgUp:
-			t.scrollFocusedPane(-10)
-
-			return nil
-		case tcell.KeyPgDn:
-			t.scrollFocusedPane(10)
-
-			return nil
-
-		case tcell.KeyEnter:
-			if t.loading {
-				return nil
-			}
-			// Mid-turn injection for planned agent mode
-			if t.processing && t.userInputCh != nil {
-				if event.Modifiers()&tcell.ModShift != 0 {
-					return event
-				}
-				text := strings.TrimSpace(t.inputArea.GetText())
-				if text == "" {
-					return nil
-				}
-				t.inputArea.SetText("", false)
-				select {
-				case t.userInputCh <- text:
-					t.addLine(fmt.Sprintf("[yellow::b]>>> %s [gray](injected)[-:-:-]", tview.Escape(text)))
-					t.refreshChatView()
-				default:
-					// channel full, drop
-				}
-
-				return nil
-			}
-			if t.processing {
-				return nil
-			}
-			// Shift+Enter inserts a newline (let TextArea handle it)
-			if event.Modifiers()&tcell.ModShift != 0 {
-				return event
-			}
-			text := strings.TrimSpace(t.inputArea.GetText())
-			if text == "" {
-				return nil
-			}
-			t.inputArea.SetText("", false)
-			t.handleEnter(text)
-
-			return nil
+		return true
+	case tcell.KeyUp:
+		cur := t.acList.GetCurrentItem()
+		if cur > 0 {
+			t.acList.SetCurrentItem(cur - 1)
 		}
 
+		return true
+	case tcell.KeyDown:
+		cur := t.acList.GetCurrentItem()
+		if cur < t.acList.GetItemCount()-1 {
+			t.acList.SetCurrentItem(cur + 1)
+		}
+
+		return true
+	default:
+		return false
+	}
+}
+
+// handleCtrlC handles Ctrl+C: cancels an in-progress turn or exits on double-press.
+func (t *tuiApp) handleCtrlC() *tcell.EventKey {
+	if t.processing {
+		t.mu.Lock()
+		if t.turnCancel != nil {
+			t.turnCancel()
+		}
+		t.mu.Unlock()
+
+		return nil
+	}
+	if t.ctrlCPending {
+		t.app.Stop()
+
+		return nil
+	}
+	t.ctrlCPending = true
+	t.addLine("[gray::-]  Press Ctrl+C again to quit.[-:-:-]")
+	t.refreshChatView()
+
+	return nil
+}
+
+// handleEscapeKey handles Escape: unfocuses process panel or closes the file viewer.
+func (t *tuiApp) handleEscapeKey() *tcell.EventKey {
+	if t.focus == focusProcessPanel {
+		t.focus = focusChat
+		t.app.SetFocus(t.inputArea)
+
+		return nil
+	}
+	if t.filePath != "" {
+		t.closeFileViewer()
+
+		return nil
+	}
+
+	return nil
+}
+
+// handleCtrlP toggles the process panel.
+func (t *tuiApp) handleCtrlP() *tcell.EventKey {
+	if t.processCount() == 0 {
+		return nil
+	}
+	if t.processPanel != nil {
+		t.toggleProcessPanelFocus()
+	} else {
+		t.showProcessPanel()
+		t.focus = focusProcessPanel
+	}
+
+	return nil
+}
+
+// toggleProcessPanelFocus switches focus between the process panel and the chat input.
+func (t *tuiApp) toggleProcessPanelFocus() {
+	if t.focus == focusProcessPanel {
+		t.focus = focusChat
+		t.app.SetFocus(t.inputArea)
+	} else {
+		t.focus = focusProcessPanel
+		t.refreshProcessPanel()
+	}
+}
+
+// handleTabKey toggles file-viewer focus or expands/collapses tool results.
+func (t *tuiApp) handleTabKey() *tcell.EventKey {
+	if t.filePath != "" {
+		if t.focus == focusChat {
+			t.focus = focusFileViewer
+		} else {
+			t.focus = focusChat
+		}
+		t.rebuildFileViewer()
+
+		return nil
+	}
+	t.expanded = !t.expanded
+	t.refreshChatView()
+
+	return nil
+}
+
+// handleDownKey scrolls down, or shows the process panel if one isn't visible yet.
+func (t *tuiApp) handleDownKey() *tcell.EventKey {
+	if t.focus == focusChat && t.processCount() > 0 && t.processPanel == nil {
+		t.showProcessPanel()
+		t.focus = focusProcessPanel
+
+		return nil
+	}
+	t.scrollFocusedPane(1)
+
+	return nil
+}
+
+// handleEnterKey handles the Enter key: submits input or injects mid-turn text.
+func (t *tuiApp) handleEnterKey(event *tcell.EventKey) *tcell.EventKey {
+	if t.loading {
+		return nil
+	}
+	// Mid-turn injection for planned agent mode
+	if t.processing && t.userInputCh != nil {
+		return t.handleMidTurnInput(event)
+	}
+	if t.processing {
+		return nil
+	}
+	// Shift+Enter inserts a newline (let TextArea handle it)
+	if event.Modifiers()&tcell.ModShift != 0 {
 		return event
-	})
+	}
+	text := strings.TrimSpace(t.inputArea.GetText())
+	if text == "" {
+		return nil
+	}
+	t.inputArea.SetText("", false)
+	t.handleEnter(text)
+
+	return nil
+}
+
+// handleMidTurnInput injects text into an in-progress agent turn.
+func (t *tuiApp) handleMidTurnInput(event *tcell.EventKey) *tcell.EventKey {
+	if event.Modifiers()&tcell.ModShift != 0 {
+		return event
+	}
+	text := strings.TrimSpace(t.inputArea.GetText())
+	if text == "" {
+		return nil
+	}
+	t.inputArea.SetText("", false)
+	select {
+	case t.userInputCh <- text:
+		t.addLine(fmt.Sprintf("[yellow::b]>>> %s [gray](injected)[-:-:-]", tview.Escape(text)))
+		t.refreshChatView()
+	default:
+		// channel full, drop
+	}
+
+	return nil
+}
+
+// handleMainKey dispatches the main key switch outside autocomplete/process-panel contexts.
+func (t *tuiApp) handleMainKey(event *tcell.EventKey) *tcell.EventKey {
+	switch event.Key() {
+	case tcell.KeyCtrlC:
+		return t.handleCtrlC()
+	case tcell.KeyCtrlD:
+		t.app.Stop()
+
+		return nil
+	case tcell.KeyEscape:
+		return t.handleEscapeKey()
+	case tcell.KeyCtrlP:
+		return t.handleCtrlP()
+	case tcell.KeyTab:
+		return t.handleTabKey()
+	case tcell.KeyUp:
+		t.scrollFocusedPane(-1)
+
+		return nil
+	case tcell.KeyDown:
+		return t.handleDownKey()
+	case tcell.KeyPgUp:
+		t.scrollFocusedPane(-10)
+
+		return nil
+	case tcell.KeyPgDn:
+		t.scrollFocusedPane(10)
+
+		return nil
+	case tcell.KeyEnter:
+		return t.handleEnterKey(event)
+	default:
+		return event
+	}
 }
 
 func (t *tuiApp) scrollFocusedPane(delta int) {
@@ -231,72 +280,94 @@ func (t *tuiApp) setupMouseCapture() {
 	t.app.SetMouseCapture(func(event *tcell.EventMouse, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
 		mx, my := event.Position()
 
-		switch action { //nolint:exhaustive
+		switch action {
 		case tview.MouseScrollUp, tview.MouseScrollDown:
-			delta := 3
-			if action == tview.MouseScrollUp {
-				delta = -3
-			}
-
-			// Determine which pane based on X coordinate
-			if t.filePath != "" && t.fileView != nil {
-				fx, _, fw, _ := t.fileView.GetRect()
-				if mx >= fx && mx < fx+fw {
-					row, col := t.fileView.GetScrollOffset()
-					newRow := row + delta
-					if newRow < 0 {
-						newRow = 0
-					}
-					t.fileView.ScrollTo(newRow, col)
-
-					return nil, 0
-				}
-			}
-
-			cx, _, cw, _ := t.chatView.GetRect()
-			if mx >= cx && mx < cx+cw {
-				row, col := t.chatView.GetScrollOffset()
-				newRow := row + delta
-				if newRow < 0 {
-					newRow = 0
-				}
-				t.chatView.ScrollTo(newRow, col)
-
-				return nil, 0
-			}
-
+			return t.handleMouseScroll(event, mx, action)
 		case tview.MouseLeftClick:
-			// Check if click is in chat area for tool call click-to-open
-			cx, cy, cw, ch := t.chatView.GetRect()
-			if mx >= cx && mx < cx+cw && my >= cy && my < cy+ch { //nolint:nestif
-				row, _ := t.chatView.GetScrollOffset()
-				displayLine := row + (my - cy)
-				logicalLine := t.displayLineToLogicalLine(displayLine)
-				if logicalLine >= 0 {
-					if call, ok := t.toolCallLines[logicalLine]; ok {
-						path := extractFilePath(call)
-						if path != "" {
-							t.focus = focusFileViewer
-							go t.loadFileViewer(path)
-
-							return nil, 0
-						}
-					}
-				}
-				t.focus = focusChat
-			}
-
-			// Click in file viewer area
-			if t.filePath != "" && t.fileView != nil {
-				fx, fy, fw, fh := t.fileView.GetRect()
-				if mx >= fx && mx < fx+fw && my >= fy && my < fy+fh {
-					t.focus = focusFileViewer
-				}
-			}
+			t.handleMouseLeftClick(mx, my)
+		default:
+			// other mouse actions pass through unchanged
 		}
 
 		return event, action
 	})
+}
+
+// handleMouseScroll handles scroll-wheel events, routing to the correct pane.
+func (t *tuiApp) handleMouseScroll(event *tcell.EventMouse, mx int, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
+	delta := 3
+	if action == tview.MouseScrollUp {
+		delta = -3
+	}
+
+	if t.filePath != "" && t.fileView != nil {
+		fx, _, fw, _ := t.fileView.GetRect()
+		if mx >= fx && mx < fx+fw {
+			row, col := t.fileView.GetScrollOffset()
+			newRow := row + delta
+			if newRow < 0 {
+				newRow = 0
+			}
+			t.fileView.ScrollTo(newRow, col)
+
+			return nil, 0
+		}
+	}
+
+	cx, _, cw, _ := t.chatView.GetRect()
+	if mx >= cx && mx < cx+cw {
+		row, col := t.chatView.GetScrollOffset()
+		newRow := row + delta
+		if newRow < 0 {
+			newRow = 0
+		}
+		t.chatView.ScrollTo(newRow, col)
+
+		return nil, 0
+	}
+
+	return event, tview.MouseAction(0)
+}
+
+// handleMouseLeftClick handles left-click events for focus management and tool-call open.
+func (t *tuiApp) handleMouseLeftClick(mx, my int) {
+	cx, cy, cw, ch := t.chatView.GetRect()
+	if mx >= cx && mx < cx+cw && my >= cy && my < cy+ch {
+		t.handleChatViewClick(mx, my, cx, cy)
+
+		return
+	}
+
+	if t.filePath != "" && t.fileView != nil {
+		fx, fy, fw, fh := t.fileView.GetRect()
+		if mx >= fx && mx < fx+fw && my >= fy && my < fy+fh {
+			t.focus = focusFileViewer
+		}
+	}
+}
+
+// handleChatViewClick processes a click inside the chat view area.
+func (t *tuiApp) handleChatViewClick(mx, my, cx, cy int) {
+	row, _ := t.chatView.GetScrollOffset()
+	displayLine := row + (my - cy)
+	logicalLine := t.displayLineToLogicalLine(displayLine)
+
+	if logicalLine >= 0 {
+		if call, ok := t.toolCallLines[logicalLine]; ok {
+			path := extractFilePath(call)
+			if path != "" {
+				t.focus = focusFileViewer
+				go t.loadFileViewer(path)
+
+				return
+			}
+		}
+	}
+
+	t.focus = focusChat
+
+	// mx is unused once we are inside the chat bounds, but keep signature consistent.
+	_ = mx
 }
 
 // ── Enter Handler ──────────────────────────────────────────────────────

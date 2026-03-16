@@ -39,37 +39,42 @@ func handleTestSSHConn(c net.Conn, cfg *ssh.ServerConfig) {
 func handleTestSSHSession(ch ssh.Channel, requests <-chan *ssh.Request) {
 	defer func() { _ = ch.Close() }()
 	for req := range requests {
-		if req.Type == "exec" { //nolint:nestif
-			// Parse command from payload (4-byte length prefix + command string)
-			if len(req.Payload) < 4 {
-				if req.WantReply {
-					_ = req.Reply(false, nil)
-				}
-
-				continue
-			}
-			cmdLen := int(req.Payload[0])<<24 | int(req.Payload[1])<<16 | int(req.Payload[2])<<8 | int(req.Payload[3])
-			if len(req.Payload) < 4+cmdLen {
-				if req.WantReply {
-					_ = req.Reply(false, nil)
-				}
-
-				continue
-			}
-			cmd := string(req.Payload[4 : 4+cmdLen])
+		if req.Type != "exec" {
 			if req.WantReply {
-				_ = req.Reply(true, nil)
+				_ = req.Reply(false, nil)
 			}
-			_, _ = io.WriteString(ch, "output: "+cmd+"\n")
-			// Send exit status 0
-			exitStatus := []byte{0, 0, 0, 0}
-			_, _ = ch.SendRequest("exit-status", false, exitStatus)
 
-			return
+			continue
 		}
+
+		// Parse command from payload (4-byte length prefix + command string)
+		if len(req.Payload) < 4 {
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+
+			continue
+		}
+
+		cmdLen := int(req.Payload[0])<<24 | int(req.Payload[1])<<16 | int(req.Payload[2])<<8 | int(req.Payload[3])
+		if len(req.Payload) < 4+cmdLen {
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+
+			continue
+		}
+
+		cmd := string(req.Payload[4 : 4+cmdLen])
 		if req.WantReply {
-			_ = req.Reply(false, nil)
+			_ = req.Reply(true, nil)
 		}
+		_, _ = io.WriteString(ch, "output: "+cmd+"\n")
+		// Send exit status 0
+		exitStatus := []byte{0, 0, 0, 0}
+		_, _ = ch.SendRequest("exit-status", false, exitStatus)
+
+		return
 	}
 }
 

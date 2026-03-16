@@ -21,29 +21,45 @@ import (
 func (t *tuiApp) updateStatusBar() {
 	ctx := t.contextUsageString()
 
-	if t.processing && t.statusText != "" { //nolint:nestif
-		tokenInfo := ""
-		if t.lastInputTokens > 0 {
-			tokenInfo = " | ~" + formatTokenCount(t.lastInputTokens) + " in"
-		}
-		bar := ""
-		if !t.iterStartTime.IsZero() {
-			elapsed := time.Since(t.iterStartTime)
-			bar = " " + renderProgressBar(elapsed, t.estimatedDur)
-		}
-		t.statusBar.SetText(" [gray::-]" + tview.Escape(t.statusText+tokenInfo) + "[-:-:-] " + bar + ctx)
-	} else if t.lastInputTokens > 0 || t.lastOutputTokens > 0 {
-		parts := []string{}
-		if t.lastInputTokens > 0 {
-			parts = append(parts, "~"+formatTokenCount(t.lastInputTokens)+" in")
-		}
-		if t.lastOutputTokens > 0 {
-			parts = append(parts, "~"+formatTokenCount(t.lastOutputTokens)+" out")
-		}
-		t.statusBar.SetText(" [gray::-]" + strings.Join(parts, " / ") + "[-:-:-]" + ctx)
-	} else {
+	switch {
+	case t.processing && t.statusText != "":
+		t.statusBar.SetText(" [gray::-]" + tview.Escape(t.statusText+t.statusTokenInfo()) + "[-:-:-] " + t.statusProgressBar() + ctx)
+	case t.lastInputTokens > 0 || t.lastOutputTokens > 0:
+		t.statusBar.SetText(" [gray::-]" + strings.Join(t.statusTokenParts(), " / ") + "[-:-:-]" + ctx)
+	default:
 		t.statusBar.SetText(ctx)
 	}
+}
+
+// statusTokenInfo returns the " | ~Nk in" portion of the status bar, or "".
+func (t *tuiApp) statusTokenInfo() string {
+	if t.lastInputTokens > 0 {
+		return " | ~" + formatTokenCount(t.lastInputTokens) + " in"
+	}
+
+	return ""
+}
+
+// statusProgressBar returns the progress bar string, or "".
+func (t *tuiApp) statusProgressBar() string {
+	if t.iterStartTime.IsZero() {
+		return ""
+	}
+
+	return renderProgressBar(time.Since(t.iterStartTime), t.estimatedDur)
+}
+
+// statusTokenParts builds the token in/out display parts.
+func (t *tuiApp) statusTokenParts() []string {
+	var parts []string
+	if t.lastInputTokens > 0 {
+		parts = append(parts, "~"+formatTokenCount(t.lastInputTokens)+" in")
+	}
+	if t.lastOutputTokens > 0 {
+		parts = append(parts, "~"+formatTokenCount(t.lastOutputTokens)+" out")
+	}
+
+	return parts
 }
 
 func (t *tuiApp) contextUsageString() string {

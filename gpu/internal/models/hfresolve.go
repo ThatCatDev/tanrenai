@@ -69,34 +69,18 @@ func ResolveHFModel(ref string) ([]string, error) {
 	}
 
 	// If quant specified, filter by subfolder or filename match
-	if quant != "" { //nolint:nestif
-		var matched []HFFileInfo
-		// Try subfolder match first (e.g. "UD-Q4_K_XL/file.gguf")
-		for _, f := range ggufFiles {
-			if strings.HasPrefix(f.Filename, quant+"/") {
-				matched = append(matched, f)
-			}
+	var filtered []HFFileInfo
+	var filterErr error
+	if quant != "" {
+		filtered, filterErr = filterByQuant(ggufFiles, quant, repo)
+		if filterErr != nil {
+			return nil, filterErr
 		}
-		// Fall back to filename substring match
-		if len(matched) == 0 {
-			needle := strings.ToLower(quant)
-			for _, f := range ggufFiles {
-				if strings.Contains(strings.ToLower(f.Filename), needle) {
-					matched = append(matched, f)
-				}
-			}
-		}
-		if len(matched) == 0 {
-			// List available quants
-			quants := availableQuants(ggufFiles)
-
-			return nil, fmt.Errorf("no GGUF files matching %q in %s\navailable: %s", quant, repo, strings.Join(quants, ", "))
-		}
-		ggufFiles = matched
 	} else {
 		// No quant specified — pick the best single file or smallest quant
-		ggufFiles = pickBestQuant(ggufFiles)
+		filtered = pickBestQuant(ggufFiles)
 	}
+	ggufFiles = filtered
 
 	// Build download URLs
 	sort.Slice(ggufFiles, func(i, j int) bool {
@@ -109,6 +93,36 @@ func ResolveHFModel(ref string) ([]string, error) {
 	}
 
 	return urls, nil
+}
+
+// filterByQuant filters ggufFiles to those matching the given quant specifier.
+// It first tries a subfolder prefix match (e.g. "UD-Q4_K_XL/"), then falls
+// back to a case-insensitive filename substring match. Returns an error listing
+// available quants if no match is found.
+func filterByQuant(ggufFiles []HFFileInfo, quant, repo string) ([]HFFileInfo, error) {
+	var matched []HFFileInfo
+	// Try subfolder match first (e.g. "UD-Q4_K_XL/file.gguf")
+	for _, f := range ggufFiles {
+		if strings.HasPrefix(f.Filename, quant+"/") {
+			matched = append(matched, f)
+		}
+	}
+	// Fall back to filename substring match
+	if len(matched) == 0 {
+		needle := strings.ToLower(quant)
+		for _, f := range ggufFiles {
+			if strings.Contains(strings.ToLower(f.Filename), needle) {
+				matched = append(matched, f)
+			}
+		}
+	}
+	if len(matched) == 0 {
+		quants := availableQuants(ggufFiles)
+
+		return nil, fmt.Errorf("no GGUF files matching %q in %s\navailable: %s", quant, repo, strings.Join(quants, ", "))
+	}
+
+	return matched, nil
 }
 
 func listHFFiles(repo string) ([]HFFileInfo, error) {

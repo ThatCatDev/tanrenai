@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -259,7 +260,11 @@ func TestListHFFiles_BadJSON(t *testing.T) {
 // fetchHFFilesFromURL is a helper that tests the HTTP parsing part of listHFFiles.
 // It makes a GET request and parses the same JSON structure.
 func fetchHFFilesFromURL(url string) ([]HFFileInfo, error) {
-	resp, err := http.Get(url) //nolint:noctx
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

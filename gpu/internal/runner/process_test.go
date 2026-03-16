@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"testing"
 )
 
@@ -60,7 +61,7 @@ func TestProcessRunner_Close_IdempotentStopMonitor(t *testing.T) {
 
 func TestProcessRunner_Health_NoSubprocess(t *testing.T) {
 	r := NewProcessRunner()
-	err := r.Health(nil) //nolint:staticcheck
+	err := r.Health(context.Background())
 	if err == nil {
 		t.Fatal("Health without subprocess should return error")
 	}

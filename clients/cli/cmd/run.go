@@ -699,29 +699,55 @@ func loadContextFile(mgr *chatctx.Manager, path string) (string, error) {
 	return fmt.Sprintf("Loaded context file: %s (%d bytes)", path, len(data)), nil
 }
 
-//nolint:gocyclo
 func handleREPLCommand(w io.Writer, input string, mgr *chatctx.Manager, client *apiclient.Client, memoryEnabled bool) bool {
 	switch {
 	case input == "/clear":
-		mgr.Clear()
-		_, _ = fmt.Fprintln(w, "History cleared. System prompt and context files preserved.")
-
-		return true
-
+		return handleClearCommand(w, mgr)
 	case input == "/tokens":
-		budget := mgr.Budget()
-		_, _ = fmt.Fprintf(w, "Token budget:\n")
-		_, _ = fmt.Fprintf(w, "  Total context:  %d\n", budget.Total)
-		_, _ = fmt.Fprintf(w, "  System/pinned:  %d\n", budget.System)
-		_, _ = fmt.Fprintf(w, "  Scrolls:        %d\n", budget.Scrolls)
-		_, _ = fmt.Fprintf(w, "  Memory:         %d\n", budget.Memory)
-		_, _ = fmt.Fprintf(w, "  Summary:        %d\n", budget.Summary)
-		_, _ = fmt.Fprintf(w, "  History:        %d (%d messages, %d total)\n", budget.History, budget.HistoryCount, budget.TotalHistory)
-		_, _ = fmt.Fprintf(w, "  Available:      %d\n", budget.Available)
+		return handleTokensCommand(w, mgr)
+	case input == "/context list", input == "/context clear":
+		return handleContextCommand(w, input, mgr)
+	case strings.HasPrefix(input, "/context add "):
+		return handleContextCommand(w, input, mgr)
+	case input == "/memory" || input == "/memory list":
+		return handleMemoryListCommand(w, client, memoryEnabled)
+	case strings.HasPrefix(input, "/memory search "):
+		return handleMemorySearchCommand(w, input, client, memoryEnabled)
+	case strings.HasPrefix(input, "/memory forget "):
+		return handleMemoryForgetCommand(w, input, client, memoryEnabled)
+	case input == "/memory clear":
+		return handleMemoryClearCommand(w, client, memoryEnabled)
+	case input == "/help":
+		return handleHelpCommand(w)
+	}
 
-		return true
+	return false
+}
 
-	case input == "/context list":
+func handleClearCommand(w io.Writer, mgr *chatctx.Manager) bool {
+	mgr.Clear()
+	_, _ = fmt.Fprintln(w, "History cleared. System prompt and context files preserved.")
+
+	return true
+}
+
+func handleTokensCommand(w io.Writer, mgr *chatctx.Manager) bool {
+	budget := mgr.Budget()
+	_, _ = fmt.Fprintf(w, "Token budget:\n")
+	_, _ = fmt.Fprintf(w, "  Total context:  %d\n", budget.Total)
+	_, _ = fmt.Fprintf(w, "  System/pinned:  %d\n", budget.System)
+	_, _ = fmt.Fprintf(w, "  Scrolls:        %d\n", budget.Scrolls)
+	_, _ = fmt.Fprintf(w, "  Memory:         %d\n", budget.Memory)
+	_, _ = fmt.Fprintf(w, "  Summary:        %d\n", budget.Summary)
+	_, _ = fmt.Fprintf(w, "  History:        %d (%d messages, %d total)\n", budget.History, budget.HistoryCount, budget.TotalHistory)
+	_, _ = fmt.Fprintf(w, "  Available:      %d\n", budget.Available)
+
+	return true
+}
+
+func handleContextCommand(w io.Writer, input string, mgr *chatctx.Manager) bool {
+	switch input {
+	case "/context list":
 		files := mgr.ContextFiles()
 		if len(files) == 0 {
 			_, _ = fmt.Fprintln(w, "No context files loaded.")
@@ -734,13 +760,14 @@ func handleREPLCommand(w io.Writer, input string, mgr *chatctx.Manager, client *
 
 		return true
 
-	case input == "/context clear":
+	case "/context clear":
 		mgr.ClearContextFiles()
 		_, _ = fmt.Fprintln(w, "Context files cleared.")
 
 		return true
 
-	case strings.HasPrefix(input, "/context add "):
+	default:
+		// "/context add <path>"
 		path := strings.TrimPrefix(input, "/context add ")
 		path = strings.TrimSpace(path)
 		if path == "" {
@@ -756,127 +783,130 @@ func handleREPLCommand(w io.Writer, input string, mgr *chatctx.Manager, client *
 		}
 
 		return true
+	}
+}
 
-	case input == "/memory" || input == "/memory list":
-		if !memoryEnabled {
-			_, _ = fmt.Fprintln(w, "Memory is not enabled. Use --memory flag to enable.")
-
-			return true
-		}
-		resp, err := client.MemoryList(context.Background(), 10)
-		if err != nil {
-			_, _ = fmt.Fprintf(w, "Error listing memories: %v\n", err)
-
-			return true
-		}
-		_, _ = fmt.Fprintf(w, "Memories (%d total):\n", resp.Total)
-		for _, e := range resp.Entries {
-			_, _ = fmt.Fprintf(w, "  [%s] %s — %s\n", e.ID[:8], e.Timestamp.Format("2006-01-02 15:04"), truncate(e.UserMsg, 80))
-		}
-
-		return true
-
-	case strings.HasPrefix(input, "/memory search "):
-		if !memoryEnabled {
-			_, _ = fmt.Fprintln(w, "Memory is not enabled. Use --memory flag to enable.")
-
-			return true
-		}
-		query := strings.TrimPrefix(input, "/memory search ")
-		query = strings.TrimSpace(query)
-		if query == "" {
-			_, _ = fmt.Fprintln(w, "Usage: /memory search <query>")
-
-			return true
-		}
-		resp, err := client.MemorySearch(context.Background(), query, 5)
-		if err != nil {
-			_, _ = fmt.Fprintf(w, "Error searching memories: %v\n", err)
-
-			return true
-		}
-		if len(resp.Results) == 0 {
-			_, _ = fmt.Fprintln(w, "No matching memories found.")
-
-			return true
-		}
-		_, _ = fmt.Fprintf(w, "Search results (%d):\n", len(resp.Results))
-		for _, r := range resp.Results {
-			_, _ = fmt.Fprintf(w, "  [%s] score=%.3f (sem=%.3f kw=%.3f) %s\n",
-				r.Entry.ID[:8], r.CombinedScore, r.SemanticScore, r.KeywordScore,
-				truncate(r.Entry.UserMsg, 70))
-		}
-
-		return true
-
-	case strings.HasPrefix(input, "/memory forget "):
-		if !memoryEnabled {
-			_, _ = fmt.Fprintln(w, "Memory is not enabled. Use --memory flag to enable.")
-
-			return true
-		}
-		idPrefix := strings.TrimPrefix(input, "/memory forget ")
-		idPrefix = strings.TrimSpace(idPrefix)
-		if idPrefix == "" {
-			_, _ = fmt.Fprintln(w, "Usage: /memory forget <id-prefix>")
-
-			return true
-		}
-		resp, err := client.MemoryList(context.Background(), 0)
-		if err != nil {
-			_, _ = fmt.Fprintf(w, "Error: %v\n", err)
-
-			return true
-		}
-		for _, e := range resp.Entries {
-			if strings.HasPrefix(e.ID, idPrefix) {
-				if err := client.MemoryDelete(context.Background(), e.ID); err != nil {
-					_, _ = fmt.Fprintf(w, "Error deleting memory: %v\n", err)
-				} else {
-					_, _ = fmt.Fprintf(w, "Deleted memory %s\n", e.ID[:8])
-				}
-
-				return true
-			}
-		}
-		_, _ = fmt.Fprintf(w, "No memory found with prefix %q\n", idPrefix)
-
-		return true
-
-	case input == "/memory clear":
-		if !memoryEnabled {
-			_, _ = fmt.Fprintln(w, "Memory is not enabled. Use --memory flag to enable.")
-
-			return true
-		}
-		if err := client.MemoryClear(context.Background()); err != nil {
-			_, _ = fmt.Fprintf(w, "Error clearing memories: %v\n", err)
-		} else {
-			_, _ = fmt.Fprintln(w, "All memories cleared.")
-		}
-
-		return true
-
-	case input == "/help":
-		_, _ = fmt.Fprintln(w, "Commands:")
-		_, _ = fmt.Fprintln(w, "  /clear                        - Clear conversation history")
-		_, _ = fmt.Fprintln(w, "  /compact                      - Summarize conversation to free context")
-		_, _ = fmt.Fprintln(w, "  /tokens                       - Show token budget breakdown")
-		_, _ = fmt.Fprintln(w, "  /context add <path>           - Load file into context")
-		_, _ = fmt.Fprintln(w, "  /context list                 - Show loaded context files")
-		_, _ = fmt.Fprintln(w, "  /context clear                - Remove all context files")
-		_, _ = fmt.Fprintln(w, "  /memory                       - List recent memories")
-		_, _ = fmt.Fprintln(w, "  /memory search <q>            - Search memories")
-		_, _ = fmt.Fprintln(w, "  /memory forget <id>           - Delete a memory by ID prefix")
-		_, _ = fmt.Fprintln(w, "  /memory clear                 - Clear all memories")
-		_, _ = fmt.Fprintln(w, "  /scrolls                      - List loaded scrolls")
-		_, _ = fmt.Fprintln(w, "  /scrolls show <name>          - Show a scroll's content")
-		_, _ = fmt.Fprintln(w, "  /quit, /exit                  - Exit")
+func handleMemoryListCommand(w io.Writer, client *apiclient.Client, memoryEnabled bool) bool {
+	if !memoryEnabled {
+		_, _ = fmt.Fprintln(w, "Memory is not enabled. Use --memory flag to enable.")
 
 		return true
 	}
+	resp, err := client.MemoryList(context.Background(), 10)
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "Error listing memories: %v\n", err)
 
-	return false
+		return true
+	}
+	_, _ = fmt.Fprintf(w, "Memories (%d total):\n", resp.Total)
+	for _, e := range resp.Entries {
+		_, _ = fmt.Fprintf(w, "  [%s] %s — %s\n", e.ID[:8], e.Timestamp.Format("2006-01-02 15:04"), truncate(e.UserMsg, 80))
+	}
+
+	return true
+}
+
+func handleMemorySearchCommand(w io.Writer, input string, client *apiclient.Client, memoryEnabled bool) bool {
+	if !memoryEnabled {
+		_, _ = fmt.Fprintln(w, "Memory is not enabled. Use --memory flag to enable.")
+
+		return true
+	}
+	query := strings.TrimPrefix(input, "/memory search ")
+	query = strings.TrimSpace(query)
+	if query == "" {
+		_, _ = fmt.Fprintln(w, "Usage: /memory search <query>")
+
+		return true
+	}
+	resp, err := client.MemorySearch(context.Background(), query, 5)
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "Error searching memories: %v\n", err)
+
+		return true
+	}
+	if len(resp.Results) == 0 {
+		_, _ = fmt.Fprintln(w, "No matching memories found.")
+
+		return true
+	}
+	_, _ = fmt.Fprintf(w, "Search results (%d):\n", len(resp.Results))
+	for _, r := range resp.Results {
+		_, _ = fmt.Fprintf(w, "  [%s] score=%.3f (sem=%.3f kw=%.3f) %s\n",
+			r.Entry.ID[:8], r.CombinedScore, r.SemanticScore, r.KeywordScore,
+			truncate(r.Entry.UserMsg, 70))
+	}
+
+	return true
+}
+
+func handleMemoryForgetCommand(w io.Writer, input string, client *apiclient.Client, memoryEnabled bool) bool {
+	if !memoryEnabled {
+		_, _ = fmt.Fprintln(w, "Memory is not enabled. Use --memory flag to enable.")
+
+		return true
+	}
+	idPrefix := strings.TrimPrefix(input, "/memory forget ")
+	idPrefix = strings.TrimSpace(idPrefix)
+	if idPrefix == "" {
+		_, _ = fmt.Fprintln(w, "Usage: /memory forget <id-prefix>")
+
+		return true
+	}
+	resp, err := client.MemoryList(context.Background(), 0)
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "Error: %v\n", err)
+
+		return true
+	}
+	for _, e := range resp.Entries {
+		if strings.HasPrefix(e.ID, idPrefix) {
+			if err := client.MemoryDelete(context.Background(), e.ID); err != nil {
+				_, _ = fmt.Fprintf(w, "Error deleting memory: %v\n", err)
+			} else {
+				_, _ = fmt.Fprintf(w, "Deleted memory %s\n", e.ID[:8])
+			}
+
+			return true
+		}
+	}
+	_, _ = fmt.Fprintf(w, "No memory found with prefix %q\n", idPrefix)
+
+	return true
+}
+
+func handleMemoryClearCommand(w io.Writer, client *apiclient.Client, memoryEnabled bool) bool {
+	if !memoryEnabled {
+		_, _ = fmt.Fprintln(w, "Memory is not enabled. Use --memory flag to enable.")
+
+		return true
+	}
+	if err := client.MemoryClear(context.Background()); err != nil {
+		_, _ = fmt.Fprintf(w, "Error clearing memories: %v\n", err)
+	} else {
+		_, _ = fmt.Fprintln(w, "All memories cleared.")
+	}
+
+	return true
+}
+
+func handleHelpCommand(w io.Writer) bool {
+	_, _ = fmt.Fprintln(w, "Commands:")
+	_, _ = fmt.Fprintln(w, "  /clear                        - Clear conversation history")
+	_, _ = fmt.Fprintln(w, "  /compact                      - Summarize conversation to free context")
+	_, _ = fmt.Fprintln(w, "  /tokens                       - Show token budget breakdown")
+	_, _ = fmt.Fprintln(w, "  /context add <path>           - Load file into context")
+	_, _ = fmt.Fprintln(w, "  /context list                 - Show loaded context files")
+	_, _ = fmt.Fprintln(w, "  /context clear                - Remove all context files")
+	_, _ = fmt.Fprintln(w, "  /memory                       - List recent memories")
+	_, _ = fmt.Fprintln(w, "  /memory search <q>            - Search memories")
+	_, _ = fmt.Fprintln(w, "  /memory forget <id>           - Delete a memory by ID prefix")
+	_, _ = fmt.Fprintln(w, "  /memory clear                 - Clear all memories")
+	_, _ = fmt.Fprintln(w, "  /scrolls                      - List loaded scrolls")
+	_, _ = fmt.Fprintln(w, "  /scrolls show <name>          - Show a scroll's content")
+	_, _ = fmt.Fprintln(w, "  /quit, /exit                  - Exit")
+
+	return true
 }
 
 func truncate(s string, max int) string {

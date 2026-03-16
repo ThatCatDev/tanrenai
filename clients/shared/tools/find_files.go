@@ -59,9 +59,13 @@ func (t *FindFilesTool) Execute(_ context.Context, arguments string) (*ToolResul
 	var b strings.Builder
 	count := 0
 
-	err := filepath.Walk(args.Path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil //nolint:nilerr // intentionally skip walk errors
+	err := filepath.Walk(args.Path, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			if info != nil && info.IsDir() {
+				return filepath.SkipDir // skip unreadable directories
+			}
+
+			return nil // skip unreadable files
 		}
 		if count >= args.MaxResults {
 			return filepath.SkipAll
