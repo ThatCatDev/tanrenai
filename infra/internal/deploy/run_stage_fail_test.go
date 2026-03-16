@@ -7,15 +7,18 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/ThatCatDev/tanrenai/infra/internal/config"
 	"github.com/ThatCatDev/tanrenai/infra/internal/network"
@@ -35,17 +38,40 @@ func startFailingSSHServer(t *testing.T) (*failingSSHServer, string, int) {
 	if err != nil {
 		t.Fatalf("generate host key: %v", err)
 	}
-	hostSigner, err := ssh.NewSignerFromKey(hostPrivKey)
+	hostSigner, err := gossh.NewSignerFromKey(hostPrivKey)
 	if err != nil {
 		t.Fatalf("create host signer: %v", err)
 	}
 
-	cfg := &ssh.ServerConfig{
-		PublicKeyCallback: func(_ ssh.ConnMetadata, _ ssh.PublicKey) (*ssh.Permissions, error) {
+	cfg := &gossh.ServerConfig{
+		PublicKeyCallback: func(_ gossh.ConnMetadata, _ gossh.PublicKey) (*gossh.Permissions, error) {
 			return nil, nil
 		},
 	}
 	cfg.AddHostKey(hostSigner)
+
+	// Generate a client key pair and write it to a temp dir so that
+	// remote.Connect() → loadSSHKey() finds a valid key on CI runners.
+	_, clientPrivKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	pemBlock, err := gossh.MarshalPrivateKey(clientPrivKey, "")
+	if err != nil {
+		t.Fatalf("marshal client private key: %v", err)
+	}
+	pemBytes := pem.EncodeToMemory(pemBlock)
+
+	tmpDir := t.TempDir()
+	sshDir := filepath.Join(tmpDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	keyPath := filepath.Join(sshDir, "id_ed25519")
+	if err := os.WriteFile(keyPath, pemBytes, 0o600); err != nil {
+		t.Fatalf("write client key: %v", err)
+	}
+	t.Setenv("HOME", tmpDir)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -79,17 +105,17 @@ func startFailingSSHServer(t *testing.T) (*failingSSHServer, string, int) {
 	return s, host, port
 }
 
-func (s *failingSSHServer) handleConn(c net.Conn, cfg *ssh.ServerConfig) {
-	sconn, chans, reqs, err := ssh.NewServerConn(c, cfg)
+func (s *failingSSHServer) handleConn(c net.Conn, cfg *gossh.ServerConfig) {
+	sconn, chans, reqs, err := gossh.NewServerConn(c, cfg)
 	if err != nil {
 		return
 	}
 	defer func() { _ = sconn.Close() }()
-	go ssh.DiscardRequests(reqs)
+	go gossh.DiscardRequests(reqs)
 
 	for newChan := range chans {
 		if newChan.ChannelType() != "session" {
-			_ = newChan.Reject(ssh.UnknownChannelType, "unknown channel type")
+			_ = newChan.Reject(gossh.UnknownChannelType, "unknown channel type")
 
 			continue
 		}
@@ -101,7 +127,7 @@ func (s *failingSSHServer) handleConn(c net.Conn, cfg *ssh.ServerConfig) {
 	}
 }
 
-func (s *failingSSHServer) handleFailingSession(ch ssh.Channel, requests <-chan *ssh.Request) {
+func (s *failingSSHServer) handleFailingSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 	defer func() { _ = ch.Close() }()
 	for req := range requests {
 		if req.Type == "exec" {
