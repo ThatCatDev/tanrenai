@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -269,5 +270,126 @@ func TestSearchMemoryOversizedBody(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for oversized body, got %d", w.Code)
+	}
+}
+
+func TestDeleteMemoryNotFound(t *testing.T) {
+	h := newTestHandler(t)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /v1/memory/{id}", h.Delete)
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/memory/nonexistent-id", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for nonexistent ID, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestListMemoryWithLimit(t *testing.T) {
+	h := newTestHandler(t)
+
+	for i := 0; i < 5; i++ {
+		storeEntry(t, h, "msg", "resp")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/memory/list?limit=3", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("list returned status %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.MemoryListResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(resp.Entries) != 3 {
+		t.Errorf("expected 3 entries with limit=3, got %d", len(resp.Entries))
+	}
+}
+
+func TestStoreMemoryBadJSON(t *testing.T) {
+	h := newTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/memory/store", bytes.NewReader([]byte(`{bad json`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Store(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad JSON, got %d", w.Code)
+	}
+}
+
+func TestSearchMemoryBadJSON(t *testing.T) {
+	h := newTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/memory/search", bytes.NewReader([]byte(`{bad json`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Search(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad JSON, got %d", w.Code)
+	}
+}
+
+// errStore is a Store implementation that returns errors for testing writeMemoryError.
+type errStore struct {
+	err error
+}
+
+func (s *errStore) Add(_ context.Context, _ *memory.Entry) error { return s.err }
+func (s *errStore) Search(_ context.Context, _ string, _ int) ([]memory.SearchResult, error) {
+	return nil, s.err
+}
+func (s *errStore) List(_ context.Context, _ int) ([]memory.Entry, error) { return nil, s.err }
+func (s *errStore) Delete(_ context.Context, _ string) error              { return s.err }
+func (s *errStore) Clear(_ context.Context) error                         { return s.err }
+func (s *errStore) Count() int                                            { return 0 }
+func (s *errStore) Close() error                                          { return nil }
+
+func TestWriteMemoryErrorNotFound(t *testing.T) {
+	h := &MemoryHandler{MemStore: &errStore{err: memory.ErrNotFound}}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /v1/memory/{id}", h.Delete)
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/memory/any-id", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for ErrNotFound, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestWriteMemoryErrorEmpty(t *testing.T) {
+	h := &MemoryHandler{MemStore: &errStore{err: memory.ErrEmpty}}
+
+	body, _ := json.Marshal(api.MemorySearchRequest{Query: "test"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/memory/search", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Search(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for ErrEmpty, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestWriteMemoryErrorGeneric(t *testing.T) {
+	h := &MemoryHandler{MemStore: &errStore{err: errors.New("some internal error")}}
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/memory", nil)
+	w := httptest.NewRecorder()
+	h.Clear(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for generic error, got %d: %s", w.Code, w.Body.String())
 	}
 }

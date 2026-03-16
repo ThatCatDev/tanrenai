@@ -11,7 +11,6 @@ import (
 	"github.com/ThatCatDev/tanrenai/infra/internal/config"
 	"github.com/ThatCatDev/tanrenai/infra/internal/deploy"
 	"github.com/ThatCatDev/tanrenai/infra/internal/network"
-	"github.com/ThatCatDev/tanrenai/infra/internal/vastai"
 )
 
 var deployCmd = &cobra.Command{
@@ -129,7 +128,7 @@ func runDeploy(cmd *cobra.Command, args []string) {
 
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
-	client := vastai.NewClient(cfg.VastaiAPIKey)
+	client := newVastaiClient(cfg.VastaiAPIKey)
 	deployer := deploy.New(client, netProvider, cfg, os.Stdout, verbose)
 
 	result, err := deployer.Run(ctx)

@@ -16,6 +16,10 @@ type HFFileInfo struct {
 	Size     int64  `json:"size"`
 }
 
+// hfAPIBaseURL is the base URL for the HuggingFace API.
+// It can be overridden in tests.
+var hfAPIBaseURL = "https://huggingface.co"
+
 // ResolveHFModel resolves a HuggingFace model reference into direct download URLs.
 // Accepts formats:
 //   - hf://owner/repo                          → find best single GGUF
@@ -108,7 +112,7 @@ func ResolveHFModel(ref string) ([]string, error) {
 }
 
 func listHFFiles(repo string) ([]HFFileInfo, error) {
-	url := fmt.Sprintf("https://huggingface.co/api/models/%s", repo)
+	url := fmt.Sprintf("%s/api/models/%s", hfAPIBaseURL, repo)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {

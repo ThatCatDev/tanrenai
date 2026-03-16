@@ -43,7 +43,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	client := vastai.NewClient(cfg.VastaiAPIKey)
+	client := newVastaiClient(cfg.VastaiAPIKey)
 
 	if cfg.VastaiInstance != "" {
 		inst, err := client.GetInstance(ctx, cfg.VastaiInstance)

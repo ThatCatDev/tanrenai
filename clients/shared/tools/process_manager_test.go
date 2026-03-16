@@ -169,3 +169,113 @@ func TestShellExec_ExplicitForeground(t *testing.T) {
 		t.Errorf("expected 0 processes, got %d", pm.Count())
 	}
 }
+
+func TestProcessManager_RemoveExited(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses sh")
+	}
+	pm := NewProcessManager()
+	defer pm.KillAll()
+
+	// Start a fast command that exits quickly
+	p1, err := pm.Start("echo one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Start a long-running command
+	p2, err := pm.Start("sleep 60")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for p1 to exit
+	<-pm.Done(p1.ID)
+
+	if pm.Count() != 2 {
+		t.Fatalf("expected 2 processes before RemoveExited, got %d", pm.Count())
+	}
+
+	pm.RemoveExited()
+
+	if pm.Count() != 1 {
+		t.Fatalf("expected 1 process after RemoveExited, got %d", pm.Count())
+	}
+	if pm.RunningCount() != 1 {
+		t.Fatalf("expected 1 running process after RemoveExited, got %d", pm.RunningCount())
+	}
+
+	// The remaining process should be p2 (still running)
+	procs := pm.List()
+	if procs[0].ID != p2.ID {
+		t.Errorf("expected remaining process ID %d, got %d", p2.ID, procs[0].ID)
+	}
+
+	// Cleanup
+	_ = pm.Kill(p2.ID)
+}
+
+func TestProcessManager_RemoveExitedAllExited(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses sh")
+	}
+	pm := NewProcessManager()
+
+	p1, err := pm.Start("echo a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := pm.Start("echo b")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	<-pm.Done(p1.ID)
+	<-pm.Done(p2.ID)
+
+	pm.RemoveExited()
+
+	if pm.Count() != 0 {
+		t.Errorf("expected 0 processes after removing all exited, got %d", pm.Count())
+	}
+}
+
+func TestShellExec_LegacyMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses sh")
+	}
+
+	tool := &ShellExecTool{ProcessManager: nil}
+
+	t.Run("success", func(t *testing.T) {
+		result, err := tool.Execute(context.Background(), `{"command":"echo legacy"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error: %s", result.Output)
+		}
+		if result.Output != "legacy\n" {
+			t.Errorf("got %q, want %q", result.Output, "legacy\n")
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		result, err := tool.Execute(context.Background(), `{"command":"exit 1"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.IsError {
+			t.Fatal("expected error result for failing command")
+		}
+	})
+
+	t.Run("custom_timeout", func(t *testing.T) {
+		result, err := tool.Execute(context.Background(), `{"command":"echo timed","timeout_seconds":10}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error: %s", result.Output)
+		}
+	})
+}

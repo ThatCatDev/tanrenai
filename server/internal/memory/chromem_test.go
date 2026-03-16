@@ -183,3 +183,115 @@ func TestCount(t *testing.T) {
 		t.Errorf("expected count 3, got %d", store.Count())
 	}
 }
+
+func TestClose(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Close(); err != nil {
+		t.Errorf("Close() returned error: %v", err)
+	}
+}
+
+func TestSearchEmptyStore(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	results, err := store.Search(ctx, "anything", 5)
+	if err != nil {
+		t.Fatalf("Search on empty store: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results from empty store, got %d", len(results))
+	}
+}
+
+func TestSearchEmptyQuery(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	_, err := store.Search(ctx, "", 5)
+	if err == nil {
+		t.Fatal("expected error for empty query, got nil")
+	}
+}
+
+func TestSearchDefaultLimit(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		if err := store.Add(ctx, &Entry{UserMsg: "test message", AssistMsg: "reply"}); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+	}
+
+	// limit <= 0 should default to 5
+	results, err := store.Search(ctx, "test message", 0)
+	if err != nil {
+		t.Fatalf("Search with limit 0: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("expected results, got 0")
+	}
+}
+
+func TestDeleteNotFound(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	err := store.Delete(ctx, "nonexistent-id")
+	if err == nil {
+		t.Fatal("expected error deleting nonexistent entry, got nil")
+	}
+}
+
+func TestExtractWords(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []string
+	}{
+		{"hello world", []string{"hello", "world"}},
+		{"Hi me", []string{}}, // "hi" and "me" are < 3 chars, filtered out
+		{"Hello World TEST", []string{"hello", "world", "test"}},
+		{"", []string{}},
+		// "go"(2), "is"(2) filtered; "fun"(3), "and"(3), "great"(5) kept
+		{"go is fun and great", []string{"fun", "and", "great"}},
+	}
+
+	for _, tc := range tests {
+		got := extractWords(tc.input)
+		if len(got) != len(tc.want) {
+			t.Errorf("extractWords(%q) = %v, want %v", tc.input, got, tc.want)
+
+			continue
+		}
+		for i, w := range tc.want {
+			if got[i] != w {
+				t.Errorf("extractWords(%q)[%d] = %q, want %q", tc.input, i, got[i], w)
+			}
+		}
+	}
+}
+
+func TestKeywordScore(t *testing.T) {
+	tests := []struct {
+		words   []string
+		content string
+		want    float32
+	}{
+		{[]string{"hello", "world"}, "hello world foo", 1.0},
+		{[]string{"hello", "world"}, "hello foo bar", 0.5},
+		{[]string{"hello", "world"}, "foo bar baz", 0.0},
+		{[]string{}, "anything", 0.0},
+		// keywordScore lowercases content but NOT query words; "HELLO" won't match "hello"
+		{[]string{"HELLO"}, "hello world", 0.0},
+		// lowercase query word matches lowercased content
+		{[]string{"hello"}, "HELLO WORLD", 1.0},
+	}
+
+	for _, tc := range tests {
+		got := keywordScore(tc.words, tc.content)
+		if got != tc.want {
+			t.Errorf("keywordScore(%v, %q) = %v, want %v", tc.words, tc.content, got, tc.want)
+		}
+	}
+}

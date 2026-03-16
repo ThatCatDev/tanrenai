@@ -57,6 +57,11 @@ func init() {
 	rootCmd.AddCommand(networkCmd)
 }
 
+// newHeadscaleProvider is a variable so tests can inject a mock provider.
+var newHeadscaleProvider = func(baseURL, apiKey, user string) *network.HeadscaleProvider {
+	return network.NewHeadscaleProvider(baseURL, apiKey, user)
+}
+
 func headscaleProvider(cmd *cobra.Command) *network.HeadscaleProvider {
 	cfg := config.Defaults()
 	if v, _ := cmd.Flags().GetString("headscale-url"); v != "" {
@@ -75,7 +80,7 @@ func headscaleProvider(cmd *cobra.Command) *network.HeadscaleProvider {
 		exitError("--headscale-api-key or HEADSCALE_API_KEY required")
 	}
 
-	return network.NewHeadscaleProvider(cfg.HeadscaleURL, cfg.HeadscaleAPI, cfg.HeadscaleUser)
+	return newHeadscaleProvider(cfg.HeadscaleURL, cfg.HeadscaleAPI, cfg.HeadscaleUser)
 }
 
 func runNetworkAuthKey(cmd *cobra.Command, args []string) {

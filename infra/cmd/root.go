@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/ThatCatDev/tanrenai/infra/internal/vastai"
 )
 
 var rootCmd = &cobra.Command{
@@ -20,7 +22,15 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
+// osExit is a variable so tests can replace it to avoid os.Exit.
+var osExit = os.Exit
+
 func exitError(msg string, args ...any) {
 	fmt.Fprintf(os.Stderr, "Error: "+msg+"\n", args...)
-	os.Exit(1)
+	osExit(1)
+}
+
+// newVastaiClient is a variable so tests can inject a client backed by a test server.
+var newVastaiClient = func(apiKey string) *vastai.Client {
+	return vastai.NewClient(apiKey)
 }

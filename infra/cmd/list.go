@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ThatCatDev/tanrenai/infra/internal/config"
-	"github.com/ThatCatDev/tanrenai/infra/internal/vastai"
 )
 
 var listCmd = &cobra.Command{
@@ -37,7 +36,7 @@ func runList(cmd *cobra.Command, args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	client := vastai.NewClient(cfg.VastaiAPIKey)
+	client := newVastaiClient(cfg.VastaiAPIKey)
 	instances, err := client.ListInstances(ctx)
 	if err != nil {
 		exitError("list instances: %v", err)

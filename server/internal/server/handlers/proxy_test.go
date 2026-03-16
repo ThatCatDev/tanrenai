@@ -360,3 +360,101 @@ func TestBadJSONLoadModel(t *testing.T) {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestPullModel(t *testing.T) {
+	sseData := "data: {\"status\":\"pulling\",\"completed\":50,\"total\":100}\n\ndata: {\"status\":\"done\"}\n\n"
+
+	handler, _ := newProxyTestHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pull" {
+			http.Error(w, "not found", http.StatusNotFound)
+
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseData))
+	}))
+
+	body := `{"url":"http://example.com/model.gguf"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/pull", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.PullModel(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "status") {
+		t.Errorf("response body missing SSE data, got: %s", rec.Body.String())
+	}
+}
+
+func TestPullModelBadJSON(t *testing.T) {
+	handler, _ := newProxyTestHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("GPU server should not be called for bad JSON")
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pull", strings.NewReader(`{bad json`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.PullModel(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPullModelGPUDown(t *testing.T) {
+	handler := &ProxyHandler{
+		GPUClient: gpuclient.New("http://127.0.0.1:1"),
+		Provider:  &fakeProvider{running: false},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pull", strings.NewReader(`{"url":"http://example.com/model.gguf"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.PullModel(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListModelsGPUError(t *testing.T) {
+	handler, _ := newProxyTestHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ListModels(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCompleteProxyGPUError(t *testing.T) {
+	handler, _ := newProxyTestHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`internal server error`))
+	}))
+
+	body := `{"model":"test-model","messages":[{"role":"user","content":"Hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ChatCompletions(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

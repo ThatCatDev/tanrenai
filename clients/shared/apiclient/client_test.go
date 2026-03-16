@@ -622,6 +622,242 @@ func TestCancelledContext(t *testing.T) {
 	}
 }
 
+func TestPullModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pull" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+
+		events := []string{
+			`data: {"status":"downloading","progress":50}`,
+			`data: {"status":"downloaded","progress":100}`,
+			`data: [DONE]`,
+		}
+		for _, ev := range events {
+			w.Write([]byte(ev + "\n\n"))
+			flusher.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	ch, err := c.PullModel(context.Background(), "http://example.com/model.gguf")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var events []api.PullEvent
+	for ev := range ch {
+		if ev.Err != nil {
+			t.Fatalf("unexpected event error: %v", ev.Err)
+		}
+		events = append(events, ev.Event)
+		if ev.Done {
+			break
+		}
+	}
+	// Drain channel
+	for range ch {
+	}
+
+	if len(events) == 0 {
+		t.Fatal("expected at least one event")
+	}
+	if events[0].Status != "downloading" {
+		t.Errorf("first event status = %q, want %q", events[0].Status, "downloading")
+	}
+}
+
+func TestPullModelError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("bad request"))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_, err := c.PullModel(context.Background(), "http://example.com/model.gguf")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !contains(err.Error(), "400") {
+		t.Errorf("error should contain 400, got: %s", err.Error())
+	}
+}
+
+func TestPullModelInvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		w.Write([]byte("data: {invalid json}\n\n"))
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	ch, err := c.PullModel(context.Background(), "http://example.com/model.gguf")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var gotErr error
+	for ev := range ch {
+		if ev.Err != nil {
+			gotErr = ev.Err
+		}
+	}
+	if gotErr == nil {
+		t.Error("expected parse error from invalid JSON event")
+	}
+}
+
+func TestInstanceStart(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/instance/start" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	err := c.InstanceStart(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInstanceStartError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("server error"))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	err := c.InstanceStart(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !contains(err.Error(), "500") {
+		t.Errorf("error should contain 500, got: %s", err.Error())
+	}
+}
+
+func TestInstanceStop(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/instance/stop" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	err := c.InstanceStop(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInstanceStopError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("unavailable"))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	err := c.InstanceStop(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !contains(err.Error(), "503") {
+		t.Errorf("error should contain 503, got: %s", err.Error())
+	}
+}
+
+func TestGetJSONError(t *testing.T) {
+	// Test getJSON error path via MemoryList, MemoryCount, InstanceStatus, ListModels
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("forbidden"))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+
+	t.Run("MemoryList", func(t *testing.T) {
+		_, err := c.MemoryList(context.Background(), 5)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !contains(err.Error(), "403") {
+			t.Errorf("expected 403 in error, got: %s", err.Error())
+		}
+	})
+
+	t.Run("MemoryCount", func(t *testing.T) {
+		_, err := c.MemoryCount(context.Background())
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !contains(err.Error(), "403") {
+			t.Errorf("expected 403 in error, got: %s", err.Error())
+		}
+	})
+
+	t.Run("InstanceStatus", func(t *testing.T) {
+		_, err := c.InstanceStatus(context.Background())
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !contains(err.Error(), "403") {
+			t.Errorf("expected 403 in error, got: %s", err.Error())
+		}
+	})
+
+	t.Run("LoadModel", func(t *testing.T) {
+		_, err := c.LoadModel(context.Background(), "mymodel")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !contains(err.Error(), "403") {
+			t.Errorf("expected 403 in error, got: %s", err.Error())
+		}
+	})
+}
+
+func TestConnErrorCancelledContext(t *testing.T) {
+	// Use a server that blocks so we can cancel the context
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// block until client disconnects
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := c.MemoryList(ctx, 5)
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchSubstring(s, substr)
 }

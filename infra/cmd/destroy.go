@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ThatCatDev/tanrenai/infra/internal/config"
-	"github.com/ThatCatDev/tanrenai/infra/internal/vastai"
 )
 
 var destroyCmd = &cobra.Command{
@@ -46,7 +45,7 @@ func runDestroy(cmd *cobra.Command, args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	client := vastai.NewClient(cfg.VastaiAPIKey)
+	client := newVastaiClient(cfg.VastaiAPIKey)
 
 	_, _ = fmt.Fprintf(os.Stdout, "Destroying instance %s...\n", cfg.VastaiInstance)
 	if err := client.DestroyInstance(ctx, cfg.VastaiInstance); err != nil {
