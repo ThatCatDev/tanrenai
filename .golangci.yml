@@ -1,31 +1,43 @@
 version: "2"
 
+run:
+  tests: true
+
 linters:
-  disable:
-    - errcheck
+  default: none
   enable:
+    - asciicheck
+    - errcheck
+    - exhaustive
+    - copyloopvar
+    - forbidigo
+    - gocyclo
     - govet
-    - staticcheck
-    - unused
     - ineffassign
-    - gocritic
-    - bodyclose
-    - durationcheck
-    - errname
+    - makezero
+    - misspell
+    - nakedret
+    - nestif
     - nilerr
+    - nlreturn
+    - nolintlint
+    - staticcheck
     - unconvert
+    - unused
     - wastedassign
+    - whitespace
+  settings:
+    errcheck:
+      check-blank: false
+  exclusions:
+    rules:
+      - path: _test.go
+        linters:
+          - errcheck
+    paths:
+      - .*/generated/*
 
-linters-settings:
-  gocritic:
-    enabled-checks:
-      - dupImport
-      - ifElseChain
-      - nestingReduce
-      - truncateCmp
-
-issues:
-  exclude-dirs:
-    - vendor
-  max-issues-per-linter: 20
-  max-same-issues: 5
+formatters:
+  enable:
+    - gofmt
+    - goimports
