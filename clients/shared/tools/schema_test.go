@@ -59,7 +59,7 @@ func TestMustMarshal(t *testing.T) {
 func TestMustMarshalEmptySchema(t *testing.T) {
 	s := Schema{Type: "object"}
 	raw := s.MustMarshal()
-	if raw == nil || len(raw) == 0 {
+	if len(raw) == 0 {
 		t.Fatal("expected non-empty output for minimal schema")
 	}
 

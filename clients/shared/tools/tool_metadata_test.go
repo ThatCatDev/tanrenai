@@ -20,7 +20,7 @@ func toolMetaCheck(t *testing.T, tool Tool) {
 		t.Errorf("%T.Description() returned empty string", tool)
 	}
 	params := tool.Parameters()
-	if params == nil || len(params) == 0 {
+	if len(params) == 0 {
 		t.Errorf("%T.Parameters() returned nil/empty", tool)
 	}
 	var m interface{}

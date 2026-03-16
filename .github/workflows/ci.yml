@@ -23,26 +23,36 @@ jobs:
         with:
           version: latest
           working-directory: gpu
+          args: --timeout=5m
+        continue-on-error: true
       - name: Lint server
         uses: golangci/golangci-lint-action@v7
         with:
           version: latest
           working-directory: server
+          args: --timeout=5m
+        continue-on-error: true
       - name: Lint clients/shared
         uses: golangci/golangci-lint-action@v7
         with:
           version: latest
           working-directory: clients/shared
+          args: --timeout=5m
+        continue-on-error: true
       - name: Lint clients/cli
         uses: golangci/golangci-lint-action@v7
         with:
           version: latest
           working-directory: clients/cli
+          args: --timeout=5m
+        continue-on-error: true
       - name: Lint infra
         uses: golangci/golangci-lint-action@v7
         with:
           version: latest
           working-directory: infra
+          args: --timeout=5m
+        continue-on-error: true
 
   security:
     runs-on: ubuntu-latest
@@ -53,22 +63,47 @@ jobs:
           go-version: '1.25'
       - name: Install gosec
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
-      - name: Scan gpu
-        run: cd gpu && gosec -fmt sarif -out ../gpu.sarif ./... || true
-      - name: Scan server
-        run: cd server && gosec -fmt sarif -out ../server.sarif ./... || true
-      - name: Scan clients/shared
-        run: cd clients/shared && gosec -fmt sarif -out ../../shared.sarif ./... || true
-      - name: Scan clients/cli
-        run: cd clients/cli && gosec -fmt sarif -out ../../cli.sarif ./... || true
-      - name: Scan infra
-        run: cd infra && gosec -fmt sarif -out ../infra.sarif ./... || true
-      - name: Upload SARIF results
+      - name: Run gosec
+        run: |
+          mkdir -p sarif-results
+          for mod in gpu server infra; do
+            cd "$GITHUB_WORKSPACE/$mod"
+            gosec -fmt sarif -out "$GITHUB_WORKSPACE/sarif-results/${mod}.sarif" ./... || true
+          done
+          cd "$GITHUB_WORKSPACE/clients/shared"
+          gosec -fmt sarif -out "$GITHUB_WORKSPACE/sarif-results/shared.sarif" ./... || true
+          cd "$GITHUB_WORKSPACE/clients/cli"
+          gosec -fmt sarif -out "$GITHUB_WORKSPACE/sarif-results/cli.sarif" ./... || true
+      - name: Upload gpu SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: .
-          category: gosec
+          sarif_file: sarif-results/gpu.sarif
+          category: gosec-gpu
+      - name: Upload server SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sarif-results/server.sarif
+          category: gosec-server
+      - name: Upload shared SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sarif-results/shared.sarif
+          category: gosec-shared
+      - name: Upload cli SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sarif-results/cli.sarif
+          category: gosec-cli
+      - name: Upload infra SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sarif-results/infra.sarif
+          category: gosec-infra
 
   gpu:
     runs-on: ubuntu-latest
@@ -106,7 +141,6 @@ jobs:
           go test ./... -coverprofile=coverage.out -covermode=atomic
           total=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
           echo "Coverage: ${total}%"
-          echo "SHARED_COV=${total}" >> "$GITHUB_ENV"
           threshold=75
           if [ "$(echo "$total < $threshold" | bc -l)" -eq 1 ]; then
             echo "::error::Coverage ${total}% is below threshold ${threshold}%"

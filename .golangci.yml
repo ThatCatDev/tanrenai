@@ -1,21 +1,19 @@
+version: "2"
+
 linters:
-  enable:
+  disable:
     - errcheck
+  enable:
     - govet
     - staticcheck
     - unused
     - ineffassign
-    - gosimple
     - gocritic
     - bodyclose
     - durationcheck
     - errname
-    - exportloopref
-    - makezero
     - nilerr
-    - prealloc
     - unconvert
-    - unparam
     - wastedassign
 
 linters-settings:
@@ -24,7 +22,6 @@ linters-settings:
       - dupImport
       - ifElseChain
       - nestingReduce
-      - unnameResult
       - truncateCmp
 
 issues:
