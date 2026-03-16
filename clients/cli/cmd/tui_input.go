@@ -355,6 +355,52 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 		t.addLine("")
 		return true
 
+	case input == "/scrolls" || input == "/scrolls list":
+		if !t.scrollsEnabled {
+			t.addLine("[gray::-]  No scrolls loaded.[-:-:-]")
+		} else {
+			t.addLine(fmt.Sprintf("[gray::-]  Scrolls (%d):[-:-:-]", len(t.allScrolls)))
+			for _, s := range t.allScrolls {
+				tags := ""
+				if len(s.Tags) > 0 {
+					tags = " [" + strings.Join(s.Tags, ", ") + "]"
+				}
+				t.addLine(fmt.Sprintf("[gray::-]    [yellow::-]%s[-:-:-] (%s)%s — %s[-:-:-]",
+					s.Name, s.Source, tags, s.Description))
+			}
+		}
+		t.addLine("")
+		return true
+
+	case strings.HasPrefix(input, "/scrolls show "):
+		name := strings.TrimSpace(strings.TrimPrefix(input, "/scrolls show "))
+		if name == "" {
+			t.addLine("[gray::-]  Usage: /scrolls show <name>[-:-:-]")
+			t.addLine("")
+			return true
+		}
+		found := false
+		for _, s := range t.allScrolls {
+			if s.Name == name {
+				t.addLine(fmt.Sprintf("[yellow::b]  %s[-:-:-] [gray::-](%s)[-:-:-]", s.Name, s.Source))
+				t.addLine(fmt.Sprintf("[gray::-]  %s[-:-:-]", s.Description))
+				if len(s.Tags) > 0 {
+					t.addLine(fmt.Sprintf("[gray::-]  Tags: %s[-:-:-]", strings.Join(s.Tags, ", ")))
+				}
+				t.addLine("")
+				for _, line := range strings.Split(s.Content, "\n") {
+					t.addLine("[gray::-]  " + tview.Escape(line) + "[-:-:-]")
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.addLine(fmt.Sprintf("[gray::-]  No scroll named %q[-:-:-]", name))
+		}
+		t.addLine("")
+		return true
+
 	case input == "/help":
 		t.addLine("[gray::-]  Commands:[-:-:-]")
 		t.addLine("[gray::-]    /clear              Clear conversation history[-:-:-]")
@@ -367,6 +413,8 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 		t.addLine("[gray::-]    /memory search <q>  Search memories[-:-:-]")
 		t.addLine("[gray::-]    /memory forget <id> Delete a memory[-:-:-]")
 		t.addLine("[gray::-]    /memory clear       Clear all memories[-:-:-]")
+		t.addLine("[gray::-]    /scrolls            List loaded scrolls[-:-:-]")
+		t.addLine("[gray::-]    /scrolls show <n>   Show a scroll's content[-:-:-]")
 		t.addLine("[gray::-]    /quit, /exit        Exit[-:-:-]")
 		t.addLine("")
 		return true

@@ -19,6 +19,7 @@ import (
 	gpuserve "github.com/ThatCatDev/tanrenai/gpu/pkg/serve"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/scrolls"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
 	"github.com/spf13/cobra"
 )
@@ -132,6 +133,7 @@ var runCmd = &cobra.Command{
 		memoryEnabled, _ := cmd.Flags().GetBool("memory")
 		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 		maxTokens, _ := cmd.Flags().GetInt("max-tokens")
+		noScrolls, _ := cmd.Flags().GetBool("no-scrolls")
 		local, _ := cmd.Flags().GetBool("local")
 		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
 		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
@@ -208,6 +210,19 @@ var runCmd = &cobra.Command{
 				}
 			}
 
+			// Load scrolls
+			var allScrolls []scrolls.Scroll
+			if !noScrolls {
+				projectScrollsDir := filepath.Join(".tanrenai", "scrolls")
+				globalScrollsDir := filepath.Join(tools.GlobalConfigDir(), "scrolls")
+				allScrolls, err = scrolls.Load(projectScrollsDir, globalScrollsDir)
+				if err != nil {
+					log.Warn(fmt.Sprintf("Failed to load scrolls: %v", err))
+				} else if len(allScrolls) > 0 {
+					log.Info(fmt.Sprintf("Loaded %d scrolls", len(allScrolls)))
+				}
+			}
+
 			if memoryEnabled && agentMode {
 				count, err := client.MemoryCount(ctx)
 				if err != nil {
@@ -253,6 +268,8 @@ var runCmd = &cobra.Command{
 			t.mgr = mgr
 			t.registry = registry
 			t.memoryEnabled = memoryEnabled
+			t.allScrolls = allScrolls
+			t.scrollsEnabled = !noScrolls && len(allScrolls) > 0
 			t.maxIterations = maxIterations
 			t.maxResponseTokens = maxTokens
 			t.agentMode = agentMode
@@ -285,6 +302,7 @@ var chatCmd = &cobra.Command{
 		memoryEnabled, _ := cmd.Flags().GetBool("memory")
 		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 		maxTokens, _ := cmd.Flags().GetInt("max-tokens")
+		noScrolls, _ := cmd.Flags().GetBool("no-scrolls")
 		local, _ := cmd.Flags().GetBool("local")
 		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
 		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
@@ -350,6 +368,20 @@ var chatCmd = &cobra.Command{
 				}
 			}
 
+			// Load scrolls
+			var allScrolls []scrolls.Scroll
+			if !noScrolls {
+				projectScrollsDir := filepath.Join(".tanrenai", "scrolls")
+				globalScrollsDir := filepath.Join(tools.GlobalConfigDir(), "scrolls")
+				var scrollErr error
+				allScrolls, scrollErr = scrolls.Load(projectScrollsDir, globalScrollsDir)
+				if scrollErr != nil {
+					log.Warn(fmt.Sprintf("Failed to load scrolls: %v", scrollErr))
+				} else if len(allScrolls) > 0 {
+					log.Info(fmt.Sprintf("Loaded %d scrolls", len(allScrolls)))
+				}
+			}
+
 			if memoryEnabled && agentMode {
 				count, err := client.MemoryCount(ctx)
 				if err != nil {
@@ -394,6 +426,8 @@ var chatCmd = &cobra.Command{
 			t.mgr = mgr
 			t.registry = registry
 			t.memoryEnabled = memoryEnabled
+			t.allScrolls = allScrolls
+			t.scrollsEnabled = !noScrolls && len(allScrolls) > 0
 			t.maxIterations = maxIterations
 			t.maxResponseTokens = maxTokens
 			t.agentMode = agentMode
@@ -657,6 +691,7 @@ func handleREPLCommand(w io.Writer, input string, mgr *chatctx.Manager, client *
 		fmt.Fprintf(w, "Token budget:\n")
 		fmt.Fprintf(w, "  Total context:  %d\n", budget.Total)
 		fmt.Fprintf(w, "  System/pinned:  %d\n", budget.System)
+		fmt.Fprintf(w, "  Scrolls:        %d\n", budget.Scrolls)
 		fmt.Fprintf(w, "  Memory:         %d\n", budget.Memory)
 		fmt.Fprintf(w, "  Summary:        %d\n", budget.Summary)
 		fmt.Fprintf(w, "  History:        %d (%d messages, %d total)\n", budget.History, budget.HistoryCount, budget.TotalHistory)
@@ -792,6 +827,8 @@ func handleREPLCommand(w io.Writer, input string, mgr *chatctx.Manager, client *
 		fmt.Fprintln(w, "  /memory search <q>            - Search memories")
 		fmt.Fprintln(w, "  /memory forget <id>           - Delete a memory by ID prefix")
 		fmt.Fprintln(w, "  /memory clear                 - Clear all memories")
+		fmt.Fprintln(w, "  /scrolls                      - List loaded scrolls")
+		fmt.Fprintln(w, "  /scrolls show <name>          - Show a scroll's content")
 		fmt.Fprintln(w, "  /quit, /exit                  - Exit")
 		return true
 	}
@@ -816,6 +853,7 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("memory", false, "enable memory/RAG")
 	cmd.Flags().Int("max-iterations", 200, "maximum agent tool-call iterations per turn (0 = unlimited)")
 	cmd.Flags().Int("max-tokens", 0, "max tokens per model response (0 = default 16384)")
+	cmd.Flags().Bool("no-scrolls", false, "disable automatic scroll injection")
 }
 
 var _ = time.Now

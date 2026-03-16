@@ -15,6 +15,7 @@ import (
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/scrolls"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
 )
 
@@ -33,6 +34,8 @@ var slashCommands = []struct {
 	{"/memory search ", "Search memories"},
 	{"/memory forget ", "Delete a memory"},
 	{"/memory clear", "Clear all memories"},
+	{"/scrolls", "List loaded scrolls"},
+	{"/scrolls show ", "Show a scroll's content"},
 	{"/help", "Show help"},
 	{"/quit", "Exit"},
 	{"/exit", "Exit"},
@@ -118,7 +121,9 @@ type tuiApp struct {
 	mgr           *chatctx.Manager
 	registry      *tools.Registry
 	permissions   *tools.Permissions
-	memoryEnabled bool
+	memoryEnabled  bool
+	allScrolls     []scrolls.Scroll
+	scrollsEnabled bool
 	maxIterations     int
 	maxResponseTokens int
 	agentMode     bool

@@ -32,7 +32,9 @@ type Permissions struct {
 	path   string // local project path (written to on Allow)
 }
 
-func globalConfigDir() string {
+// GlobalConfigDir returns the global tanrenai config directory
+// (~/.tanrenai or $TANRENAI_CONFIG_DIR).
+func GlobalConfigDir() string {
 	if d := os.Getenv("TANRENAI_CONFIG_DIR"); d != "" {
 		return d
 	}
@@ -49,7 +51,7 @@ func LoadPermissions() *Permissions {
 	}
 
 	// Load global config first.
-	globalPath := filepath.Join(globalConfigDir(), "permissions.json")
+	globalPath := filepath.Join(GlobalConfigDir(), "permissions.json")
 	if data, err := os.ReadFile(globalPath); err == nil {
 		var cfg PermissionsConfig
 		if json.Unmarshal(data, &cfg) == nil {

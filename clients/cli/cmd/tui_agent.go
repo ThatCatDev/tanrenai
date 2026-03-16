@@ -13,6 +13,7 @@ import (
 	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/scrolls"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
 )
 
@@ -137,6 +138,20 @@ func (t *tuiApp) handleStreamDone(content string, err error) {
 
 func (t *tuiApp) startAgentTurn(input string) {
 	t.mgr.Append(api.Message{Role: "user", Content: input})
+
+	if t.scrollsEnabled {
+		matched := scrolls.Match(t.allScrolls, input, 3)
+		if len(matched) > 0 {
+			var scrollMsgs []api.Message
+			for _, s := range matched {
+				content := fmt.Sprintf("[Scroll: %s]\n%s", s.Name, s.Content)
+				scrollMsgs = append(scrollMsgs, api.Message{Role: "system", Content: content})
+			}
+			t.mgr.SetScrolls(scrollMsgs)
+		} else {
+			t.mgr.ClearScrolls()
+		}
+	}
 
 	if t.memoryEnabled {
 		results, err := t.client.MemorySearch(context.Background(), input, 3)
@@ -402,6 +417,20 @@ func (t *tuiApp) handleTurnDone(result, windowedMsgs []api.Message, err error) {
 
 func (t *tuiApp) startPlannedAgentTurn(input string) {
 	t.mgr.Append(api.Message{Role: "user", Content: input})
+
+	if t.scrollsEnabled {
+		matched := scrolls.Match(t.allScrolls, input, 3)
+		if len(matched) > 0 {
+			var scrollMsgs []api.Message
+			for _, s := range matched {
+				content := fmt.Sprintf("[Scroll: %s]\n%s", s.Name, s.Content)
+				scrollMsgs = append(scrollMsgs, api.Message{Role: "system", Content: content})
+			}
+			t.mgr.SetScrolls(scrollMsgs)
+		} else {
+			t.mgr.ClearScrolls()
+		}
+	}
 
 	if t.memoryEnabled {
 		results, err := t.client.MemorySearch(context.Background(), input, 3)
