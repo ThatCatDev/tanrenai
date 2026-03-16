@@ -13,7 +13,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd gpu && go build ./... && go test ./... && go vet ./...
+      - run: cd gpu && go build ./... && go vet ./...
+      - name: Test
+        run: cd gpu && go test ./...
 
   server:
     runs-on: ubuntu-latest
@@ -22,7 +24,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd server && go build ./... && go test ./... && go vet ./...
+      - run: cd server && go build ./... && go vet ./...
+      - name: Test
+        run: cd server && go test ./...
 
   clients-shared:
     runs-on: ubuntu-latest
@@ -31,7 +35,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd clients/shared && go build ./... && go test ./... && go vet ./...
+      - run: cd clients/shared && go build ./... && go vet ./...
+      - name: Test with coverage
+        run: |
+          cd clients/shared
+          go test ./... -coverprofile=coverage.out -covermode=atomic
+          total=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
+          echo "Coverage: ${total}%"
+          threshold=75
+          if [ "$(echo "$total < $threshold" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${total}% is below threshold ${threshold}%"
+            exit 1
+          fi
 
   clients-cli:
     runs-on: ubuntu-latest
@@ -40,7 +55,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd clients/cli && go build ./... && go test ./... && go vet ./...
+      - run: cd clients/cli && go build ./... && go vet ./...
+      - name: Test
+        run: cd clients/cli && go test ./...
 
   infra:
     runs-on: ubuntu-latest
@@ -49,7 +66,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd infra && go build ./... && go test ./... && go vet ./...
+      - run: cd infra && go build ./... && go vet ./...
+      - name: Test
+        run: cd infra && go test ./...
 
   clients-desktop:
     runs-on: ubuntu-latest
@@ -62,4 +81,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libgirepository1.0-dev
-      - run: cd clients/desktop && go build ./... && go test ./... && go vet ./...
+      - run: cd clients/desktop && go build ./... && go vet ./...
+      - name: Test
+        run: cd clients/desktop && go test ./...
