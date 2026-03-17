@@ -49,12 +49,17 @@ func init() {
 	networkAuthKeyCmd.Flags().Bool("ephemeral", true, "make nodes ephemeral")
 
 	networkJoinCmd.Flags().String("hostname", "", "hostname for this node (required)")
-	networkJoinCmd.MarkFlagRequired("hostname")
+	_ = networkJoinCmd.MarkFlagRequired("hostname")
 
 	networkCmd.AddCommand(networkAuthKeyCmd)
 	networkCmd.AddCommand(networkNodesCmd)
 	networkCmd.AddCommand(networkJoinCmd)
 	rootCmd.AddCommand(networkCmd)
+}
+
+// newHeadscaleProvider is a variable so tests can inject a mock provider.
+var newHeadscaleProvider = func(baseURL, apiKey, user string) *network.HeadscaleProvider {
+	return network.NewHeadscaleProvider(baseURL, apiKey, user)
 }
 
 func headscaleProvider(cmd *cobra.Command) *network.HeadscaleProvider {
@@ -74,7 +79,8 @@ func headscaleProvider(cmd *cobra.Command) *network.HeadscaleProvider {
 	if cfg.HeadscaleAPI == "" {
 		exitError("--headscale-api-key or HEADSCALE_API_KEY required")
 	}
-	return network.NewHeadscaleProvider(cfg.HeadscaleURL, cfg.HeadscaleAPI, cfg.HeadscaleUser)
+
+	return newHeadscaleProvider(cfg.HeadscaleURL, cfg.HeadscaleAPI, cfg.HeadscaleUser)
 }
 
 func runNetworkAuthKey(cmd *cobra.Command, args []string) {
@@ -88,7 +94,7 @@ func runNetworkAuthKey(cmd *cobra.Command, args []string) {
 		exitError("generate auth key: %v", err)
 	}
 
-	fmt.Println(key)
+	_, _ = fmt.Fprintf(os.Stdout, "%s\n", key)
 }
 
 func runNetworkNodes(cmd *cobra.Command, args []string) {
@@ -103,7 +109,8 @@ func runNetworkNodes(cmd *cobra.Command, args []string) {
 	}
 
 	if len(nodes) == 0 {
-		fmt.Println("No nodes found.")
+		_, _ = fmt.Fprintf(os.Stdout, "No nodes found.\n")
+
 		return
 	}
 
@@ -113,7 +120,7 @@ func runNetworkNodes(cmd *cobra.Command, args []string) {
 			status = "online"
 		}
 		ips := strings.Join(n.IPs, ", ")
-		fmt.Printf("  %-30s  %-8s  %s\n", n.Name, status, ips)
+		_, _ = fmt.Fprintf(os.Stdout, "  %-30s  %-8s  %s\n", n.Name, status, ips)
 	}
 }
 
@@ -124,7 +131,7 @@ func runNetworkJoin(cmd *cobra.Command, args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	fmt.Println("Generating auth key...")
+	_, _ = fmt.Fprintf(os.Stdout, "Generating auth key...\n")
 	authKey, err := provider.GenerateAuthKey(ctx)
 	if err != nil {
 		exitError("generate auth key: %v", err)
@@ -136,7 +143,7 @@ func runNetworkJoin(cmd *cobra.Command, args []string) {
 		if len(display) > 100 {
 			display = display[:100] + "..."
 		}
-		fmt.Printf("$ %s\n", display)
+		_, _ = fmt.Fprintf(os.Stdout, "$ %s\n", display)
 
 		sh := exec.CommandContext(ctx, "bash", "-c", c)
 		sh.Stdout = os.Stdout
@@ -146,5 +153,5 @@ func runNetworkJoin(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	fmt.Println("Joined network successfully.")
+	_, _ = fmt.Fprintf(os.Stdout, "Joined network successfully.\n")
 }

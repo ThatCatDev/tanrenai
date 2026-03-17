@@ -64,11 +64,13 @@ func (c *Client) StreamCompletion(ctx context.Context, req *api.ChatCompletionRe
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
+
 		return nil, &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	events := ParseSSEStream(resp.Body)
+
 	return wrapStreamWithCleanup(events, resp.Body), nil
 }
 
@@ -90,10 +92,11 @@ func (c *Client) ChatCompletion(ctx context.Context, req *api.ChatCompletionRequ
 	if err != nil {
 		return nil, connError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return nil, &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
@@ -101,6 +104,7 @@ func (c *Client) ChatCompletion(ctx context.Context, req *api.ChatCompletionRequ
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
+
 	return &result, nil
 }
 
@@ -115,6 +119,7 @@ func (c *Client) MemorySearch(ctx context.Context, query string, limit int) (*ap
 	if err := c.postJSON(ctx, "/v1/memory/search", body, &result); err != nil {
 		return nil, err
 	}
+
 	return &result, nil
 }
 
@@ -127,6 +132,7 @@ func (c *Client) MemoryStore(ctx context.Context, userMsg, assistMsg string) (st
 	if err := c.postJSON(ctx, "/v1/memory/store", body, &result); err != nil {
 		return "", err
 	}
+
 	return result.ID, nil
 }
 
@@ -137,6 +143,7 @@ func (c *Client) MemoryList(ctx context.Context, limit int) (*api.MemoryListResp
 	if err := c.getJSON(ctx, url, &result); err != nil {
 		return nil, err
 	}
+
 	return &result, nil
 }
 
@@ -151,11 +158,13 @@ func (c *Client) MemoryDelete(ctx context.Context, id string) error {
 	if err != nil {
 		return connError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
+
 	return nil
 }
 
@@ -170,11 +179,13 @@ func (c *Client) MemoryClear(ctx context.Context) error {
 	if err != nil {
 		return connError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
+
 	return nil
 }
 
@@ -185,6 +196,7 @@ func (c *Client) MemoryCount(ctx context.Context) (int, error) {
 	if err := c.getJSON(ctx, url, &result); err != nil {
 		return 0, err
 	}
+
 	return result.Count, nil
 }
 
@@ -197,6 +209,7 @@ func (c *Client) LoadModel(ctx context.Context, model string) (*api.LoadResponse
 	if err := c.postJSON(ctx, "/api/load", body, &result); err != nil {
 		return nil, err
 	}
+
 	return &result, nil
 }
 
@@ -207,6 +220,7 @@ func (c *Client) ListModels(ctx context.Context) (*api.ModelListResponse, error)
 	if err := c.getJSON(ctx, url, &result); err != nil {
 		return nil, err
 	}
+
 	return &result, nil
 }
 
@@ -241,13 +255,14 @@ func (c *Client) PullModel(ctx context.Context, url string) (<-chan PullModelEve
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
+
 		return nil, &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	ch := make(chan PullModelEvent)
 	go func() {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		defer close(ch)
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -262,6 +277,7 @@ func (c *Client) PullModel(ctx context.Context, url string) (<-chan PullModelEve
 			var ev api.PullEvent
 			if err := json.Unmarshal([]byte(data), &ev); err != nil {
 				ch <- PullModelEvent{Err: err}
+
 				return
 			}
 			ch <- PullModelEvent{Event: ev}
@@ -296,10 +312,11 @@ func (c *Client) Tokenize(ctx context.Context, text string) (int, error) {
 	if err != nil {
 		return 0, connError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return 0, &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
@@ -309,6 +326,7 @@ func (c *Client) Tokenize(ctx context.Context, text string) (int, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return 0, err
 	}
+
 	return len(result.Tokens), nil
 }
 
@@ -321,6 +339,7 @@ func (c *Client) InstanceStatus(ctx context.Context) (*api.InstanceStatus, error
 	if err := c.getJSON(ctx, url, &result); err != nil {
 		return nil, err
 	}
+
 	return &result, nil
 }
 
@@ -352,10 +371,11 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte, result 
 	if err != nil {
 		return connError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
@@ -364,6 +384,7 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte, result 
 			return fmt.Errorf("decode response: %w", err)
 		}
 	}
+
 	return nil
 }
 
@@ -377,10 +398,11 @@ func (c *Client) getJSON(ctx context.Context, url string, result any) error {
 	if err != nil {
 		return connError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
@@ -389,6 +411,7 @@ func (c *Client) getJSON(ctx context.Context, url string, result any) error {
 			return fmt.Errorf("decode response: %w", err)
 		}
 	}
+
 	return nil
 }
 
@@ -398,6 +421,7 @@ func connError(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("send request: %w", err)
 	}
+
 	return fmt.Errorf("%w: %v", ErrServerUnavailable, err)
 }
 
@@ -406,11 +430,12 @@ func connError(err error) error {
 func wrapStreamWithCleanup(events <-chan StreamEvent, body io.ReadCloser) <-chan StreamEvent {
 	out := make(chan StreamEvent)
 	go func() {
-		defer body.Close()
+		defer func() { _ = body.Close() }()
 		defer close(out)
 		for ev := range events {
 			out <- ev
 		}
 	}()
+
 	return out
 }

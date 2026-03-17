@@ -10,10 +10,10 @@ import (
 // Config holds all configuration for an infra deployment.
 type Config struct {
 	// vast.ai
-	VastaiAPIKey    string
-	VastaiInstance  string  // existing instance ID, or empty to search+create
+	VastaiAPIKey   string
+	VastaiInstance string  // existing instance ID, or empty to search+create
 	GPUName        string  // filter offers by GPU name (e.g. "A100", "4090")
-	MinGPURAM       float64 // minimum GPU RAM in GB for offer search
+	MinGPURAM      float64 // minimum GPU RAM in GB for offer search
 	MaxCostPerHr   float64 // maximum $/hr for offer search
 	DiskGB         float64 // disk space in GB
 
@@ -25,25 +25,25 @@ type Config struct {
 	TailscaleAuth string // auth key for managed Tailscale
 
 	// GPU server
-	GPUPort    int
-	ModelsDir  string
-	Model      string // model to pull on setup
+	GPUPort   int
+	ModelsDir string
+	Model     string // model to pull on setup
 }
 
 // Defaults returns a Config with sensible defaults, reading env vars.
 func Defaults() Config {
 	return Config{
-		VastaiAPIKey:  envOr("VASTAI_API_KEY", ""),
+		VastaiAPIKey:   envOr("VASTAI_API_KEY", ""),
 		VastaiInstance: envOr("VASTAI_INSTANCE_ID", ""),
-		MinGPURAM:     24,
-		MaxCostPerHr:  1.0,
-		DiskGB:        50,
-		Network:       "none",
-		HeadscaleURL:  envOr("HEADSCALE_URL", ""),
-		HeadscaleAPI:  envOr("HEADSCALE_API_KEY", ""),
-		HeadscaleUser: envOr("HEADSCALE_USER", ""),
-		TailscaleAuth: envOr("TAILSCALE_AUTH_KEY", ""),
-		GPUPort:       11435,
+		MinGPURAM:      24,
+		MaxCostPerHr:   1.0,
+		DiskGB:         50,
+		Network:        "none",
+		HeadscaleURL:   envOr("HEADSCALE_URL", ""),
+		HeadscaleAPI:   envOr("HEADSCALE_API_KEY", ""),
+		HeadscaleUser:  envOr("HEADSCALE_USER", ""),
+		TailscaleAuth:  envOr("TAILSCALE_AUTH_KEY", ""),
+		GPUPort:        11435,
 	}
 }
 
@@ -80,6 +80,7 @@ func DiskForModelSize(size string) (float64, error) {
 	}
 	// Round up to nearest 50GB
 	disk = math.Ceil(disk/50) * 50
+
 	return disk, nil
 }
 
@@ -87,5 +88,6 @@ func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
+
 	return fallback
 }

@@ -83,6 +83,7 @@ func (t *GrepSearchTool) Execute(_ context.Context, arguments string) (*ToolResu
 			if name == ".git" || name == "node_modules" || name == "vendor" || name == "__pycache__" || name == ".venv" || name == "venv" {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
 
@@ -105,7 +106,7 @@ func (t *GrepSearchTool) Execute(_ context.Context, arguments string) (*ToolResu
 		if err != nil {
 			return nil
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 
 		scanner := bufio.NewScanner(f)
 		lineNum := 0
@@ -120,6 +121,7 @@ func (t *GrepSearchTool) Execute(_ context.Context, arguments string) (*ToolResu
 				}
 			}
 		}
+
 		return nil
 	})
 
@@ -153,5 +155,6 @@ func isBinaryFilename(name string) bool {
 		".wasm", ".pyc", ".class":
 		return true
 	}
+
 	return false
 }

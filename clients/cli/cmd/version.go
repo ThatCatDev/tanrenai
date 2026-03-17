@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -15,7 +16,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("tanrenai %s (%s)\n", Version, CommitSHA)
+		_, _ = fmt.Fprintf(os.Stdout, "tanrenai %s (%s)\n", Version, CommitSHA)
 	},
 }
 

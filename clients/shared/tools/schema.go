@@ -21,5 +21,6 @@ func (s Schema) MustMarshal() json.RawMessage {
 	if err != nil {
 		panic("tools: failed to marshal schema: " + err.Error())
 	}
+
 	return b
 }

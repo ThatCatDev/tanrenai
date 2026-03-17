@@ -47,6 +47,7 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 		// The GGUF already contains an embedded chat template — llama-server
 		// reads it directly with --jinja. No need to generate or override.
 		slog.Info("template resolver: GGUF has embedded chat_template, skipping generation")
+
 		return nil, nil
 	}
 
@@ -55,27 +56,8 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 	if err != nil {
 		slog.Warn("template resolver: could not load model metadata", "error", err)
 	}
-	if modelMeta != nil && modelMeta.HFRepo != "" {
-		branch := modelMeta.HFBranch
-		if branch == "" {
-			branch = "main"
-		}
-		hf := models.NewHFClient()
-		tpl, err := hf.FetchChatTemplate(modelMeta.HFRepo, branch)
-		if err != nil {
-			slog.Warn("template resolver: HuggingFace fetch failed", "error", err)
-		} else if tpl != "" {
-			name := sanitizeName(modelMeta.HFRepo)
-			path, err := WriteTemplateFile(name, tpl)
-			if err != nil {
-				return nil, fmt.Errorf("template resolver: write HF template: %w", err)
-			}
-			return &TemplateResolution{
-				TemplatePath: path,
-				Source:       "huggingface:" + modelMeta.HFRepo,
-				Cleanup:      func() { os.Remove(path) },
-			}, nil
-		}
+	if res, err := resolveHFTemplate(modelMeta); res != nil || err != nil {
+		return res, err
 	}
 
 	// Step 3: Generic ChatML fallback when the GGUF has architecture metadata
@@ -90,10 +72,11 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 		if err != nil {
 			return nil, fmt.Errorf("template resolver: write generated template: %w", err)
 		}
+
 		return &TemplateResolution{
 			TemplatePath: path,
 			Source:       "generated:chatml",
-			Cleanup:      func() { os.Remove(path) },
+			Cleanup:      func() { _ = os.Remove(path) },
 		}, nil
 	}
 
@@ -101,8 +84,43 @@ func ResolveTemplate(modelPath string, meta *gguf.Metadata) (*TemplateResolution
 	return nil, nil
 }
 
+// resolveHFTemplate attempts to fetch a chat template from HuggingFace using
+// the model's .meta.json sidecar. Returns (nil, nil) if modelMeta is nil or
+// has no HFRepo set, so the caller can fall through to the next strategy.
+func resolveHFTemplate(modelMeta *models.ModelMetadata) (*TemplateResolution, error) {
+	if modelMeta == nil || modelMeta.HFRepo == "" {
+		return nil, nil
+	}
+	branch := modelMeta.HFBranch
+	if branch == "" {
+		branch = "main"
+	}
+	hf := models.NewHFClient()
+	tpl, err := hf.FetchChatTemplate(modelMeta.HFRepo, branch)
+	if err != nil {
+		slog.Warn("template resolver: HuggingFace fetch failed", "error", err)
+
+		return nil, nil
+	}
+	if tpl == "" {
+		return nil, nil
+	}
+	name := sanitizeName(modelMeta.HFRepo)
+	path, err := WriteTemplateFile(name, tpl)
+	if err != nil {
+		return nil, fmt.Errorf("template resolver: write HF template: %w", err)
+	}
+
+	return &TemplateResolution{
+		TemplatePath: path,
+		Source:       "huggingface:" + modelMeta.HFRepo,
+		Cleanup:      func() { _ = os.Remove(path) },
+	}, nil
+}
+
 // sanitizeName produces a safe filename component from an architecture or repo name.
 func sanitizeName(s string) string {
 	r := strings.NewReplacer("/", "-", " ", "-", ".", "-")
+
 	return strings.ToLower(r.Replace(s))
 }

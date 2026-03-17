@@ -21,11 +21,13 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req api.ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body: "+err.Error())
+
 		return
 	}
 
 	if len(req.Messages) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "messages must not be empty")
+
 		return
 	}
 
@@ -34,10 +36,12 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if currentRunner == nil || (req.Model != "" && normalizeModelName(currentRunner.ModelName()) != normalizeModelName(req.Model)) {
 		if req.Model == "" {
 			writeError(w, http.StatusBadRequest, "invalid_request", "no model specified and no model loaded")
+
 			return
 		}
 		if _, err := h.LoadFunc(r.Context(), req.Model); err != nil {
 			writeError(w, http.StatusInternalServerError, "model_error", "failed to load model: "+err.Error())
+
 			return
 		}
 		currentRunner = h.GetRunner()
@@ -54,11 +58,12 @@ func (h *ChatHandler) handleComplete(w http.ResponseWriter, r *http.Request, req
 	resp, err := rn.ChatCompletion(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "inference_error", err.Error())
+
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *ChatHandler) handleStream(w http.ResponseWriter, r *http.Request, req *api.ChatCompletionRequest, rn runner.Runner) {

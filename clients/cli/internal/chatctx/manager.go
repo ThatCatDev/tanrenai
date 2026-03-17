@@ -18,6 +18,7 @@ type Config struct {
 type BudgetInfo struct {
 	Total        int // total context window size
 	System       int // tokens used by system prompt + context files
+	Scrolls      int // tokens used by injected scrolls
 	Memory       int // tokens used by injected memories
 	History      int // tokens used by history messages in the window
 	Summary      int // tokens used by conversation summary
@@ -43,6 +44,7 @@ type Manager struct {
 	history      []api.Message // user/assistant/tool messages
 	summary      string        // condensed summary of evicted messages
 	memories     []api.Message // injected memory messages from RAG
+	scrolls      []api.Message // injected scroll content
 }
 
 // Estimator returns the token estimator used by this manager.
@@ -56,6 +58,7 @@ func NewManager(cfg Config, estimator *TokenEstimator) *Manager {
 	if cfg.ResponseBudget <= 0 {
 		cfg.ResponseBudget = 512
 	}
+
 	return &Manager{
 		cfg:       cfg,
 		estimator: estimator,
@@ -83,6 +86,7 @@ func (m *Manager) ContextFiles() []string {
 	for i, cf := range m.contextFiles {
 		paths[i] = cf.Path
 	}
+
 	return paths
 }
 
@@ -94,6 +98,16 @@ func (m *Manager) SetMemories(msgs []api.Message) {
 // ClearMemories removes all injected memories.
 func (m *Manager) ClearMemories() {
 	m.memories = nil
+}
+
+// SetScrolls sets the injected scroll messages.
+func (m *Manager) SetScrolls(msgs []api.Message) {
+	m.scrolls = msgs
+}
+
+// ClearScrolls removes all injected scrolls.
+func (m *Manager) ClearScrolls() {
+	m.scrolls = nil
 }
 
 // Append adds a single message to history.
@@ -117,6 +131,15 @@ func (m *Manager) Messages() []api.Message {
 	available := m.cfg.CtxSize - systemTokens - m.cfg.ResponseBudget - m.cfg.ToolsBudget
 	if available < 0 {
 		available = 0
+	}
+
+	// Reserve space for scrolls if present
+	if len(m.scrolls) > 0 {
+		scrollsTokens := m.estimator.EstimateMessages(m.scrolls)
+		available -= scrollsTokens
+		if available < 0 {
+			available = 0
+		}
 	}
 
 	// Reserve space for memories if present
@@ -156,6 +179,13 @@ func (m *Manager) Messages() []api.Message {
 	var systemContent string
 	if len(systemMsgs) > 0 {
 		systemContent = systemMsgs[0].Content
+	}
+
+	for _, s := range m.scrolls {
+		if systemContent != "" {
+			systemContent += "\n\n"
+		}
+		systemContent += s.Content
 	}
 
 	for _, mem := range m.memories {
@@ -212,6 +242,10 @@ func (m *Manager) NeedsSummary() bool {
 	systemTokens := m.estimator.EstimateMessages(systemMsgs)
 	available := m.cfg.CtxSize - systemTokens - m.cfg.ResponseBudget - m.cfg.ToolsBudget
 
+	if len(m.scrolls) > 0 {
+		available -= m.estimator.EstimateMessages(m.scrolls)
+	}
+
 	if len(m.memories) > 0 {
 		available -= m.estimator.EstimateMessages(m.memories)
 	}
@@ -225,6 +259,7 @@ func (m *Manager) NeedsSummary() bool {
 	}
 
 	totalHistory := m.estimator.EstimateMessages(m.history)
+
 	return totalHistory > available && len(m.history) > 0
 }
 
@@ -240,6 +275,12 @@ func (m *Manager) Budget() BudgetInfo {
 	systemTokens := m.estimator.EstimateMessages(systemMsgs)
 
 	available := m.cfg.CtxSize - systemTokens - m.cfg.ResponseBudget - m.cfg.ToolsBudget
+
+	scrollsTokens := 0
+	if len(m.scrolls) > 0 {
+		scrollsTokens = m.estimator.EstimateMessages(m.scrolls)
+		available -= scrollsTokens
+	}
 
 	memoryTokens := 0
 	if len(m.memories) > 0 {
@@ -278,6 +319,7 @@ func (m *Manager) Budget() BudgetInfo {
 	return BudgetInfo{
 		Total:        m.cfg.CtxSize,
 		System:       systemTokens,
+		Scrolls:      scrollsTokens,
 		Memory:       memoryTokens,
 		History:      historyTokens,
 		Summary:      summaryTokens,
@@ -301,5 +343,6 @@ func (m *Manager) Summary() string {
 func (m *Manager) History() []api.Message {
 	out := make([]api.Message, len(m.history))
 	copy(out, m.history)
+
 	return out
 }

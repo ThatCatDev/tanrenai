@@ -67,6 +67,7 @@ func (m *Manager) Summarize(ctx context.Context, complete CompletionFunc) error 
 		t := m.estimator.EstimateMessages([]api.Message{toSummarize[i]})
 		if summarizeTokens+t > maxSummarizeTokens {
 			startIdx = i + 1
+
 			break
 		}
 		summarizeTokens += t

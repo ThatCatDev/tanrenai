@@ -27,6 +27,7 @@ func PickInstance(instances []vastai.Instance) (*Choice, error) {
 	if final.quit {
 		return nil, fmt.Errorf("cancelled")
 	}
+
 	return &final.choice, nil
 }
 
@@ -51,6 +52,7 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			m.quit = true
+
 			return m, tea.Quit
 		case "up", "k":
 			if m.cursor > 0 {
@@ -67,9 +69,11 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.choice = Choice{Instance: nil}
 			}
+
 			return m, tea.Quit
 		}
 	}
+
 	return m, nil
 }
 
@@ -82,10 +86,10 @@ func (m pickerModel) View() string {
 		if m.cursor == i {
 			cursor = "> "
 		}
-		b.WriteString(fmt.Sprintf("%s%d  %-10s  %-20s  x%d  $%.3f/hr",
-			cursor, inst.ID, inst.Status, inst.GPUName, inst.NumGPUs, inst.CostPerHr))
+		fmt.Fprintf(&b, "%s%d  %-10s  %-20s  x%d  $%.3f/hr",
+			cursor, inst.ID, inst.Status, inst.GPUName, inst.NumGPUs, inst.CostPerHr)
 		if inst.SSHHost != "" {
-			b.WriteString(fmt.Sprintf("  %s:%d", inst.SSHHost, inst.SSHPort))
+			fmt.Fprintf(&b, "  %s:%d", inst.SSHHost, inst.SSHPort)
 		}
 		b.WriteString("\n")
 	}
@@ -95,8 +99,9 @@ func (m pickerModel) View() string {
 	if m.cursor == len(m.instances) {
 		cursor = "> "
 	}
-	b.WriteString(fmt.Sprintf("\n%s[Create new instance]\n", cursor))
+	fmt.Fprintf(&b, "\n%s[Create new instance]\n", cursor)
 
 	b.WriteString("\n↑/↓ navigate • enter select • q quit\n")
+
 	return b.String()
 }

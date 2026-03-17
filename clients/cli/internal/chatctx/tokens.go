@@ -49,6 +49,7 @@ func (e *TokenEstimator) Calibrate(tokenizeFn func(string) (int, error)) error {
 		e.charsPerToken = float64(len(calibrationSample)) / float64(tokenCount)
 		e.calibrated = true
 	}
+
 	return nil
 }
 
@@ -62,6 +63,7 @@ func (e *TokenEstimator) Estimate(text string) int {
 	if text == "" {
 		return 0
 	}
+
 	return int(math.Ceil(float64(len(text)) / e.charsPerToken))
 }
 
@@ -86,6 +88,7 @@ func (e *TokenEstimator) EstimateMessages(msgs []api.Message) int {
 			total += e.Estimate(msg.Name)
 		}
 	}
+
 	return total
 }
 
@@ -95,6 +98,7 @@ func (e *TokenEstimator) EstimateJSON(v any) int {
 	if err != nil {
 		return 0
 	}
+
 	return e.Estimate(string(data))
 }
 
@@ -111,5 +115,6 @@ func MessageText(msg api.Message) string {
 		b.WriteString(msg.ToolCallID)
 		b.WriteString(msg.Name)
 	}
+
 	return b.String()
 }

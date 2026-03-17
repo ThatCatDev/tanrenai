@@ -56,6 +56,7 @@ func (t *tuiApp) refreshProcessPanel() {
 	// Auto-hide panel when no processes remain
 	if len(procs) == 0 {
 		t.hideProcessPanel()
+
 		return
 	}
 
@@ -111,6 +112,7 @@ func processStatusDisplay(p tools.ProcessSnapshot) (string, tcell.Color) {
 	if p.Status == tools.ProcessRunning {
 		return "running", tcell.ColorGreen
 	}
+
 	return fmt.Sprintf("exited(%d)", p.ExitCode), tcell.ColorYellow
 }
 
@@ -133,12 +135,14 @@ func (t *tuiApp) handleProcessPanelKey(event *tcell.EventKey) bool {
 		if row > 1 {
 			t.processPanel.Select(row-1, 0)
 		}
+
 		return true
 
 	case tcell.KeyDown:
 		if row < len(procs) {
 			t.processPanel.Select(row+1, 0)
 		}
+
 		return true
 
 	case tcell.KeyEnter:
@@ -153,11 +157,13 @@ func (t *tuiApp) handleProcessPanelKey(event *tcell.EventKey) bool {
 			syntheticPath := fmt.Sprintf("[process %d: %s]", p.ID, p.Command)
 			t.openFileViewerContent(syntheticPath, output, nil)
 		}
+
 		return true
 
 	case tcell.KeyEscape:
 		t.focus = focusChat
 		t.app.SetFocus(t.inputArea)
+
 		return true
 
 	case tcell.KeyRune:
@@ -168,8 +174,13 @@ func (t *tuiApp) handleProcessPanelKey(event *tcell.EventKey) bool {
 				_ = t.procMgr.Kill(procs[idx].ID)
 				t.refreshProcessPanel()
 			}
+
 			return true
+		default:
+			// other runes not handled
 		}
+	default:
+		// other keys not handled
 	}
 
 	return false
@@ -180,5 +191,6 @@ func (t *tuiApp) processCount() int {
 	if t.procMgr == nil {
 		return 0
 	}
+
 	return t.procMgr.Count()
 }

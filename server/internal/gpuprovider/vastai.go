@@ -51,6 +51,7 @@ func (p *VastAIProvider) EnsureRunning(ctx context.Context) error {
 	p.mu.Lock()
 	if p.starting {
 		p.mu.Unlock()
+
 		return p.waitForHealthy(ctx)
 	}
 	p.mu.Unlock()
@@ -63,6 +64,7 @@ func (p *VastAIProvider) EnsureRunning(ctx context.Context) error {
 	// Re-check after acquiring lock: another goroutine may have started while we were health-checking.
 	if p.starting {
 		p.mu.Unlock()
+
 		return p.waitForHealthy(ctx)
 	}
 	p.starting = true
@@ -96,6 +98,7 @@ func (p *VastAIProvider) waitForHealthy(ctx context.Context) error {
 		case <-ticker.C:
 			if err := p.gpuClient.Health(ctx); err == nil {
 				slog.Info("GPU server is healthy")
+
 				return nil
 			}
 		}
@@ -108,6 +111,7 @@ func (p *VastAIProvider) Status(ctx context.Context) (*Status, error) {
 		p.mu.Lock()
 		idle := p.lastActivity
 		p.mu.Unlock()
+
 		return &Status{
 			State:     "running",
 			Provider:  "vastai",
@@ -136,6 +140,7 @@ func (p *VastAIProvider) Stop(ctx context.Context) error {
 		return fmt.Errorf("vast.ai not configured")
 	}
 	slog.Info("stopping vast.ai instance", "instance_id", p.instanceID)
+
 	return p.client.StopInstance(ctx, p.instanceID)
 }
 
@@ -173,6 +178,7 @@ func (p *VastAIProvider) StartIdleTimer() {
 						slog.Error("failed to stop idle instance", "error", err)
 					}
 					cancel()
+
 					return
 				}
 			}

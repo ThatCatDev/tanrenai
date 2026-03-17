@@ -91,6 +91,7 @@ func listDirRecursive(b *strings.Builder, root, prefix string, remainingDepth in
 			fmt.Fprintf(b, "[file] %s\n", rel)
 		}
 	}
+
 	return nil
 }
 
@@ -109,5 +110,6 @@ func isRealPath(s string) bool {
 			return false
 		}
 	}
+
 	return false
 }

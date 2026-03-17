@@ -101,6 +101,7 @@ func (t *ShellExecTool) runAutoPromote(ctx context.Context, command string) (*To
 		for _, snap := range t.ProcessManager.List() {
 			if snap.ID == p.ID {
 				exitCode = snap.ExitCode
+
 				break
 			}
 		}
@@ -115,6 +116,7 @@ func (t *ShellExecTool) runAutoPromote(ctx context.Context, command string) (*To
 		if output == "" {
 			output = "(no output)"
 		}
+
 		return &ToolResult{Output: output}, nil
 
 	case <-timer.C:
@@ -125,12 +127,14 @@ func (t *ShellExecTool) runAutoPromote(ctx context.Context, command string) (*To
 		if output != "" {
 			msg += fmt.Sprintf("\n\nOutput so far:\n%s", output)
 		}
+
 		return &ToolResult{Output: msg}, nil
 
 	case <-ctx.Done():
 		_ = t.ProcessManager.Kill(p.ID)
 		output := t.ProcessManager.Output(p.ID)
 		t.ProcessManager.Remove(p.ID)
+
 		return ErrorResult(fmt.Sprintf("cancelled\n\n%s", output)), nil
 	}
 }
@@ -153,17 +157,20 @@ func (t *ShellExecTool) runBackground(command string) (*ToolResult, error) {
 		for _, snap := range t.ProcessManager.List() {
 			if snap.ID == p.ID {
 				exitCode = snap.ExitCode
+
 				break
 			}
 		}
 		if exitCode != 0 {
 			t.ProcessManager.Remove(p.ID)
+
 			return ErrorResult(fmt.Sprintf("process exited immediately with code %d\n\n%s", exitCode, output)), nil
 		}
 		t.ProcessManager.Remove(p.ID)
 		if output == "" {
 			output = "(no output)"
 		}
+
 		return &ToolResult{Output: fmt.Sprintf("Process completed (exit code 0):\n%s", output)}, nil
 	case <-timer.C:
 		output := t.ProcessManager.Output(p.ID)
@@ -171,6 +178,7 @@ func (t *ShellExecTool) runBackground(command string) (*ToolResult, error) {
 		if output != "" {
 			msg += fmt.Sprintf("\n\nInitial output:\n%s", output)
 		}
+
 		return &ToolResult{Output: msg}, nil
 	}
 }
@@ -202,6 +210,7 @@ func (t *ShellExecTool) runWait(ctx context.Context, command string, timeoutSeco
 		for _, snap := range t.ProcessManager.List() {
 			if snap.ID == p.ID {
 				exitCode = snap.ExitCode
+
 				break
 			}
 		}
@@ -216,18 +225,21 @@ func (t *ShellExecTool) runWait(ctx context.Context, command string, timeoutSeco
 		if output == "" {
 			output = "(no output)"
 		}
+
 		return &ToolResult{Output: output}, nil
 
 	case <-timer.C:
 		_ = t.ProcessManager.Kill(p.ID)
 		output := t.ProcessManager.Output(p.ID)
 		t.ProcessManager.Remove(p.ID)
+
 		return ErrorResult(fmt.Sprintf("command timed out after %s\n\n%s", timeout, output)), nil
 
 	case <-ctx.Done():
 		_ = t.ProcessManager.Kill(p.ID)
 		output := t.ProcessManager.Output(p.ID)
 		t.ProcessManager.Remove(p.ID)
+
 		return ErrorResult(fmt.Sprintf("cancelled\n\n%s", output)), nil
 	}
 }
@@ -266,6 +278,7 @@ func (t *ShellExecTool) runLegacy(ctx context.Context, command string, timeoutSe
 		if ctx.Err() == context.DeadlineExceeded {
 			return ErrorResult(fmt.Sprintf("command timed out after %s\n\n%s", timeout, output)), nil
 		}
+
 		return ErrorResult(fmt.Sprintf("command failed: %v\n\n%s", err, output)), nil
 	}
 

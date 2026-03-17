@@ -167,6 +167,7 @@ func easeInCubic(t float64) float64 {
 
 func easeOutCubic(t float64) float64 {
 	t = 1 - t
+
 	return 1 - t*t*t
 }
 
@@ -231,6 +232,7 @@ func colorizeHammer(line string) string {
 			b.WriteRune(r)
 		}
 	}
+
 	return b.String()
 }
 
@@ -248,6 +250,7 @@ func colorizeAnvil(line string) string {
 			b.WriteRune(r)
 		}
 	}
+
 	return b.String()
 }
 

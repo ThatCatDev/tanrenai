@@ -27,25 +27,25 @@ type Subprocess struct {
 	mu   sync.Mutex
 	port int
 
-	binPath   string
-	args      []string
-	env       []string
-	label     string // log prefix, e.g. "llama-server" or "embedding"
-	quiet     bool
-	baseURL   string
-	healthy   bool
-	stopped   bool          // true after explicit Close()
-	doneCh    chan struct{} // closed when the process exits
+	binPath       string
+	args          []string
+	env           []string
+	label         string // log prefix, e.g. "llama-server" or "embedding"
+	quiet         bool
+	baseURL       string
+	healthy       bool
+	stopped       bool          // true after explicit Close()
+	doneCh        chan struct{} // closed when the process exits
 	healthTimeout time.Duration
 }
 
 // SubprocessConfig holds everything needed to start a llama-server subprocess.
 type SubprocessConfig struct {
-	BinDir  string
-	Args    []string // args to pass after the binary path
-	Port    int      // 0 = auto-allocate
-	Label   string   // log prefix (default "llama-server")
-	Quiet   bool     // suppress subprocess stdout/stderr
+	BinDir        string
+	Args          []string      // args to pass after the binary path
+	Port          int           // 0 = auto-allocate
+	Label         string        // log prefix (default "llama-server")
+	Quiet         bool          // suppress subprocess stdout/stderr
 	HealthTimeout time.Duration // how long to wait for /health (default 120s)
 }
 
@@ -56,7 +56,8 @@ func allocatePort() (int, error) {
 		return 0, fmt.Errorf("allocate port: %w", err)
 	}
 	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
+	_ = l.Close()
+
 	return port, nil
 }
 
@@ -106,6 +107,7 @@ func checkGPUSupport(binPath string) {
 		// macOS with Apple Silicon always has Metal GPU support.
 		if runtime.GOARCH == "arm64" {
 			slog.Info("Using GPU acceleration (Metal)")
+
 			return
 		}
 	case "windows":
@@ -117,6 +119,7 @@ func checkGPUSupport(binPath string) {
 
 	if !hasGPU {
 		slog.Info("No GPU detected — using CPU inference")
+
 		return
 	}
 
@@ -205,6 +208,7 @@ func (s *Subprocess) BaseURL() string {
 func (s *Subprocess) Healthy() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.healthy
 }
 
@@ -219,13 +223,13 @@ func (s *Subprocess) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	// Inject --port into args.
-	args := make([]string, len(s.args))
-	copy(args, s.args)
+	args := append([]string(nil), s.args...)
 	portFound := false
 	for i, a := range args {
 		if a == "--port" && i+1 < len(args) {
 			args[i+1] = strconv.Itoa(s.port)
 			portFound = true
+
 			break
 		}
 	}
@@ -256,12 +260,13 @@ func (s *Subprocess) Start(ctx context.Context) error {
 
 	// Background goroutine to detect process exit.
 	go func() {
-		s.cmd.Wait()
+		_ = s.cmd.Wait()
 		close(s.doneCh)
 	}()
 
 	if err := s.waitForHealth(ctx); err != nil {
-		s.GracefulStop()
+		_ = s.GracefulStop()
+
 		return fmt.Errorf("%s failed to become healthy: %w", s.label, err)
 	}
 
@@ -270,6 +275,7 @@ func (s *Subprocess) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	slog.Info("subprocess ready", "label", s.label, "port", s.port)
+
 	return nil
 }
 
@@ -277,6 +283,7 @@ func (s *Subprocess) Start(ctx context.Context) error {
 func (s *Subprocess) Done() <-chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.doneCh
 }
 
@@ -285,6 +292,7 @@ func (s *Subprocess) ExitCode() int {
 	if s.cmd == nil || s.cmd.ProcessState == nil {
 		return -1
 	}
+
 	return s.cmd.ProcessState.ExitCode()
 }
 
@@ -313,6 +321,7 @@ func (s *Subprocess) GracefulStop() error {
 	if sigErr != nil {
 		// Process may already be dead.
 		slog.Warn("subprocess signal failed, process may have exited", "label", s.label, "error", sigErr)
+
 		return nil
 	}
 
@@ -321,6 +330,7 @@ func (s *Subprocess) GracefulStop() error {
 	case <-s.doneCh:
 		slog.Info("subprocess exited cleanly", "label", s.label)
 		cleanupProcAttr(s.cmd)
+
 		return nil
 	case <-time.After(5 * time.Second):
 		slog.Warn("subprocess did not exit after SIGTERM, sending SIGKILL", "label", s.label, "pid", pid)
@@ -329,6 +339,7 @@ func (s *Subprocess) GracefulStop() error {
 		}
 		<-s.doneCh
 		cleanupProcAttr(s.cmd)
+
 		return nil
 	}
 }
@@ -337,6 +348,7 @@ func (s *Subprocess) GracefulStop() error {
 func (s *Subprocess) WasStopped() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.stopped
 }
 
@@ -379,10 +391,11 @@ func (s *Subprocess) healthCheck(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check returned %d", resp.StatusCode)
 	}
+
 	return nil
 }
 

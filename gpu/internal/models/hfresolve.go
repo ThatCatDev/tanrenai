@@ -16,6 +16,10 @@ type HFFileInfo struct {
 	Size     int64  `json:"size"`
 }
 
+// hfAPIBaseURL is the base URL for the HuggingFace API.
+// It can be overridden in tests.
+var hfAPIBaseURL = "https://huggingface.co"
+
 // ResolveHFModel resolves a HuggingFace model reference into direct download URLs.
 // Accepts formats:
 //   - hf://owner/repo                          → find best single GGUF
@@ -65,33 +69,18 @@ func ResolveHFModel(ref string) ([]string, error) {
 	}
 
 	// If quant specified, filter by subfolder or filename match
+	var filtered []HFFileInfo
+	var filterErr error
 	if quant != "" {
-		var matched []HFFileInfo
-		// Try subfolder match first (e.g. "UD-Q4_K_XL/file.gguf")
-		for _, f := range ggufFiles {
-			if strings.HasPrefix(f.Filename, quant+"/") {
-				matched = append(matched, f)
-			}
+		filtered, filterErr = filterByQuant(ggufFiles, quant, repo)
+		if filterErr != nil {
+			return nil, filterErr
 		}
-		// Fall back to filename substring match
-		if len(matched) == 0 {
-			needle := strings.ToLower(quant)
-			for _, f := range ggufFiles {
-				if strings.Contains(strings.ToLower(f.Filename), needle) {
-					matched = append(matched, f)
-				}
-			}
-		}
-		if len(matched) == 0 {
-			// List available quants
-			quants := availableQuants(ggufFiles)
-			return nil, fmt.Errorf("no GGUF files matching %q in %s\navailable: %s", quant, repo, strings.Join(quants, ", "))
-		}
-		ggufFiles = matched
 	} else {
 		// No quant specified — pick the best single file or smallest quant
-		ggufFiles = pickBestQuant(ggufFiles)
+		filtered = pickBestQuant(ggufFiles)
 	}
+	ggufFiles = filtered
 
 	// Build download URLs
 	sort.Slice(ggufFiles, func(i, j int) bool {
@@ -106,8 +95,38 @@ func ResolveHFModel(ref string) ([]string, error) {
 	return urls, nil
 }
 
+// filterByQuant filters ggufFiles to those matching the given quant specifier.
+// It first tries a subfolder prefix match (e.g. "UD-Q4_K_XL/"), then falls
+// back to a case-insensitive filename substring match. Returns an error listing
+// available quants if no match is found.
+func filterByQuant(ggufFiles []HFFileInfo, quant, repo string) ([]HFFileInfo, error) {
+	var matched []HFFileInfo
+	// Try subfolder match first (e.g. "UD-Q4_K_XL/file.gguf")
+	for _, f := range ggufFiles {
+		if strings.HasPrefix(f.Filename, quant+"/") {
+			matched = append(matched, f)
+		}
+	}
+	// Fall back to filename substring match
+	if len(matched) == 0 {
+		needle := strings.ToLower(quant)
+		for _, f := range ggufFiles {
+			if strings.Contains(strings.ToLower(f.Filename), needle) {
+				matched = append(matched, f)
+			}
+		}
+	}
+	if len(matched) == 0 {
+		quants := availableQuants(ggufFiles)
+
+		return nil, fmt.Errorf("no GGUF files matching %q in %s\navailable: %s", quant, repo, strings.Join(quants, ", "))
+	}
+
+	return matched, nil
+}
+
 func listHFFiles(repo string) ([]HFFileInfo, error) {
-	url := fmt.Sprintf("https://huggingface.co/api/models/%s", repo)
+	url := fmt.Sprintf("%s/api/models/%s", hfAPIBaseURL, repo)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -122,7 +141,7 @@ func listHFFiles(repo string) ([]HFFileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HuggingFace API returned %d", resp.StatusCode)
@@ -160,6 +179,7 @@ func availableQuants(files []HFFileInfo) []string {
 		quants = append(quants, q)
 	}
 	sort.Strings(quants)
+
 	return quants
 }
 

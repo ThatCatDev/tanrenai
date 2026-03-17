@@ -5,7 +5,106 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Lint gpu
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: gpu
+          args: --timeout=5m
+        continue-on-error: true
+      - name: Lint server
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: server
+          args: --timeout=5m
+        continue-on-error: true
+      - name: Lint clients/shared
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: clients/shared
+          args: --timeout=5m
+        continue-on-error: true
+      - name: Lint clients/cli
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: clients/cli
+          args: --timeout=5m
+        continue-on-error: true
+      - name: Lint infra
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: infra
+          args: --timeout=5m
+        continue-on-error: true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: Run gosec
+        run: |
+          mkdir -p sarif-results
+          for mod in gpu server infra; do
+            cd "$GITHUB_WORKSPACE/$mod"
+            gosec -fmt sarif -out "$GITHUB_WORKSPACE/sarif-results/${mod}.sarif" ./... || true
+          done
+          cd "$GITHUB_WORKSPACE/clients/shared"
+          gosec -fmt sarif -out "$GITHUB_WORKSPACE/sarif-results/shared.sarif" ./... || true
+          cd "$GITHUB_WORKSPACE/clients/cli"
+          gosec -fmt sarif -out "$GITHUB_WORKSPACE/sarif-results/cli.sarif" ./... || true
+      - name: Upload gpu SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sarif-results/gpu.sarif
+          category: gosec-gpu
+      - name: Upload server SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sarif-results/server.sarif
+          category: gosec-server
+      - name: Upload shared SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sarif-results/shared.sarif
+          category: gosec-shared
+      - name: Upload cli SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sarif-results/cli.sarif
+          category: gosec-cli
+      - name: Upload infra SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sarif-results/infra.sarif
+          category: gosec-infra
+
   gpu:
     runs-on: ubuntu-latest
     steps:
@@ -13,7 +112,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd gpu && go build ./... && go test ./... && go vet ./...
+      - run: cd gpu && go build ./... && go vet ./...
+      - name: Test
+        run: cd gpu && go test ./...
 
   server:
     runs-on: ubuntu-latest
@@ -22,7 +123,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd server && go build ./... && go test ./... && go vet ./...
+      - run: cd server && go build ./... && go vet ./...
+      - name: Test
+        run: cd server && go test ./...
 
   clients-shared:
     runs-on: ubuntu-latest
@@ -31,7 +134,26 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd clients/shared && go build ./... && go test ./... && go vet ./...
+      - run: cd clients/shared && go build ./... && go vet ./...
+      - name: Test with coverage
+        run: |
+          cd clients/shared
+          go test ./... -coverprofile=coverage.out -covermode=atomic
+          total=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
+          echo "Coverage: ${total}%"
+          threshold=75
+          if [ "$(echo "$total < $threshold" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${total}% is below threshold ${threshold}%"
+            exit 1
+          fi
+      - name: Per-package coverage
+        if: always()
+        run: |
+          cd clients/shared
+          echo "### clients/shared coverage by package" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out | grep -E '(^total:|^github)' | awk '{printf "%-60s %s\n", $1, $NF}' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   clients-cli:
     runs-on: ubuntu-latest
@@ -40,7 +162,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd clients/cli && go build ./... && go test ./... && go vet ./...
+      - run: cd clients/cli && go build ./... && go vet ./...
+      - name: Test
+        run: cd clients/cli && go test ./...
 
   infra:
     runs-on: ubuntu-latest
@@ -49,7 +173,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd infra && go build ./... && go test ./... && go vet ./...
+      - run: cd infra && go build ./... && go vet ./...
+      - name: Test
+        run: cd infra && go test ./...
 
   clients-desktop:
     runs-on: ubuntu-latest
@@ -62,4 +188,63 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libgirepository1.0-dev
-      - run: cd clients/desktop && go build ./... && go test ./... && go vet ./...
+      - run: cd clients/desktop && go build ./... && go vet ./...
+      - name: Test
+        run: cd clients/desktop && go test ./...
+
+  coverage-comment:
+    if: always() && github.event_name == 'pull_request'
+    needs: [clients-shared, clients-cli, gpu, server, infra]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Collect coverage
+        run: |
+          get_coverage() {
+            local dir="$1"
+            cd "$GITHUB_WORKSPACE/$dir"
+            go test ./... -coverprofile=cov.out -covermode=atomic > /dev/null 2>&1 || true
+            if [ -f cov.out ]; then
+              go tool cover -func=cov.out 2>/dev/null | awk '/^total:/{gsub(/%/,"",$NF); print $NF}'
+            fi
+            cd "$GITHUB_WORKSPACE"
+          }
+
+          {
+            echo "## Test Coverage Report"
+            echo ""
+            echo "| Module | Coverage |"
+            echo "|--------|----------|"
+
+            for name in gpu server clients/shared clients/cli infra; do
+              pct=$(get_coverage "$name")
+              if [ -n "$pct" ]; then
+                if [ "$(echo "$pct >= 80" | bc -l)" -eq 1 ]; then
+                  icon="🟢"
+                elif [ "$(echo "$pct >= 60" | bc -l)" -eq 1 ]; then
+                  icon="🟡"
+                else
+                  icon="🔴"
+                fi
+                echo "| \`$name\` | $icon $pct% |"
+              else
+                echo "| \`$name\` | ⚪ n/a |"
+              fi
+            done
+
+            echo ""
+            echo "> 🟢 ≥80% · 🟡 ≥60% · 🔴 <60%"
+            echo ""
+            echo "_Updated by CI — $(date -u '+%Y-%m-%d %H:%M UTC')_"
+          } > /tmp/coverage_comment.md
+
+          cat /tmp/coverage_comment.md
+
+      - name: Post or update PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage-report
+          path: /tmp/coverage_comment.md

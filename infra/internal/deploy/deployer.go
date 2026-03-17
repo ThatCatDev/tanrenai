@@ -51,7 +51,7 @@ func (d *Deployer) Run(ctx context.Context) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve instance: %w", err)
 	}
-	fmt.Fprintf(d.output, "Instance %d (%s) — $%.3f/hr\n", inst.ID, inst.GPUName, inst.CostPerHr)
+	_, _ = fmt.Fprintf(d.output, "Instance %d (%s) — $%.3f/hr\n", inst.ID, inst.GPUName, inst.CostPerHr)
 
 	// 2. Wait for instance to be running with SSH details
 	instID := fmt.Sprintf("%d", inst.ID)
@@ -70,11 +70,13 @@ func (d *Deployer) Run(ctx context.Context) (*Result, error) {
 				updated, err := d.vastai.GetInstance(waitCtx, instID)
 				if err != nil {
 					slog.Debug("polling instance", "err", err)
+
 					continue
 				}
 				slog.Debug("instance poll", "status", updated.Status, "ssh_host", updated.SSHHost, "ssh_port", updated.SSHPort)
 				if updated.Status == "running" && updated.SSHHost != "" && updated.SSHPort != 0 {
 					*inst = *updated
+
 					return nil
 				}
 			}
@@ -99,12 +101,13 @@ func (d *Deployer) Run(ctx context.Context) (*Result, error) {
 	err = tui.RunWithSpinner(d.output, "Connecting via SSH", func() error {
 		var connErr error
 		sshClient, connErr = remote.Connect(ctx, inst.SSHHost, inst.SSHPort, "root")
+
 		return connErr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("SSH connect: %w", err)
 	}
-	defer sshClient.Close()
+	defer func() { _ = sshClient.Close() }()
 
 	// 4. Generate network auth key
 	var authKey string
@@ -112,6 +115,7 @@ func (d *Deployer) Run(ctx context.Context) (*Result, error) {
 		err = tui.RunWithSpinner(d.output, fmt.Sprintf("Generating %s auth key", d.network.Name()), func() error {
 			var keyErr error
 			authKey, keyErr = d.network.GenerateAuthKey(ctx)
+
 			return keyErr
 		})
 		if err != nil {
@@ -129,7 +133,7 @@ func (d *Deployer) Run(ctx context.Context) (*Result, error) {
 		stageRef := stage
 
 		if d.verbose {
-			fmt.Fprintf(d.output, "\n=== %s ===\n", stageName)
+			_, _ = fmt.Fprintf(d.output, "\n=== %s ===\n", stageName)
 			if err := remote.RunStages(ctx, sshClient, []remote.SetupStage{stageRef}, d.output); err != nil {
 				return nil, fmt.Errorf("setup stage %q: %w", stageName, err)
 			}
@@ -140,7 +144,8 @@ func (d *Deployer) Run(ctx context.Context) (*Result, error) {
 			})
 			if err != nil {
 				// Show captured output on failure
-				fmt.Fprintf(d.output, "\n--- %s output ---\n%s\n", stageName, buf.String())
+				_, _ = fmt.Fprintf(d.output, "\n--- %s output ---\n%s\n", stageName, buf.String())
+
 				return nil, fmt.Errorf("setup stage %q: %w", stageName, err)
 			}
 		}
@@ -154,6 +159,7 @@ func (d *Deployer) Run(ctx context.Context) (*Result, error) {
 			defer peerCancel()
 			var peerErr error
 			gpuIP, peerErr = d.network.WaitForPeer(peerCtx, hostname)
+
 			return peerErr
 		})
 		if err != nil {
@@ -184,27 +190,12 @@ func (d *Deployer) Run(ctx context.Context) (*Result, error) {
 func (d *Deployer) resolveInstance(ctx context.Context) (*vastai.Instance, error) {
 	if d.cfg.VastaiInstance != "" {
 		slog.Info("using existing instance", "id", d.cfg.VastaiInstance)
-		inst, err := d.vastai.GetInstance(ctx, d.cfg.VastaiInstance)
-		if err != nil {
-			return nil, err
-		}
-		if inst.Status == "exited" {
-			fmt.Fprintf(d.output, "Starting stopped instance %d...\n", inst.ID)
-			if err := d.vastai.StartInstance(ctx, d.cfg.VastaiInstance); err != nil {
-				return nil, fmt.Errorf("start instance: %w", err)
-			}
-			// Re-fetch to get updated status
-			time.Sleep(3 * time.Second)
-			inst, err = d.vastai.GetInstance(ctx, d.cfg.VastaiInstance)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return inst, nil
+
+		return d.ensureInstanceRunning(ctx, d.cfg.VastaiInstance)
 	}
 
 	// Fetch existing instances and show interactive picker
-	fmt.Fprintf(d.output, "Fetching instances...\n")
+	_, _ = fmt.Fprintf(d.output, "Fetching instances...\n")
 	instances, err := d.vastai.ListInstances(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list instances: %w", err)
@@ -215,25 +206,37 @@ func (d *Deployer) resolveInstance(ctx context.Context) (*vastai.Instance, error
 		return nil, err
 	}
 
-	if choice.Instance != nil {
-		inst := choice.Instance
-		if inst.Status == "exited" {
-			fmt.Fprintf(d.output, "Starting stopped instance %d...\n", inst.ID)
-			id := fmt.Sprintf("%d", inst.ID)
-			if err := d.vastai.StartInstance(ctx, id); err != nil {
-				return nil, fmt.Errorf("start instance: %w", err)
-			}
-			time.Sleep(3 * time.Second)
-			inst, err = d.vastai.GetInstance(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-		}
+	if choice.Instance == nil {
+		// User chose "Create new instance"
+		return d.createNewInstance(ctx)
+	}
+
+	id := fmt.Sprintf("%d", choice.Instance.ID)
+
+	return d.ensureInstanceRunning(ctx, id)
+}
+
+// ensureInstanceRunning fetches an instance by ID and starts it if it is stopped,
+// returning the latest instance state.
+func (d *Deployer) ensureInstanceRunning(ctx context.Context, id string) (*vastai.Instance, error) {
+	inst, err := d.vastai.GetInstance(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if inst.Status != "exited" {
 		return inst, nil
 	}
 
-	// User chose "Create new instance"
-	return d.createNewInstance(ctx)
+	_, _ = fmt.Fprintf(d.output, "Starting stopped instance %d...\n", inst.ID)
+	if err := d.vastai.StartInstance(ctx, id); err != nil {
+		return nil, fmt.Errorf("start instance: %w", err)
+	}
+
+	// Re-fetch to get updated status
+	time.Sleep(3 * time.Second)
+
+	return d.vastai.GetInstance(ctx, id)
 }
 
 func (d *Deployer) createNewInstance(ctx context.Context) (*vastai.Instance, error) {
@@ -251,6 +254,7 @@ func (d *Deployer) createNewInstance(ctx context.Context) (*vastai.Instance, err
 			MaxCostPerHr: d.cfg.MaxCostPerHr,
 			MinDiskGB:    d.cfg.DiskGB,
 		})
+
 		return searchErr
 	})
 	if err != nil {
@@ -273,6 +277,7 @@ func (d *Deployer) createNewInstance(ctx context.Context) (*vastai.Instance, err
 			inst, createErr = d.vastai.CreateInstance(ctx, choice.Offer.ID, vastai.CreateOpts{
 				DiskGB: d.cfg.DiskGB,
 			})
+
 			return createErr
 		})
 	if err != nil {
@@ -302,7 +307,7 @@ func (d *Deployer) healthCheck(ctx context.Context, gpuURL string) error {
 			if err != nil {
 				continue
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}

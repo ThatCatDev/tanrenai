@@ -13,5 +13,6 @@ func WriteTemplateFile(name, content string) (string, error) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return "", err
 	}
+
 	return path, nil
 }

@@ -130,6 +130,7 @@ func TestParseHFURL(t *testing.T) {
 		repo, branch, ok := ParseHFURL(tt.url)
 		if ok != tt.ok {
 			t.Errorf("ParseHFURL(%q): ok = %v, want %v", tt.url, ok, tt.ok)
+
 			continue
 		}
 		if ok {

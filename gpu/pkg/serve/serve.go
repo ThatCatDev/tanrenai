@@ -69,7 +69,7 @@ func Start(ctx context.Context, cfg Config) error {
 			if err != nil {
 				return fmt.Errorf("write chat template: %w", err)
 			}
-			defer os.Remove(path)
+			defer func() { _ = os.Remove(path) }()
 			icfg.ChatTemplateFile = path
 		default:
 			return fmt.Errorf("unknown chat template %q (available: chatml; or use ChatTemplateFile for custom templates)", cfg.ChatTemplate)
@@ -110,5 +110,6 @@ func DownloadModel(url, destDir string, progress DownloadProgress) (string, erro
 // ResolveModel resolves a model name to its file path in the models directory.
 func ResolveModel(name string) (string, error) {
 	store := models.NewStore(config.ModelsDir())
+
 	return store.Resolve(name)
 }

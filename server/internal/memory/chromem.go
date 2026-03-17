@@ -98,6 +98,7 @@ func (s *ChromemStore) Add(ctx context.Context, entry *Entry) error {
 	if err := s.saveIndex(); err != nil {
 		slog.Error("failed to save memory index", "error", err)
 	}
+
 	return nil
 }
 
@@ -192,6 +193,7 @@ func (s *ChromemStore) Delete(ctx context.Context, id string) error {
 	if err := s.saveIndex(); err != nil {
 		slog.Error("failed to save memory index", "error", err)
 	}
+
 	return nil
 }
 
@@ -213,6 +215,7 @@ func (s *ChromemStore) Clear(ctx context.Context) error {
 	if err := s.saveIndex(); err != nil {
 		slog.Error("failed to save memory index", "error", err)
 	}
+
 	return nil
 }
 
@@ -229,12 +232,14 @@ func (s *ChromemStore) entryFromResult(r chromem.Result) Entry {
 	s.mu.RLock()
 	if e, ok := s.entries[r.ID]; ok {
 		s.mu.RUnlock()
+
 		return e
 	}
 	s.mu.RUnlock()
 
 	// Fallback: reconstruct from metadata
 	ts, _ := time.Parse(time.RFC3339, r.Metadata["timestamp"])
+
 	return Entry{
 		ID:        r.ID,
 		UserMsg:   r.Metadata["user_msg"],
@@ -250,6 +255,7 @@ func (s *ChromemStore) indexPath() string {
 	if s.persistDir == "" {
 		return ""
 	}
+
 	return filepath.Join(s.persistDir, "entries_index.json")
 }
 
@@ -269,6 +275,7 @@ func (s *ChromemStore) saveIndex() error {
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("write index: %w", err)
 	}
+
 	return nil
 }
 
@@ -285,6 +292,7 @@ func (s *ChromemStore) loadIndex() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return json.Unmarshal(data, &s.entries)
 }
 
@@ -299,6 +307,7 @@ func extractWords(text string) []string {
 			words = append(words, w)
 		}
 	}
+
 	return words
 }
 
@@ -314,5 +323,6 @@ func keywordScore(queryWords []string, content string) float32 {
 			matches++
 		}
 	}
+
 	return float32(matches) / float32(len(queryWords))
 }

@@ -18,6 +18,7 @@ func (h *TokenizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rn := h.GetRunner()
 	if rn == nil {
 		writeError(w, http.StatusServiceUnavailable, "no_model", "no model loaded")
+
 		return
 	}
 
@@ -26,12 +27,14 @@ func (h *TokenizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body")
+
 		return
 	}
 
 	count, err := rn.Tokenize(r.Context(), req.Content)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "tokenize_error", err.Error())
+
 		return
 	}
 
@@ -42,5 +45,5 @@ func (h *TokenizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"tokens": tokens})
+	_ = json.NewEncoder(w).Encode(map[string]any{"tokens": tokens})
 }

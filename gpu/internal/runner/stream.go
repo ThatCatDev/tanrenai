@@ -33,12 +33,14 @@ func ParseSSEStream(r io.Reader) <-chan StreamEvent {
 
 			if data == "[DONE]" {
 				ch <- StreamEvent{Done: true}
+
 				return
 			}
 
 			var chunk api.ChatCompletionChunk
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				ch <- StreamEvent{Err: err}
+
 				return
 			}
 			ch <- StreamEvent{Chunk: &chunk}
@@ -48,6 +50,7 @@ func ParseSSEStream(r io.Reader) <-chan StreamEvent {
 			ch <- StreamEvent{Err: err}
 		}
 	}()
+
 	return ch
 }
 

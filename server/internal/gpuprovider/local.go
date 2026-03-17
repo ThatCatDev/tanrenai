@@ -30,6 +30,7 @@ func (p *LocalProvider) Status(ctx context.Context) (*Status, error) {
 	if err := p.gpuClient.Health(ctx); err == nil {
 		state = "running"
 	}
+
 	return &Status{
 		State:    state,
 		Provider: "local",

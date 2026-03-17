@@ -91,14 +91,15 @@ func (m *Manager) Train(ctx context.Context, runID string) error {
 		run.Status = StatusFailed
 		run.Error = err.Error()
 		run.UpdatedAt = time.Now()
-		m.runStore.Save(run)
+		_ = m.runStore.Save(run)
+
 		return fmt.Errorf("start training: %w", err)
 	}
 
 	run.Status = StatusTraining
 	run.AdapterDir = filepath.Join(outputDir, "adapter")
 	run.UpdatedAt = time.Now()
-	m.runStore.Save(run)
+	_ = m.runStore.Save(run)
 
 	return nil
 }
@@ -115,15 +116,16 @@ func (m *Manager) Status(ctx context.Context, runID string) (*TrainingRun, error
 		status, err := m.client.Status(ctx, runID)
 		if err == nil {
 			run.Metrics = status.Metrics
-			if status.Status == "done" {
+			switch status.Status {
+			case "done":
 				run.Status = StatusMerging // ready for merge
 				run.UpdatedAt = time.Now()
-				m.runStore.Save(run)
-			} else if status.Status == "failed" {
+				_ = m.runStore.Save(run)
+			case "failed":
 				run.Status = StatusFailed
 				run.Error = status.Error
 				run.UpdatedAt = time.Now()
-				m.runStore.Save(run)
+				_ = m.runStore.Save(run)
 			}
 		}
 	}
@@ -152,7 +154,7 @@ func (m *Manager) Merge(ctx context.Context, runID string, outputName string) (s
 
 	run.Status = StatusMerging
 	run.UpdatedAt = time.Now()
-	m.runStore.Save(run)
+	_ = m.runStore.Save(run)
 
 	// Merge adapter into base model
 	mergedDir := filepath.Join(config.TrainingRunsDir(), runID, "merged")
@@ -164,7 +166,8 @@ func (m *Manager) Merge(ctx context.Context, runID string, outputName string) (s
 		run.Status = StatusFailed
 		run.Error = fmt.Sprintf("merge failed: %v", err)
 		run.UpdatedAt = time.Now()
-		m.runStore.Save(run)
+		_ = m.runStore.Save(run)
+
 		return "", fmt.Errorf("merge: %w", err)
 	}
 
@@ -182,14 +185,15 @@ func (m *Manager) Merge(ctx context.Context, runID string, outputName string) (s
 		run.Status = StatusFailed
 		run.Error = fmt.Sprintf("convert failed: %v", err)
 		run.UpdatedAt = time.Now()
-		m.runStore.Save(run)
+		_ = m.runStore.Save(run)
+
 		return "", fmt.Errorf("convert: %w", err)
 	}
 
 	run.Status = StatusDone
 	run.OutputModel = ggufPath
 	run.UpdatedAt = time.Now()
-	m.runStore.Save(run)
+	_ = m.runStore.Save(run)
 
 	return ggufPath, nil
 }
@@ -208,7 +212,7 @@ func (m *Manager) Delete(ctx context.Context, runID string) error {
 
 	// Remove the dataset file if it exists
 	if run.DatasetPath != "" {
-		os.Remove(run.DatasetPath)
+		_ = os.Remove(run.DatasetPath)
 	}
 
 	return m.runStore.Delete(runID)

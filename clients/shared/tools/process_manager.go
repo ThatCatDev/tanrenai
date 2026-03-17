@@ -71,6 +71,7 @@ func (pm *ProcessManager) Start(command string) (*ManagedProcess, error) {
 
 	if err := cmd.Start(); err != nil {
 		cancel()
+
 		return nil, fmt.Errorf("failed to start: %w", err)
 	}
 
@@ -134,6 +135,7 @@ func (pm *ProcessManager) List() []ProcessSnapshot {
 			StartedAt: p.StartedAt,
 		}
 	}
+
 	return out
 }
 
@@ -146,6 +148,7 @@ func (pm *ProcessManager) Output(id int) string {
 			return p.buf.String()
 		}
 	}
+
 	return ""
 }
 
@@ -158,9 +161,11 @@ func (pm *ProcessManager) Kill(id int) error {
 			if p.Status == ProcessRunning {
 				p.cancel()
 			}
+
 			return nil
 		}
 	}
+
 	return fmt.Errorf("process %d not found", id)
 }
 
@@ -173,6 +178,7 @@ func (pm *ProcessManager) Done(id int) <-chan struct{} {
 			return p.done
 		}
 	}
+
 	return nil
 }
 
@@ -180,6 +186,7 @@ func (pm *ProcessManager) Done(id int) <-chan struct{} {
 func (pm *ProcessManager) Count() int {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
+
 	return len(pm.processes)
 }
 
@@ -193,6 +200,7 @@ func (pm *ProcessManager) RunningCount() int {
 			n++
 		}
 	}
+
 	return n
 }
 
@@ -203,6 +211,7 @@ func (pm *ProcessManager) Remove(id int) {
 	for i, p := range pm.processes {
 		if p.ID == id {
 			pm.processes = append(pm.processes[:i], pm.processes[i+1:]...)
+
 			return
 		}
 	}

@@ -22,6 +22,7 @@ func NewHeadscaleProvider(baseURL, apiKey, user string) *HeadscaleProvider {
 	if user == "" {
 		user = "tanrenai"
 	}
+
 	return &HeadscaleProvider{
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     apiKey,
@@ -56,10 +57,11 @@ func (h *HeadscaleProvider) GenerateAuthKey(ctx context.Context) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("headscale API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return "", fmt.Errorf("headscale returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -88,10 +90,11 @@ func (h *HeadscaleProvider) getUserID(ctx context.Context, name string) (uint64,
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return 0, fmt.Errorf("headscale returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -157,7 +160,7 @@ func (h *HeadscaleProvider) ListNodes(ctx context.Context) ([]Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("headscale returned %d", resp.StatusCode)
@@ -178,6 +181,7 @@ func (h *HeadscaleProvider) ListNodes(ctx context.Context) ([]Node, error) {
 	for i, n := range result.Nodes {
 		nodes[i] = Node{Name: n.GivenName, Online: n.Online, IPs: n.IPAddresses}
 	}
+
 	return nodes, nil
 }
 
@@ -214,7 +218,7 @@ func (h *HeadscaleProvider) findNode(ctx context.Context, hostname string) (stri
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("headscale returned %d", resp.StatusCode)

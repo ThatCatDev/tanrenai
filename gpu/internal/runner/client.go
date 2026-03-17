@@ -56,10 +56,11 @@ func (c *Client) ChatCompletion(ctx context.Context, req *api.ChatCompletionRequ
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return nil, fmt.Errorf("llama-server returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -92,10 +93,11 @@ func (c *Client) Tokenize(ctx context.Context, text string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return 0, fmt.Errorf("tokenize returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -126,15 +128,17 @@ func (c *Client) ChatCompletionStream(ctx context.Context, req *api.ChatCompleti
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+
 		return fmt.Errorf("llama-server returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	// Pipe the SSE stream directly to the response writer.
 	// llama-server already formats it as proper SSE (data: {...}\n\n).
 	_, err = io.Copy(w, resp.Body)
+
 	return err
 }

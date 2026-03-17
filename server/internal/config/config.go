@@ -43,6 +43,7 @@ func DataDir() string {
 	if err != nil {
 		log.Fatalf("failed to get user home directory: %v", err)
 	}
+
 	return filepath.Join(home, ".local", "share", "tanrenai")
 }
 
@@ -62,5 +63,6 @@ func EnsureDirs(cfg *Config) error {
 			return err
 		}
 	}
+
 	return nil
 }

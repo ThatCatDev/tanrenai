@@ -72,8 +72,9 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		s.provider.Close()
 		if s.memStore != nil {
-			s.memStore.Close()
+			_ = s.memStore.Close()
 		}
+
 		return nil
 	case err := <-errCh:
 		return err

@@ -151,5 +151,6 @@ func formatStepSummaries(steps []PlanStep) string {
 		}
 		fmt.Fprintf(&b, "- Step %d [%s]: %s → %s\n", s.Index, status, s.Description, result)
 	}
+
 	return b.String()
 }

@@ -74,14 +74,15 @@ func (s *Server) Start(ctx context.Context) error {
 			slog.Error("server shutdown error", "error", err)
 		}
 		if s.runner != nil {
-			s.runner.Close()
+			_ = s.runner.Close()
 		}
 		if s.embeddingRunner != nil {
-			s.embeddingRunner.Sub.GracefulStop()
+			_ = s.embeddingRunner.Sub.GracefulStop()
 		}
 		if s.templateCleanup != nil {
 			s.templateCleanup()
 		}
+
 		return nil
 	case err := <-errCh:
 		return err
@@ -128,6 +129,7 @@ func (s *Server) StartEmbeddingSubprocess(ctx context.Context, modelName string)
 	}
 
 	slog.Info("embedding server ready", "url", sub.BaseURL(), "model", modelName)
+
 	return &EmbeddingSubprocess{Sub: sub, BaseURL: sub.BaseURL()}, nil
 }
 
@@ -145,7 +147,7 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) (*LoadResult, 
 
 	// Close existing runner if any
 	if s.runner != nil {
-		s.runner.Close()
+		_ = s.runner.Close()
 		s.runner = nil
 	}
 
@@ -201,5 +203,6 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) (*LoadResult, 
 	}
 
 	s.runner = r
+
 	return &LoadResult{CtxSize: opts.CtxSize}, nil
 }

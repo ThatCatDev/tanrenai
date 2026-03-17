@@ -58,6 +58,7 @@ func (t *FileWriteTool) Execute(_ context.Context, arguments string) (*ToolResul
 	}
 
 	diff := GenerateUnifiedDiff(args.Path, oldContent, args.Content)
+
 	return &ToolResult{
 		Output: fmt.Sprintf("Successfully wrote %d bytes to %s", len(args.Content), args.Path),
 		Diff:   diff,

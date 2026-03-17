@@ -180,6 +180,7 @@ func TestSummarization(t *testing.T) {
 	for _, msg := range msgs {
 		if strings.Contains(msg.Content, "[Conversation summary]") {
 			hasSummary = true
+
 			break
 		}
 	}
@@ -355,5 +356,167 @@ func TestSummarizeEmptyResponse(t *testing.T) {
 	err := mgr.Summarize(context.Background(), mockComplete)
 	if err == nil {
 		t.Error("expected error from empty summarization response")
+	}
+}
+
+func TestScrollsInMessages(t *testing.T) {
+	mgr := newTestManager(4096)
+	mgr.SetSystemPrompt("sys")
+	mgr.SetScrolls([]api.Message{
+		{Role: "system", Content: "scroll content alpha"},
+	})
+
+	msgs := mgr.Messages()
+	if len(msgs) == 0 {
+		t.Fatal("expected at least one message")
+	}
+	if msgs[0].Role != "system" {
+		t.Errorf("first message should be system, got %s", msgs[0].Role)
+	}
+	if !strings.Contains(msgs[0].Content, "scroll content alpha") {
+		t.Errorf("system message should contain scroll content, got %q", msgs[0].Content)
+	}
+}
+
+func TestScrollsBudget(t *testing.T) {
+	mgr := newTestManager(4096)
+	mgr.SetSystemPrompt("sys")
+	mgr.SetScrolls([]api.Message{
+		{Role: "system", Content: "scroll budget test content"},
+	})
+
+	budget := mgr.Budget()
+	if budget.Scrolls <= 0 {
+		t.Errorf("Scrolls = %d, want > 0", budget.Scrolls)
+	}
+	if budget.System+budget.Scrolls+budget.Memory+budget.History+budget.Summary+budget.Available+100 != budget.Total {
+		t.Errorf("budget components don't add up: system=%d + scrolls=%d + memory=%d + history=%d + summary=%d + available=%d + response_budget(100) != total=%d",
+			budget.System, budget.Scrolls, budget.Memory, budget.History, budget.Summary, budget.Available, budget.Total)
+	}
+}
+
+func TestScrollsOrderInSystemMessage(t *testing.T) {
+	mgr := newTestManager(4096)
+	mgr.SetSystemPrompt("PROMPT_CONTENT")
+	mgr.AddContextFile("ctx.txt", "CONTEXT_FILE_CONTENT")
+	mgr.SetScrolls([]api.Message{
+		{Role: "system", Content: "SCROLL_CONTENT"},
+	})
+	mgr.SetMemories([]api.Message{
+		{Role: "system", Content: "MEMORY_CONTENT"},
+	})
+	mgr.SetSummary("SUMMARY_CONTENT")
+
+	msgs := mgr.Messages()
+	if len(msgs) == 0 {
+		t.Fatal("expected at least one message")
+	}
+	sys := msgs[0].Content
+
+	promptIdx := strings.Index(sys, "PROMPT_CONTENT")
+	contextIdx := strings.Index(sys, "CONTEXT_FILE_CONTENT")
+	scrollIdx := strings.Index(sys, "SCROLL_CONTENT")
+	memoryIdx := strings.Index(sys, "MEMORY_CONTENT")
+	summaryIdx := strings.Index(sys, "SUMMARY_CONTENT")
+
+	for name, idx := range map[string]int{
+		"prompt":       promptIdx,
+		"context file": contextIdx,
+		"scroll":       scrollIdx,
+		"memory":       memoryIdx,
+		"summary":      summaryIdx,
+	} {
+		if idx == -1 {
+			t.Errorf("system message missing %s content", name)
+		}
+	}
+
+	// Verify order: prompt < context file < scroll < memory < summary
+	if promptIdx > contextIdx {
+		t.Errorf("prompt (%d) should appear before context file (%d)", promptIdx, contextIdx)
+	}
+	if contextIdx > scrollIdx {
+		t.Errorf("context file (%d) should appear before scroll (%d)", contextIdx, scrollIdx)
+	}
+	if scrollIdx > memoryIdx {
+		t.Errorf("scroll (%d) should appear before memory (%d)", scrollIdx, memoryIdx)
+	}
+	if memoryIdx > summaryIdx {
+		t.Errorf("memory (%d) should appear before summary (%d)", memoryIdx, summaryIdx)
+	}
+}
+
+func TestClearScrolls(t *testing.T) {
+	mgr := newTestManager(4096)
+	mgr.SetSystemPrompt("sys")
+	mgr.SetScrolls([]api.Message{
+		{Role: "system", Content: "scroll to be cleared"},
+	})
+
+	// Verify scroll is present before clearing
+	msgs := mgr.Messages()
+	if !strings.Contains(msgs[0].Content, "scroll to be cleared") {
+		t.Fatal("scroll should be present before ClearScrolls")
+	}
+
+	mgr.ClearScrolls()
+
+	msgs = mgr.Messages()
+	if strings.Contains(msgs[0].Content, "scroll to be cleared") {
+		t.Errorf("scroll content should be gone after ClearScrolls, got %q", msgs[0].Content)
+	}
+
+	budget := mgr.Budget()
+	if budget.Scrolls != 0 {
+		t.Errorf("Scrolls budget = %d, want 0 after ClearScrolls", budget.Scrolls)
+	}
+}
+
+func TestScrollsWithMemoriesBudget(t *testing.T) {
+	mgr := newTestManager(4096)
+	mgr.SetSystemPrompt("sys")
+	mgr.SetScrolls([]api.Message{
+		{Role: "system", Content: "scroll content for budget test"},
+	})
+	mgr.SetMemories([]api.Message{
+		{Role: "system", Content: "memory content for budget test"},
+	})
+
+	budget := mgr.Budget()
+	if budget.Scrolls <= 0 {
+		t.Errorf("Scrolls = %d, want > 0", budget.Scrolls)
+	}
+	if budget.Memory <= 0 {
+		t.Errorf("Memory = %d, want > 0", budget.Memory)
+	}
+	if budget.System+budget.Scrolls+budget.Memory+budget.History+budget.Summary+budget.Available+100 != budget.Total {
+		t.Errorf("budget components don't add up: system=%d + scrolls=%d + memory=%d + history=%d + summary=%d + available=%d + response_budget(100) != total=%d",
+			budget.System, budget.Scrolls, budget.Memory, budget.History, budget.Summary, budget.Available, budget.Total)
+	}
+}
+
+func TestNeedsSummaryWithScrolls(t *testing.T) {
+	// Use a small context window so scrolls noticeably reduce available space
+	mgr := newTestManager(300)
+	mgr.SetSystemPrompt("sys")
+
+	// Add messages that fill roughly half the available space without scrolls
+	for i := 0; i < 5; i++ {
+		mgr.Append(api.Message{Role: "user", Content: fmt.Sprintf("Message %d with padding text here", i)})
+		mgr.Append(api.Message{Role: "assistant", Content: fmt.Sprintf("Response %d with padding text here", i)})
+	}
+
+	// Confirm no summary needed yet (messages fit)
+	if mgr.NeedsSummary() {
+		t.Skip("history already too large for this context size; adjust test parameters")
+	}
+
+	// Now inject large scrolls to consume the remaining available space
+	mgr.SetScrolls([]api.Message{
+		{Role: "system", Content: strings.Repeat("scroll content ", 30)},
+	})
+
+	if !mgr.NeedsSummary() {
+		t.Error("NeedsSummary should be true after large scrolls reduce available space")
 	}
 }

@@ -11,10 +11,11 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
-	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
+	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
+	"github.com/ThatCatDev/tanrenai/shared/scrolls"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
 )
 
@@ -33,6 +34,8 @@ var slashCommands = []struct {
 	{"/memory search ", "Search memories"},
 	{"/memory forget ", "Delete a memory"},
 	{"/memory clear", "Clear all memories"},
+	{"/scrolls", "List loaded scrolls"},
+	{"/scrolls show ", "Show a scroll's content"},
 	{"/help", "Show help"},
 	{"/quit", "Exit"},
 	{"/exit", "Exit"},
@@ -68,7 +71,7 @@ type tuiApp struct {
 	procMgr      *tools.ProcessManager
 	processPanel *tview.Table
 
-	inputArea *tview.TextArea
+	inputArea  *tview.TextArea
 	statusBar  *tview.TextView
 	statusText string
 
@@ -77,8 +80,8 @@ type tuiApp struct {
 	toolResults   map[int]string       // line index -> full tool result
 	toolCallLines map[int]api.ToolCall // line index -> original tool call
 	expanded      bool                 // Tab toggles full tool output
-	filePath             string               // "" = no file viewer open
-	focus                focusTarget
+	filePath      string               // "" = no file viewer open
+	focus         focusTarget
 	loading       bool // true until startup goroutine completes
 	processing    bool
 	ctrlCPending  bool
@@ -102,28 +105,30 @@ type tuiApp struct {
 	anvilStop  chan struct{}
 
 	// Progress tracking
-	iterStartTime    time.Time
-	iterHistory      []iterRecord // persists across turns — never reset
-	currentIterTokens int         // input tokens for the current iteration
-	currentIterOutput int         // output chars accumulated this iteration
-	lastInputTokens  int         // input tokens for status bar display
-	lastOutputTokens int         // output tokens for status bar display
-	estimatedDur     time.Duration
-	progressTicker   *time.Ticker
-	progressStop     chan struct{}
+	iterStartTime     time.Time
+	iterHistory       []iterRecord // persists across turns — never reset
+	currentIterTokens int          // input tokens for the current iteration
+	currentIterOutput int          // output chars accumulated this iteration
+	lastInputTokens   int          // input tokens for status bar display
+	lastOutputTokens  int          // output tokens for status bar display
+	estimatedDur      time.Duration
+	progressTicker    *time.Ticker
+	progressStop      chan struct{}
 
 	// Dependencies (set by startup goroutine, then immutable)
-	client        *apiclient.Client
-	modelName     string
-	mgr           *chatctx.Manager
-	registry      *tools.Registry
-	permissions   *tools.Permissions
-	memoryEnabled bool
+	client            *apiclient.Client
+	modelName         string
+	mgr               *chatctx.Manager
+	registry          *tools.Registry
+	permissions       *tools.Permissions
+	memoryEnabled     bool
+	allScrolls        []scrolls.Scroll
+	scrollsEnabled    bool
 	maxIterations     int
 	maxResponseTokens int
-	agentMode     bool
-	completeFn    agent.CompletionFunc
-	streamFn      agent.StreamingCompletionFunc
+	agentMode         bool
+	completeFn        agent.CompletionFunc
+	streamFn          agent.StreamingCompletionFunc
 }
 
 func newTuiApp(modelName string) *tuiApp {
@@ -192,8 +197,10 @@ func newHDivider() *tview.Box {
 		for cx := x; cx < x+width; cx++ {
 			screen.SetContent(cx, y, tcell.RuneHLine, nil, style)
 		}
+
 		return x, y, width, height
 	})
+
 	return box
 }
 
@@ -209,8 +216,10 @@ func newVDivider(focused bool) *tview.Box {
 		for cy := y; cy < y+height; cy++ {
 			screen.SetContent(x, cy, tcell.RuneVLine, nil, style)
 		}
+
 		return x, y, width, height
 	})
+
 	return box
 }
 
@@ -232,6 +241,7 @@ func (t *tuiApp) run() error {
 	if t.cleanupFn != nil {
 		t.cleanupFn()
 	}
+
 	return err
 }
 
@@ -259,6 +269,7 @@ func (t *tuiApp) updateStreamingLine() {
 	for i := len(t.lines) - 1; i >= 0; i-- {
 		if strings.Contains(t.lines[i], ">>>") {
 			streamStart = i + 2
+
 			break
 		}
 	}
@@ -324,6 +335,7 @@ func extractFilePath(call api.ToolCall) string {
 		Path string `json:"path"`
 	}
 	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+
 	return args.Path
 }
 
@@ -336,5 +348,6 @@ func extractShellCommand(call api.ToolCall) string {
 	if len(cmd) > 120 {
 		cmd = cmd[:117] + "..."
 	}
+
 	return cmd
 }

@@ -224,7 +224,7 @@ type PullRequest struct {
 
 // PullEvent is a streaming SSE event during a model download.
 type PullEvent struct {
-	Status     string `json:"status"`               // "downloading", "downloaded", "error"
+	Status     string `json:"status"` // "downloading", "downloaded", "error"
 	Downloaded int64  `json:"downloaded,omitempty"`
 	Total      int64  `json:"total,omitempty"`
 	Percent    int    `json:"percent,omitempty"`

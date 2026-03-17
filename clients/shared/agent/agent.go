@@ -23,8 +23,8 @@ func debugf(format string, args ...any) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	fmt.Fprintf(f, "[agent] "+format+"\n", args...)
+	defer func() { _ = f.Close() }()
+	_, _ = fmt.Fprintf(f, "[agent] "+format+"\n", args...)
 }
 
 // TokenEstimator is an optional interface for estimating token counts.
@@ -118,6 +118,7 @@ func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *t
 				if hooks.OnToolResult != nil {
 					hooks.OnToolResult(tc, result)
 				}
+
 				continue
 			}
 		}
@@ -158,6 +159,7 @@ func processToolCalls(ctx context.Context, toolCalls []api.ToolCall, registry *t
 			Name:       tc.Function.Name,
 		})
 	}
+
 	return msgs, anySuccess, nil
 }
 
@@ -174,6 +176,7 @@ func checkStuck(toolCalls []api.ToolCall, errorCounts map[string]int) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -223,6 +226,7 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 
 		if choice.FinishReason == "length" && len(choice.Message.ToolCalls) == 0 {
 			messages = append(messages, choice.Message)
+
 			continue
 		}
 
@@ -239,9 +243,11 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 					Role:    "user",
 					Content: retryPrompt,
 				})
+
 				continue
 			}
 			messages = append(messages, choice.Message)
+
 			return messages, nil
 		}
 
@@ -314,6 +320,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			if cfg.OnThinkingDone != nil {
 				cfg.OnThinkingDone()
 			}
+
 			return messages, fmt.Errorf("completion request failed: %w", err)
 		}
 		resp, hadReasoning, err := accumulateWithCallbacks(events, &cfg)
@@ -335,6 +342,7 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			if cfg.OnContentDelta != nil {
 				cfg.OnContentDelta("\n[continuing...]\n")
 			}
+
 			continue
 		}
 
@@ -356,9 +364,11 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 					Role:    "user",
 					Content: retryPrompt,
 				})
+
 				continue
 			}
 			messages = append(messages, choice.Message)
+
 			return messages, nil
 		}
 
@@ -382,25 +392,156 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 	return messages, fmt.Errorf("agent loop reached maximum iterations (%d)", cfg.MaxIterations)
 }
 
+// streamAccumulator holds mutable state while consuming a stream of events.
+type streamAccumulator struct {
+	content      strings.Builder
+	role         string
+	model        string
+	id           string
+	finishReason string
+	toolCalls    []api.ToolCall
+	toolArgBuf   map[int]*strings.Builder
+	gotReasoning bool
+	thinkingDone bool
+}
+
+func newStreamAccumulator() *streamAccumulator {
+	return &streamAccumulator{toolArgBuf: make(map[int]*strings.Builder)}
+}
+
+// applyChunkMeta captures the stream ID and model name on first sight.
+func (a *streamAccumulator) applyChunkMeta(chunk *api.ChatCompletionChunk) {
+	if a.id == "" {
+		a.id = chunk.ID
+	}
+	if a.model == "" {
+		a.model = chunk.Model
+	}
+}
+
+// applyChoiceDelta processes a single choice delta: role, finish reason,
+// reasoning content, text content, and tool-call fragments.
+func (a *streamAccumulator) applyChoiceDelta(choice api.ChunkChoice, cfg *StreamingConfig) {
+	if choice.Delta.Role != "" {
+		a.role = choice.Delta.Role
+	}
+	if choice.FinishReason != nil {
+		a.finishReason = *choice.FinishReason
+	}
+
+	a.applyReasoningDelta(choice.Delta.ReasoningContent, cfg)
+	a.applyContentDelta(choice.Delta.Content, cfg)
+	a.applyToolCallDeltas(choice.Delta.ToolCalls)
+}
+
+// applyReasoningDelta handles the reasoning_content field from thinking models.
+func (a *streamAccumulator) applyReasoningDelta(reasoning string, cfg *StreamingConfig) {
+	if reasoning == "" {
+		return
+	}
+	a.gotReasoning = true
+	if cfg.OnReasoningDelta != nil {
+		cfg.OnReasoningDelta(reasoning)
+	}
+}
+
+// applyContentDelta handles a text content delta, firing the thinking-done
+// callback on the first content token after a reasoning phase.
+func (a *streamAccumulator) applyContentDelta(delta string, cfg *StreamingConfig) {
+	if delta == "" {
+		return
+	}
+	if !a.thinkingDone && cfg.OnThinkingDone != nil {
+		cfg.OnThinkingDone()
+		a.thinkingDone = true
+	}
+	a.content.WriteString(delta)
+	if cfg.OnContentDelta != nil {
+		cfg.OnContentDelta(delta)
+	}
+}
+
+// applyToolCallDeltas accumulates streamed tool-call fragments.
+func (a *streamAccumulator) applyToolCallDeltas(deltas []api.ToolCallDelta) {
+	for _, tcd := range deltas {
+		for len(a.toolCalls) <= tcd.Index {
+			a.toolCalls = append(a.toolCalls, api.ToolCall{})
+		}
+		if tcd.ID != "" {
+			a.toolCalls[tcd.Index].ID = tcd.ID
+		}
+		if tcd.Type != "" {
+			a.toolCalls[tcd.Index].Type = tcd.Type
+		}
+		if tcd.Function != nil {
+			if tcd.Function.Name != "" {
+				a.toolCalls[tcd.Index].Function.Name = tcd.Function.Name
+			}
+			if tcd.Function.Arguments != "" {
+				if a.toolArgBuf[tcd.Index] == nil {
+					a.toolArgBuf[tcd.Index] = &strings.Builder{}
+				}
+				a.toolArgBuf[tcd.Index].WriteString(tcd.Function.Arguments)
+			}
+		}
+	}
+}
+
+// finalizeToolCalls merges the per-index argument buffers into the tool calls.
+func (a *streamAccumulator) finalizeToolCalls() {
+	for idx, buf := range a.toolArgBuf {
+		if idx < len(a.toolCalls) {
+			a.toolCalls[idx].Function.Arguments = buf.String()
+		}
+	}
+}
+
+// buildResponse assembles the final ChatCompletionResponse from accumulated state.
+func (a *streamAccumulator) buildResponse() *api.ChatCompletionResponse {
+	role := a.role
+	if role == "" {
+		role = "assistant"
+	}
+
+	msg := api.Message{
+		Role:    role,
+		Content: a.content.String(),
+	}
+	if len(a.toolCalls) > 0 {
+		msg.ToolCalls = a.toolCalls
+	}
+
+	finishReason := a.finishReason
+	if finishReason == "" {
+		finishReason = "stop"
+		if len(a.toolCalls) > 0 {
+			finishReason = "tool_calls"
+		}
+	}
+
+	return &api.ChatCompletionResponse{
+		ID:     a.id,
+		Object: "chat.completion",
+		Model:  a.model,
+		Choices: []api.Choice{
+			{
+				Index:        0,
+				Message:      msg,
+				FinishReason: finishReason,
+			},
+		},
+	}
+}
+
 func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *StreamingConfig) (*api.ChatCompletionResponse, bool, error) {
-	var (
-		content      strings.Builder
-		role         string
-		model        string
-		id           string
-		finishReason string
-		toolCalls    []api.ToolCall
-		toolArgBuf   = make(map[int]*strings.Builder)
-		gotContent   bool
-		gotReasoning bool
-		thinkingDone bool
-	)
+	acc := newStreamAccumulator()
 
 	for ev := range events {
 		if ev.Err != nil {
-			if !thinkingDone && cfg.OnThinkingDone != nil {
+			if !acc.thinkingDone && cfg.OnThinkingDone != nil {
 				cfg.OnThinkingDone()
 			}
+
 			return nil, false, ev.Err
 		}
 		if ev.Done {
@@ -410,110 +551,21 @@ func accumulateWithCallbacks(events <-chan apiclient.StreamEvent, cfg *Streaming
 			continue
 		}
 
-		if id == "" {
-			id = ev.Chunk.ID
-		}
-		if model == "" {
-			model = ev.Chunk.Model
-		}
-
+		acc.applyChunkMeta(ev.Chunk)
 		for _, choice := range ev.Chunk.Choices {
-			if choice.Delta.Role != "" {
-				role = choice.Delta.Role
-			}
-			if choice.FinishReason != nil {
-				finishReason = *choice.FinishReason
-			}
-
-			// Track reasoning_content from thinking models.
-			if choice.Delta.ReasoningContent != "" {
-				gotReasoning = true
-				if cfg.OnReasoningDelta != nil {
-					cfg.OnReasoningDelta(choice.Delta.ReasoningContent)
-				}
-			}
-
-			if choice.Delta.Content != "" {
-				if !thinkingDone && cfg.OnThinkingDone != nil {
-					cfg.OnThinkingDone()
-					thinkingDone = true
-				}
-				gotContent = true
-				content.WriteString(choice.Delta.Content)
-				if cfg.OnContentDelta != nil {
-					cfg.OnContentDelta(choice.Delta.Content)
-				}
-			}
-
-			for _, tcd := range choice.Delta.ToolCalls {
-				for len(toolCalls) <= tcd.Index {
-					toolCalls = append(toolCalls, api.ToolCall{})
-				}
-				if tcd.ID != "" {
-					toolCalls[tcd.Index].ID = tcd.ID
-				}
-				if tcd.Type != "" {
-					toolCalls[tcd.Index].Type = tcd.Type
-				}
-				if tcd.Function != nil {
-					if tcd.Function.Name != "" {
-						toolCalls[tcd.Index].Function.Name = tcd.Function.Name
-					}
-					if tcd.Function.Arguments != "" {
-						if toolArgBuf[tcd.Index] == nil {
-							toolArgBuf[tcd.Index] = &strings.Builder{}
-						}
-						toolArgBuf[tcd.Index].WriteString(tcd.Function.Arguments)
-					}
-				}
-			}
+			acc.applyChoiceDelta(choice, cfg)
 		}
 	}
 
-	if !thinkingDone && cfg.OnThinkingDone != nil {
+	if !acc.thinkingDone && cfg.OnThinkingDone != nil {
 		cfg.OnThinkingDone()
 	}
-	_ = gotContent
 
-	for idx, buf := range toolArgBuf {
-		if idx < len(toolCalls) {
-			toolCalls[idx].Function.Arguments = buf.String()
-		}
-	}
+	acc.finalizeToolCalls()
 
-	debugf("accumulation: reasoning=%v content_len=%d finish=%q", gotReasoning, content.Len(), finishReason)
+	debugf("accumulation: reasoning=%v content_len=%d finish=%q", acc.gotReasoning, acc.content.Len(), acc.finishReason)
 
-	if role == "" {
-		role = "assistant"
-	}
-
-	msg := api.Message{
-		Role:    role,
-		Content: content.String(),
-	}
-	if len(toolCalls) > 0 {
-		msg.ToolCalls = toolCalls
-	}
-
-	if finishReason == "" {
-		finishReason = "stop"
-		if len(toolCalls) > 0 {
-			finishReason = "tool_calls"
-		}
-	}
-
-	return &api.ChatCompletionResponse{
-		ID:     id,
-		Object: "chat.completion",
-		Model:  model,
-		Choices: []api.Choice{
-			{
-				Index:        0,
-				Message:      msg,
-				FinishReason: finishReason,
-			},
-		},
-	}, gotReasoning, nil
+	return acc.buildResponse(), acc.gotReasoning, nil
 }
 
 func looksLikeContinuation(text string) bool {
@@ -543,6 +595,7 @@ func looksLikeContinuation(text string) bool {
 			specCount++
 		}
 	}
+
 	return specCount >= 2
 }
 
@@ -557,6 +610,7 @@ func removeRetryPrompts(messages []api.Message) []api.Message {
 		}
 		cleaned = append(cleaned, m)
 	}
+
 	return cleaned
 }
 

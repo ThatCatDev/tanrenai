@@ -19,7 +19,7 @@ type mockTool struct {
 }
 
 func (m *mockTool) Name() string        { return m.name }
-func (m *mockTool) Description() string  { return "mock tool" }
+func (m *mockTool) Description() string { return "mock tool" }
 func (m *mockTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`)
 }
@@ -115,6 +115,7 @@ func TestAgentLoopToolMessages(t *testing.T) {
 	for i := range req2.Messages {
 		if req2.Messages[i].Role == "tool" {
 			toolMsg = &req2.Messages[i]
+
 			break
 		}
 	}
@@ -137,6 +138,7 @@ func TestAgentLoopToolMessages(t *testing.T) {
 	for i := range req2.Messages {
 		if req2.Messages[i].Role == "assistant" && len(req2.Messages[i].ToolCalls) > 0 {
 			assistToolMsg = &req2.Messages[i]
+
 			break
 		}
 	}
@@ -293,6 +295,7 @@ func TestStreamingAgentToolMessages(t *testing.T) {
 				ch <- apiclient.StreamEvent{Done: true}
 			}
 		}()
+
 		return ch, nil
 	}
 
@@ -356,5 +359,6 @@ func hasToolMessage(messages []api.Message) bool {
 			return true
 		}
 	}
+
 	return false
 }

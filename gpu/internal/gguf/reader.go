@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
 	"os"
 )
 
@@ -98,7 +97,8 @@ func ReadMetadata(path string) (*Metadata, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gguf: open: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
+
 	return readMetadataFrom(f)
 }
 
@@ -124,22 +124,14 @@ func readMetadataFrom(r io.ReadSeeker) (*Metadata, error) {
 	// Read tensor count and KV count.
 	// v2 uses uint32, v3 uses uint64.
 	var tensorCount, kvCount uint64
+	var err error
 	if version == 2 {
-		var tc, kc uint32
-		if err := binary.Read(r, binary.LittleEndian, &tc); err != nil {
-			return nil, fmt.Errorf("gguf: read tensor count: %w", err)
-		}
-		if err := binary.Read(r, binary.LittleEndian, &kc); err != nil {
-			return nil, fmt.Errorf("gguf: read kv count: %w", err)
-		}
-		tensorCount, kvCount = uint64(tc), uint64(kc)
+		tensorCount, kvCount, err = readCountsV2(r)
 	} else {
-		if err := binary.Read(r, binary.LittleEndian, &tensorCount); err != nil {
-			return nil, fmt.Errorf("gguf: read tensor count: %w", err)
-		}
-		if err := binary.Read(r, binary.LittleEndian, &kvCount); err != nil {
-			return nil, fmt.Errorf("gguf: read kv count: %w", err)
-		}
+		tensorCount, kvCount, err = readCountsV3(r)
+	}
+	if err != nil {
+		return nil, err
 	}
 	_ = tensorCount // we only need KV pairs
 
@@ -208,6 +200,31 @@ func readMetadataFrom(r io.ReadSeeker) (*Metadata, error) {
 	return meta, nil
 }
 
+// readCountsV2 reads the tensor count and KV count fields for GGUF v2 (uint32 each).
+func readCountsV2(r io.Reader) (tensorCount, kvCount uint64, err error) {
+	var tc, kc uint32
+	if err = binary.Read(r, binary.LittleEndian, &tc); err != nil {
+		return 0, 0, fmt.Errorf("gguf: read tensor count: %w", err)
+	}
+	if err = binary.Read(r, binary.LittleEndian, &kc); err != nil {
+		return 0, 0, fmt.Errorf("gguf: read kv count: %w", err)
+	}
+
+	return uint64(tc), uint64(kc), nil
+}
+
+// readCountsV3 reads the tensor count and KV count fields for GGUF v3 (uint64 each).
+func readCountsV3(r io.Reader) (tensorCount, kvCount uint64, err error) {
+	if err = binary.Read(r, binary.LittleEndian, &tensorCount); err != nil {
+		return 0, 0, fmt.Errorf("gguf: read tensor count: %w", err)
+	}
+	if err = binary.Read(r, binary.LittleEndian, &kvCount); err != nil {
+		return 0, 0, fmt.Errorf("gguf: read kv count: %w", err)
+	}
+
+	return tensorCount, kvCount, nil
+}
+
 // readString reads a GGUF string (length-prefixed).
 // v2 uses uint32 lengths, v3 uses uint64.
 func readString(r io.Reader, version uint32) (string, error) {
@@ -232,6 +249,7 @@ func readString(r io.Reader, version uint32) (string, error) {
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return "", err
 	}
+
 	return string(buf), nil
 }
 
@@ -241,47 +259,59 @@ func readValue(r io.ReadSeeker, version, valueType uint32) (any, error) {
 	switch valueType {
 	case valueTypeUint8:
 		var v uint8
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeInt8:
 		var v int8
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeUint16:
 		var v uint16
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeInt16:
 		var v int16
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeUint32:
 		var v uint32
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeInt32:
 		var v int32
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeFloat32:
 		var v float32
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeBool:
 		var v uint8
 		if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
 			return false, err
 		}
+
 		return v != 0, nil
 	case valueTypeString:
 		return readString(r, version)
 	case valueTypeUint64:
 		var v uint64
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeInt64:
 		var v int64
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeFloat64:
 		var v float64
+
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case valueTypeArray:
 		// Skip arrays — they can be very large (tokenizer vocab/merges/scores).
 		if err := skipArray(r, version); err != nil {
 			return nil, err
 		}
+
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("unknown value type %d", valueType)
@@ -310,6 +340,7 @@ func skipArray(r io.ReadSeeker, version uint32) error {
 	// If elements have fixed size, skip in one seek.
 	if sz, ok := valueFixedSize[elemType]; ok {
 		_, err := r.Seek(int64(count)*sz, io.SeekCurrent)
+
 		return err
 	}
 
@@ -319,6 +350,7 @@ func skipArray(r io.ReadSeeker, version uint32) error {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -330,6 +362,7 @@ func mapString(m map[string]any, key string) string {
 			return s
 		}
 	}
+
 	return ""
 }
 
@@ -400,10 +433,6 @@ func mapBool(m map[string]any, key string) bool {
 			return b
 		}
 	}
-	return false
-}
 
-// floatBits converts a float32 to uint32 for exact comparison in tests.
-func floatBits(f float32) uint32 {
-	return math.Float32bits(f)
+	return false
 }

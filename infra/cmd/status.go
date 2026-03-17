@@ -43,7 +43,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	client := vastai.NewClient(cfg.VastaiAPIKey)
+	client := newVastaiClient(cfg.VastaiAPIKey)
 
 	if cfg.VastaiInstance != "" {
 		inst, err := client.GetInstance(ctx, cfg.VastaiInstance)
@@ -51,6 +51,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 			exitError("get instance: %v", err)
 		}
 		printInstance(inst)
+
 		return
 	}
 
@@ -61,24 +62,25 @@ func runStatus(cmd *cobra.Command, args []string) {
 	}
 
 	if len(instances) == 0 {
-		fmt.Println("No instances found.")
+		_, _ = fmt.Fprintf(os.Stdout, "No instances found.\n")
+
 		return
 	}
 
 	for i, inst := range instances {
 		if i > 0 {
-			fmt.Println("---")
+			_, _ = fmt.Fprintf(os.Stdout, "---\n")
 		}
 		printInstance(&inst)
 	}
 }
 
 func printInstance(inst *vastai.Instance) {
-	fmt.Printf("ID:      %d\n", inst.ID)
-	fmt.Printf("Status:  %s\n", inst.Status)
-	fmt.Printf("GPU:     %s (x%d)\n", inst.GPUName, inst.NumGPUs)
-	fmt.Printf("Cost:    $%.3f/hr\n", inst.CostPerHr)
+	_, _ = fmt.Fprintf(os.Stdout, "ID:      %d\n", inst.ID)
+	_, _ = fmt.Fprintf(os.Stdout, "Status:  %s\n", inst.Status)
+	_, _ = fmt.Fprintf(os.Stdout, "GPU:     %s (x%d)\n", inst.GPUName, inst.NumGPUs)
+	_, _ = fmt.Fprintf(os.Stdout, "Cost:    $%.3f/hr\n", inst.CostPerHr)
 	if inst.SSHHost != "" {
-		fmt.Printf("SSH:     %s:%d\n", inst.SSHHost, inst.SSHPort)
+		_, _ = fmt.Fprintf(os.Stdout, "SSH:     %s:%d\n", inst.SSHHost, inst.SSHPort)
 	}
 }

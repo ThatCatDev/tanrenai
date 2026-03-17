@@ -22,6 +22,7 @@ func TestParseSSEStream_BasicContent(t *testing.T) {
 		}
 		if ev.Done {
 			doneReceived = true
+
 			continue
 		}
 		if ev.Chunk != nil {

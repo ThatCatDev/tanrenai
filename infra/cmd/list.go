@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ThatCatDev/tanrenai/infra/internal/config"
-	"github.com/ThatCatDev/tanrenai/infra/internal/vastai"
 )
 
 var listCmd = &cobra.Command{
@@ -37,23 +36,24 @@ func runList(cmd *cobra.Command, args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	client := vastai.NewClient(cfg.VastaiAPIKey)
+	client := newVastaiClient(cfg.VastaiAPIKey)
 	instances, err := client.ListInstances(ctx)
 	if err != nil {
 		exitError("list instances: %v", err)
 	}
 
 	if len(instances) == 0 {
-		fmt.Println("No instances found.")
+		_, _ = fmt.Fprintf(os.Stdout, "No instances found.\n")
+
 		return
 	}
 
 	for _, inst := range instances {
-		fmt.Printf("  %d  %-10s  %-20s  x%d  $%.3f/hr",
+		_, _ = fmt.Fprintf(os.Stdout, "  %d  %-10s  %-20s  x%d  $%.3f/hr",
 			inst.ID, inst.Status, inst.GPUName, inst.NumGPUs, inst.CostPerHr)
 		if inst.SSHHost != "" {
-			fmt.Printf("  ssh://%s:%d", inst.SSHHost, inst.SSHPort)
+			_, _ = fmt.Fprintf(os.Stdout, "  ssh://%s:%d", inst.SSHHost, inst.SSHPort)
 		}
-		fmt.Println()
+		_, _ = fmt.Fprintf(os.Stdout, "\n")
 	}
 }

@@ -21,8 +21,10 @@ func (h *ProxyHandler) ensureGPU(w http.ResponseWriter, r *http.Request) bool {
 	h.Provider.RecordActivity()
 	if err := h.Provider.EnsureRunning(r.Context()); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "gpu_unavailable", "GPU server not available: "+err.Error())
+
 		return false
 	}
+
 	return true
 }
 
@@ -37,6 +39,7 @@ func (h *ProxyHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var req api.ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body: "+err.Error())
+
 		return
 	}
 
@@ -51,20 +54,22 @@ func (h *ProxyHandler) completeProxy(w http.ResponseWriter, r *http.Request, req
 	resp, err := h.GPUClient.ChatCompletion(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
+
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *ProxyHandler) streamProxy(w http.ResponseWriter, r *http.Request, req *api.ChatCompletionRequest) {
 	body, err := h.GPUClient.StreamCompletionRaw(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
+
 		return
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -80,7 +85,7 @@ func (h *ProxyHandler) streamProxy(w http.ResponseWriter, r *http.Request, req *
 	for {
 		n, err := body.Read(buf)
 		if n > 0 {
-			w.Write(buf[:n])
+			_, _ = w.Write(buf[:n])
 			if ok {
 				flusher.Flush()
 			}
@@ -104,17 +109,19 @@ func (h *ProxyHandler) Tokenize(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+
 		return
 	}
 
 	count, err := h.GPUClient.Tokenize(r.Context(), req.Content)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
+
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{"count": count})
+	_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 }
 
 // ListModels proxies GET /v1/models to the GPU server.
@@ -126,11 +133,12 @@ func (h *ProxyHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	result, err := h.GPUClient.ListModels(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
+
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 // LoadModel proxies POST /api/load to the GPU server.
@@ -146,17 +154,19 @@ func (h *ProxyHandler) LoadModel(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+
 		return
 	}
 
 	resp, err := h.GPUClient.LoadModel(r.Context(), req.Model)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
+
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // PullModel proxies POST /api/pull to the GPU server, streaming SSE progress.
@@ -172,15 +182,17 @@ func (h *ProxyHandler) PullModel(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+
 		return
 	}
 
 	body, err := h.GPUClient.PullModelStream(r.Context(), req.URL)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
+
 		return
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -195,7 +207,7 @@ func (h *ProxyHandler) PullModel(w http.ResponseWriter, r *http.Request) {
 	for {
 		n, readErr := body.Read(buf)
 		if n > 0 {
-			w.Write(buf[:n])
+			_, _ = w.Write(buf[:n])
 			if ok {
 				flusher.Flush()
 			}
@@ -215,19 +227,20 @@ func (h *ProxyHandler) RawProxy(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.GPUClient.RawRequest(r.Context(), r.Method, r.URL.Path, r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
+
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(api.ErrorResponse{
+	_ = json.NewEncoder(w).Encode(api.ErrorResponse{
 		Error: api.ErrorDetail{
 			Message: message,
 			Type:    "error",

@@ -42,6 +42,7 @@ func (s *Server) wrapLoadFunc() func(ctx context.Context, model string) (*handle
 		if err != nil {
 			return nil, err
 		}
+
 		return &handlers.LoadResult{CtxSize: res.CtxSize}, nil
 	}
 }
@@ -120,6 +121,7 @@ func withCORS(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
+
 			return
 		}
 		next.ServeHTTP(w, r)

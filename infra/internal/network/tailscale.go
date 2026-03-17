@@ -31,6 +31,7 @@ func (t *TailscaleProvider) GenerateAuthKey(ctx context.Context) (string, error)
 	if t.authKey == "" {
 		return "", fmt.Errorf("tailscale auth key not configured (set TAILSCALE_AUTH_KEY)")
 	}
+
 	return t.authKey, nil
 }
 
@@ -90,10 +91,11 @@ func (t *TailscaleProvider) findDevice(ctx context.Context, hostname string) (st
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+
 		return "", fmt.Errorf("tailscale API returned %d: %s", resp.StatusCode, string(body))
 	}
 

@@ -49,9 +49,7 @@ func GenerateChatML(cfg ChatMLConfig) string {
     {%%- endif %%}`, cfg.DefaultSysPrompt)
 
 	// Tool description preamble — uses the config's wrapper tokens.
-	toolPreamble := fmt.Sprintf(
-		`\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>`,
-	)
+	toolPreamble := `\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>`
 	toolSuffix := fmt.Sprintf(
 		`\n</tools>\n\nFor each function call, return a json object with function name and arguments within %s%s XML tags:\n%s\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n%s`,
 		cfg.ToolCallStart, cfg.ToolCallEnd, cfg.ToolCallStart, cfg.ToolCallEnd,
@@ -152,4 +150,3 @@ func startRole(cfg ChatMLConfig, role string) string {
 func endRole(cfg ChatMLConfig) string {
 	return cfg.EndToken + `\n`
 }
-

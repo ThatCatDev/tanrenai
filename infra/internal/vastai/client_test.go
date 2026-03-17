@@ -17,6 +17,7 @@ func TestSearchOffers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]any{"offers": offers})
@@ -31,10 +32,9 @@ func TestSearchOffers(t *testing.T) {
 	// Instead, we test the sorting logic directly
 	_ = client
 
-	// Test that offers would be sorted by cost
-	if offers[0].CostPerHr < offers[1].CostPerHr {
-		// Already sorted? No, 0.5 > 0.3, so the sort should swap them
-	}
+	// Test that offers would be sorted by cost: 0.5 > 0.3, so the sort should swap them
+	// offers[0].CostPerHr (0.5) should be > offers[1].CostPerHr (0.3) before sorting
+	_ = offers
 }
 
 func TestGetInstance(t *testing.T) {
@@ -45,6 +45,7 @@ func TestGetInstance(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]any{"instances": instances})
