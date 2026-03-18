@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -355,7 +356,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 			text := contentBuf.String()
 			contentBuf.Reset()
 			t.app.QueueUpdateDraw(func() {
-				trimmed := strings.TrimSpace(text)
+				trimmed := stripToolCallXML(strings.TrimSpace(text))
 				if trimmed != "" {
 					rendered := t.renderMarkdown(trimmed)
 					for _, line := range strings.Split(rendered, "\n") {
@@ -711,4 +712,17 @@ func (t *tuiApp) approveToolCall(call api.ToolCall) agent.ApprovalAction {
 	})
 
 	return <-responseCh
+}
+
+// toolCallXMLPattern matches <tool_call>...</tool_call> blocks that some models
+// emit as text content instead of using native tool calling.
+var toolCallXMLPattern = regexp.MustCompile(`(?s)<tool_call>.*?</tool_call>\s*`)
+
+// stripToolCallXML removes XML-style tool call blocks from model output.
+// These are already handled by the native tool calling mechanism and
+// shouldn't be displayed to the user.
+func stripToolCallXML(text string) string {
+	cleaned := toolCallXMLPattern.ReplaceAllString(text, "")
+
+	return strings.TrimSpace(cleaned)
 }
