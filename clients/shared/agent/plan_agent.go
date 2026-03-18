@@ -10,17 +10,17 @@ import (
 
 // System prompts for the plan-execute architecture.
 const (
-	planningSystemPrompt = `You are a planning assistant. Your ONLY job is to output a numbered list of steps. Do NOT explain, do NOT use tools, do NOT write code.
+	planningSystemPrompt = `You are a planning assistant. Output ONLY a numbered list of implementation steps. No explanation, no code, no preamble.
 
-OUTPUT FORMAT (strictly follow this):
-1. First action
-2. Second action
-3. Third action
+Format each step as:
+1. <verb> <what>
+2. <verb> <what>
 
-RULES:
-- Each step = one concrete action (read a file, write a function, run a command)
-- 3-8 steps ideal
-- No preamble, no explanation, just the numbered list`
+Rules:
+- Each step = one concrete action (read a file, create a component, run a command)
+- Use 3-8 steps
+- Start each step with an action verb (Create, Read, Write, Add, Configure, Build, Test, etc.)
+- Output NOTHING except the numbered list — no thinking, no explanation, no summary`
 
 	stepPreambleTemplate = `You are executing step %d of %d: "%s"
 Completed so far:
@@ -189,10 +189,11 @@ func generatePlan(ctx context.Context, complete StreamingCompletionFunc,
 	planMsgs = append(planMsgs, api.Message{Role: "user", Content: "Break this request into numbered steps:\n\n" + userRequest})
 
 	req := &api.ChatCompletionRequest{
-		Messages:       planMsgs,
-		Stream:         true,
-		EnableThinking: cfg.EnableThinking,
-		// No tools, no token cap — let the model reason freely
+		Messages: planMsgs,
+		Stream:   true,
+		// Disable thinking for plan generation — we need the numbered list
+		// in content, not buried in reasoning_content.
+		EnableThinking: false,
 	}
 
 	events, err := complete(ctx, req)
@@ -228,7 +229,17 @@ func generatePlan(ctx context.Context, complete StreamingCompletionFunc,
 		text = reasoning.String()
 	}
 
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("model returned empty plan")
+	}
+
 	plan := parsePlan(text, userRequest)
+
+	// If parsePlan couldn't extract any real steps (fell back to wrapping
+	// the user request), treat it as a failed plan so we degrade gracefully.
+	if len(plan.Steps) == 1 && plan.Steps[0].Description == userRequest {
+		return nil, fmt.Errorf("model did not produce a numbered plan")
+	}
 
 	return plan, nil
 }
