@@ -323,7 +323,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 	t.mu.Unlock()
 
 	// Create user injection channel for mid-turn input
-	userInputCh := make(chan string, 1)
+	userInputCh := make(chan string, 8)
 	t.app.QueueUpdateDraw(func() {
 		t.userInputCh = userInputCh
 		t.plannedMode = true
@@ -447,6 +447,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 				t.currentIterOutput += len(delta)
 				reasoningBuf.WriteString(delta)
 			},
+			UserInput: userInputCh,
 		},
 		UserInput: userInputCh,
 		OnPlanningStart: func() {

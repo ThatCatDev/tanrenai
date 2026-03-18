@@ -78,6 +78,9 @@ type StreamingConfig struct {
 	OnThinkingDone   func()
 	OnContentDelta   func(delta string)
 	OnReasoningDelta func(delta string)
+	// UserInput is checked between iterations for mid-turn injection.
+	// If a message is available, it's appended as a user message.
+	UserInput <-chan string
 }
 
 const (
@@ -389,6 +392,11 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		}
 		if !anySuccess && checkStuck(choice.Message.ToolCalls, errorCounts) {
 			return messages, fmt.Errorf("agent stuck: repeated identical failing tool calls")
+		}
+
+		// Check for user injection between iterations
+		if injection := readUserInput(cfg.UserInput); injection != "" {
+			messages = append(messages, api.Message{Role: "user", Content: injection})
 		}
 	}
 
