@@ -281,11 +281,14 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 		matched := scrolls.Match(t.allScrolls, input, 3)
 		if len(matched) > 0 {
 			var scrollMsgs []api.Message
+			var names []string
 			for _, s := range matched {
 				content := fmt.Sprintf("[Scroll: %s]\n%s", s.Name, s.Content)
 				scrollMsgs = append(scrollMsgs, api.Message{Role: "system", Content: content})
+				names = append(names, s.Name)
 			}
 			t.mgr.SetScrolls(scrollMsgs)
+			t.addLine(fmt.Sprintf("[gray::-]  [scrolls matched: %s][-:-:-]", strings.Join(names, ", ")))
 		} else {
 			t.mgr.ClearScrolls()
 		}
