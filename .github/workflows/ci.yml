@@ -240,8 +240,11 @@ jobs:
               if [[ "$f" == "$root/"* ]]; then
                 # Get the Go package path relative to module root
                 rel_dir="${pkg_dir#$root/}"
-                # Skip cmd/ and main packages (CLI entry points, not unit-testable)
-                if [[ "$rel_dir" == "cmd" || "$rel_dir" == cmd/* || "$rel_dir" == "." ]]; then
+                # Skip packages that are not unit-testable:
+                # - cmd/ (CLI entry points)
+                # - root packages (main.go)
+                # - pkg/api (pure struct definitions, no logic)
+                if [[ "$rel_dir" == "cmd" || "$rel_dir" == cmd/* || "$rel_dir" == "." || "$rel_dir" == pkg/api ]]; then
                   continue
                 fi
                 key="$root|./$rel_dir"
@@ -268,13 +271,9 @@ jobs:
             pct=$(echo "$cov_out" | grep -oP 'coverage: \K[0-9.]+' | head -1)
 
             if [ -z "$pct" ]; then
-              # No test files or package doesn't build
-              no_test=$(echo "$cov_out" | grep -c "no test files" || true)
-              if [ "$no_test" -gt 0 ]; then
-                echo "  ⚪ $mod_root/$pkg_path — no tests"
-              else
-                echo "  ⚪ $mod_root/$pkg_path — n/a"
-              fi
+              # No test files — this is a failure for non-excluded packages
+              echo "  🔴 $mod_root/$pkg_path — no tests"
+              FAILED=1
               continue
             fi
 
