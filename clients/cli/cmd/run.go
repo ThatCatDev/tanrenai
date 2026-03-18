@@ -925,7 +925,7 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("response-budget", 512, "tokens reserved for model response")
 	cmd.Flags().StringSlice("context-file", nil, "files to load into context")
 	cmd.Flags().Bool("memory", false, "enable memory/RAG")
-	cmd.Flags().Int("max-iterations", 200, "maximum agent tool-call iterations per turn (0 = unlimited)")
+	cmd.Flags().Int("max-iterations", 0, "maximum agent tool-call iterations per turn (0 = unlimited)")
 	cmd.Flags().Int("max-tokens", 0, "max tokens per model response (0 = default 16384)")
 	cmd.Flags().Bool("no-scrolls", false, "disable automatic scroll injection")
 }

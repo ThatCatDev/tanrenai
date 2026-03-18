@@ -331,8 +331,26 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 
 	toolCount := 0
 	var contentBuf strings.Builder
+	var reasoningBuf strings.Builder
+
+	flushReasoning := func() {
+		if reasoningBuf.Len() > 0 {
+			text := reasoningBuf.String()
+			reasoningBuf.Reset()
+			t.app.QueueUpdateDraw(func() {
+				trimmed := strings.TrimSpace(text)
+				if trimmed != "" {
+					for _, line := range strings.Split(trimmed, "\n") {
+						t.addLine("[gray::-]    " + tview.Escape(line) + "[-:-:-]")
+					}
+					t.refreshChatView()
+				}
+			})
+		}
+	}
 
 	flushContent := func() {
+		flushReasoning()
 		if contentBuf.Len() > 0 {
 			text := contentBuf.String()
 			contentBuf.Reset()
@@ -426,10 +444,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 			},
 			OnReasoningDelta: func(delta string) {
 				t.currentIterOutput += len(delta)
-				t.app.QueueUpdateDraw(func() {
-					t.statusText = "Reasoning..."
-					t.updateStatusBar()
-				})
+				reasoningBuf.WriteString(delta)
 			},
 		},
 		UserInput: userInputCh,
