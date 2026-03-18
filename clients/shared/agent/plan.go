@@ -105,9 +105,9 @@ func needsPlanning(input string) bool {
 	return len(seen) >= 2 || listItems >= 3
 }
 
-// parsePlan extracts numbered steps from LLM output. If zero steps are found,
-// it wraps the original user request as a single step (degrades to current behavior).
-func parsePlan(text, originalRequest string) *Plan {
+// parsePlan extracts numbered steps from LLM output. Returns nil if no
+// numbered steps are found.
+func parsePlan(text string) *Plan {
 	plan := &Plan{RawText: text}
 
 	for _, line := range strings.Split(text, "\n") {
@@ -122,13 +122,8 @@ func parsePlan(text, originalRequest string) *Plan {
 		})
 	}
 
-	// Fallback: wrap entire request as a single step
 	if len(plan.Steps) == 0 {
-		plan.Steps = []PlanStep{{
-			Index:       1,
-			Description: originalRequest,
-			Status:      StepPending,
-		}}
+		return nil
 	}
 
 	return plan

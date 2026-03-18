@@ -233,12 +233,11 @@ func generatePlan(ctx context.Context, complete StreamingCompletionFunc,
 		return nil, fmt.Errorf("model returned empty plan")
 	}
 
-	plan := parsePlan(text, userRequest)
+	debugf("plan raw text (%d chars): %s", len(text), text)
 
-	// If parsePlan couldn't extract any real steps (fell back to wrapping
-	// the user request), treat it as a failed plan so we degrade gracefully.
-	if len(plan.Steps) == 1 && plan.Steps[0].Description == userRequest {
-		return nil, fmt.Errorf("model did not produce a numbered plan")
+	plan := parsePlan(text)
+	if plan == nil {
+		return nil, fmt.Errorf("model did not produce numbered steps")
 	}
 
 	return plan, nil
@@ -421,7 +420,11 @@ func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 			}
 		}
 
-		newPlan := parsePlan(content.String(), userRequest)
+		newPlan := parsePlan(content.String())
+		if newPlan == nil {
+			// Replan failed, continue with current plan
+			return plan, currentIdx
+		}
 		// Preserve completed steps
 		var merged []PlanStep
 		for _, s := range plan.Steps {

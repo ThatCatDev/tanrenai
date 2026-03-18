@@ -18,7 +18,7 @@ func TestParsePlan_NumberedList(t *testing.T) {
 3. Write unit tests
 4. Run the tests`
 
-	plan := parsePlan(text, "create a server")
+	plan := parsePlan(text)
 	if len(plan.Steps) != 4 {
 		t.Fatalf("expected 4 steps, got %d", len(plan.Steps))
 	}
@@ -41,7 +41,7 @@ func TestParsePlan_NumberedList(t *testing.T) {
 func TestParsePlan_ParenthesisFormat(t *testing.T) {
 	text := `1) First step
 2) Second step`
-	plan := parsePlan(text, "do things")
+	plan := parsePlan(text)
 	if len(plan.Steps) != 2 {
 		t.Fatalf("expected 2 steps, got %d", len(plan.Steps))
 	}
@@ -62,20 +62,17 @@ Some extra explanation here.
 
 That should do it!`
 
-	plan := parsePlan(text, "update config")
+	plan := parsePlan(text)
 	if len(plan.Steps) != 3 {
 		t.Fatalf("expected 3 steps, got %d", len(plan.Steps))
 	}
 }
 
-func TestParsePlan_ZeroSteps_Fallback(t *testing.T) {
+func TestParsePlan_ZeroSteps_ReturnsNil(t *testing.T) {
 	text := "I'm not sure what you want me to do. Can you clarify?"
-	plan := parsePlan(text, "do something complex")
-	if len(plan.Steps) != 1 {
-		t.Fatalf("expected 1 fallback step, got %d", len(plan.Steps))
-	}
-	if plan.Steps[0].Description != "do something complex" {
-		t.Errorf("fallback step: got %q", plan.Steps[0].Description)
+	plan := parsePlan(text)
+	if plan != nil {
+		t.Fatalf("expected nil plan for unparseable text, got %d steps", len(plan.Steps))
 	}
 }
 
