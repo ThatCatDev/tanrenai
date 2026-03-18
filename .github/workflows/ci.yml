@@ -301,6 +301,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
@@ -315,6 +317,15 @@ jobs:
             fi
             cd "$GITHUB_WORKSPACE"
           }
+
+          # Module roots for package lookup
+          declare -A MODULE_ROOTS=(
+            ["gpu"]="gpu"
+            ["server"]="server"
+            ["clients/shared"]="clients/shared"
+            ["clients/cli"]="clients/cli"
+            ["infra"]="infra"
+          )
 
           {
             echo "## Test Coverage Report"
@@ -340,6 +351,58 @@ jobs:
 
             echo ""
             echo "> 🟢 ≥80% · 🟡 ≥60% · 🔴 <60%"
+
+            # Changed packages coverage
+            CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- '*.go' | grep -v '_test.go' | grep -v '/generated/' || true)
+
+            if [ -n "$CHANGED_FILES" ]; then
+              declare -A CHANGED_PKGS
+              for f in $CHANGED_FILES; do
+                pkg_dir=$(dirname "$f")
+                for name in "${!MODULE_ROOTS[@]}"; do
+                  root="${MODULE_ROOTS[$name]}"
+                  if [[ "$f" == "$root/"* ]]; then
+                    rel_dir="${pkg_dir#$root/}"
+                    if [[ "$rel_dir" == "cmd" || "$rel_dir" == cmd/* || "$rel_dir" == "." ]]; then
+                      continue
+                    fi
+                    CHANGED_PKGS["$root|./$rel_dir"]=1
+                    break
+                  fi
+                done
+              done
+
+              if [ ${#CHANGED_PKGS[@]} -gt 0 ]; then
+                echo ""
+                echo "### Changed Packages (80% threshold)"
+                echo ""
+                echo "| Package | Coverage |"
+                echo "|---------|----------|"
+
+                for key in $(echo "${!CHANGED_PKGS[@]}" | tr ' ' '\n' | sort); do
+                  IFS='|' read -r mod_root pkg_path <<< "$key"
+                  cd "$GITHUB_WORKSPACE/$mod_root"
+                  cov_out=$(go test "$pkg_path" -coverprofile=/dev/null -covermode=atomic 2>&1 || true)
+                  pct=$(echo "$cov_out" | grep -oP 'coverage: \K[0-9.]+' | head -1)
+                  cd "$GITHUB_WORKSPACE"
+
+                  display="${mod_root}/${pkg_path#./}"
+                  if [ -z "$pct" ]; then
+                    no_test=$(echo "$cov_out" | grep -c "no test files" || true)
+                    if [ "$no_test" -gt 0 ]; then
+                      echo "| \`$display\` | ⚪ no tests |"
+                    else
+                      echo "| \`$display\` | ⚪ n/a |"
+                    fi
+                  elif [ "$(echo "$pct < 80" | bc -l)" -eq 1 ]; then
+                    echo "| \`$display\` | 🔴 ${pct}% |"
+                  else
+                    echo "| \`$display\` | 🟢 ${pct}% |"
+                  fi
+                done
+              fi
+            fi
+
             echo ""
             echo "_Updated by CI — $(date -u '+%Y-%m-%d %H:%M UTC')_"
           } > /tmp/coverage_comment.md
