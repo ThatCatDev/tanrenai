@@ -362,7 +362,7 @@ jobs:
                   root="${MODULE_ROOTS[$name]}"
                   if [[ "$f" == "$root/"* ]]; then
                     rel_dir="${pkg_dir#$root/}"
-                    if [[ "$rel_dir" == "cmd" || "$rel_dir" == cmd/* || "$rel_dir" == "." ]]; then
+                    if [[ "$rel_dir" == "cmd" || "$rel_dir" == cmd/* || "$rel_dir" == "." || "$rel_dir" == pkg/api ]]; then
                       continue
                     fi
                     CHANGED_PKGS["$root|./$rel_dir"]=1
