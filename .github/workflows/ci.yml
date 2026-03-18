@@ -240,11 +240,10 @@ jobs:
               if [[ "$f" == "$root/"* ]]; then
                 # Get the Go package path relative to module root
                 rel_dir="${pkg_dir#$root/}"
-                # Skip packages that are not unit-testable:
-                # - cmd/ (CLI entry points)
-                # - root packages (main.go)
-                # - pkg/api (pure struct definitions, no logic)
-                if [[ "$rel_dir" == "cmd" || "$rel_dir" == cmd/* || "$rel_dir" == "." || "$rel_dir" == pkg/api ]]; then
+                # Skip packages with no testable logic:
+                # - root packages (main.go only)
+                # - pkg/api (pure struct definitions)
+                if [[ "$rel_dir" == "." || "$rel_dir" == pkg/api ]]; then
                   continue
                 fi
                 key="$root|./$rel_dir"
@@ -262,26 +261,55 @@ jobs:
           echo "Checking coverage for changed packages:"
           echo ""
 
+          # Packages that are warn-only (shown but don't block):
+          # TUI code requiring a live terminal, thin CLI entry points
+          WARN_PATTERNS="cmd"
+
+          is_warn_only() {
+            local pkg="$1"
+            local rel="${pkg#./}"
+            for pat in $WARN_PATTERNS; do
+              if [[ "$rel" == "$pat" || "$rel" == "$pat"/* ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
           for key in "${!CHANGED_PKGS[@]}"; do
             IFS='|' read -r mod_root pkg_path <<< "$key"
             cd "$GITHUB_WORKSPACE/$mod_root"
+
+            warn_only=false
+            if is_warn_only "$pkg_path"; then
+              warn_only=true
+            fi
 
             # Run tests for this specific package
             cov_out=$(go test "$pkg_path" -coverprofile=/dev/null -covermode=atomic 2>&1 || true)
             pct=$(echo "$cov_out" | grep -oP 'coverage: \K[0-9.]+' | head -1)
 
+            display="${mod_root}/${pkg_path#./}"
+
             if [ -z "$pct" ]; then
-              # No test files — this is a failure for non-excluded packages
-              echo "  🔴 $mod_root/$pkg_path — no tests"
-              FAILED=1
+              if [ "$warn_only" = true ]; then
+                echo "  🟡 $display — no tests (warn only)"
+              else
+                echo "  🔴 $display — no tests"
+                FAILED=1
+              fi
               continue
             fi
 
             if [ "$(echo "$pct < $THRESHOLD" | bc -l)" -eq 1 ]; then
-              echo "  🔴 $mod_root/$pkg_path — ${pct}% (below ${THRESHOLD}%)"
-              FAILED=1
+              if [ "$warn_only" = true ]; then
+                echo "  🟡 $display — ${pct}% (warn only, threshold ${THRESHOLD}%)"
+              else
+                echo "  🔴 $display — ${pct}% (below ${THRESHOLD}%)"
+                FAILED=1
+              fi
             else
-              echo "  🟢 $mod_root/$pkg_path — ${pct}%"
+              echo "  🟢 $display — ${pct}%"
             fi
 
             cd "$GITHUB_WORKSPACE"
@@ -362,7 +390,8 @@ jobs:
                   root="${MODULE_ROOTS[$name]}"
                   if [[ "$f" == "$root/"* ]]; then
                     rel_dir="${pkg_dir#$root/}"
-                    if [[ "$rel_dir" == "cmd" || "$rel_dir" == cmd/* || "$rel_dir" == "." || "$rel_dir" == pkg/api ]]; then
+                    # Skip only root packages and pkg/api (pure types)
+                    if [[ "$rel_dir" == "." || "$rel_dir" == pkg/api ]]; then
                       continue
                     fi
                     CHANGED_PKGS["$root|./$rel_dir"]=1
@@ -375,8 +404,8 @@ jobs:
                 echo ""
                 echo "### Changed Packages (80% threshold)"
                 echo ""
-                echo "| Package | Coverage |"
-                echo "|---------|----------|"
+                echo "| Package | Coverage | Status |"
+                echo "|---------|----------|--------|"
 
                 for key in $(echo "${!CHANGED_PKGS[@]}" | tr ' ' '\n' | sort); do
                   IFS='|' read -r mod_root pkg_path <<< "$key"
@@ -386,17 +415,28 @@ jobs:
                   cd "$GITHUB_WORKSPACE"
 
                   display="${mod_root}/${pkg_path#./}"
+                  rel="${pkg_path#./}"
+
+                  # cmd/ packages are warn-only (TUI/CLI code)
+                  is_cmd=false
+                  if [[ "$rel" == "cmd" || "$rel" == cmd/* ]]; then
+                    is_cmd=true
+                  fi
+
                   if [ -z "$pct" ]; then
-                    no_test=$(echo "$cov_out" | grep -c "no test files" || true)
-                    if [ "$no_test" -gt 0 ]; then
-                      echo "| \`$display\` | ⚪ no tests |"
+                    if [ "$is_cmd" = true ]; then
+                      echo "| \`$display\` | — | 🟡 warn (TUI) |"
                     else
-                      echo "| \`$display\` | ⚪ n/a |"
+                      echo "| \`$display\` | — | 🔴 no tests |"
                     fi
                   elif [ "$(echo "$pct < 80" | bc -l)" -eq 1 ]; then
-                    echo "| \`$display\` | 🔴 ${pct}% |"
+                    if [ "$is_cmd" = true ]; then
+                      echo "| \`$display\` | ${pct}% | 🟡 warn (TUI) |"
+                    else
+                      echo "| \`$display\` | ${pct}% | 🔴 below 80% |"
+                    fi
                   else
-                    echo "| \`$display\` | 🟢 ${pct}% |"
+                    echo "| \`$display\` | ${pct}% | 🟢 |"
                   fi
                 done
               fi
