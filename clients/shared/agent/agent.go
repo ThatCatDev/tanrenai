@@ -64,6 +64,7 @@ type Config struct {
 	MaxTokens         int            // 0 = no limit (backward compatible)
 	MaxResponseTokens int            // max tokens per generation (0 = default 4096)
 	TokenEstimator    TokenEstimator // nil = no estimation
+	EnableThinking    bool           // send enable_thinking=true to the model
 }
 
 // StreamingCompletionFunc returns a channel of stream events instead of blocking.
@@ -202,10 +203,11 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 
 		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
-			Messages:  messages,
-			Stream:    false,
-			Tools:     apiTools,
-			MaxTokens: &maxTokens,
+			Messages:       messages,
+			Stream:         false,
+			Tools:          apiTools,
+			MaxTokens:      &maxTokens,
+			EnableThinking: cfg.EnableThinking,
 		}
 
 		resp, err := complete(ctx, req)
@@ -294,10 +296,11 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 
 		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
-			Messages:  messages,
-			Stream:    true,
-			Tools:     apiTools,
-			MaxTokens: &maxTokens,
+			Messages:       messages,
+			Stream:         true,
+			Tools:          apiTools,
+			MaxTokens:      &maxTokens,
+			EnableThinking: cfg.EnableThinking,
 		}
 
 		if debugEnabled() {

@@ -370,8 +370,9 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 	cfg := agent.PlanAgentConfig{
 		StreamingConfig: agent.StreamingConfig{
 			Config: agent.Config{
-				MaxIterations: t.maxIterations,
-				Tools:         t.registry,
+				MaxIterations:  t.maxIterations,
+				EnableThinking: t.enableThinking,
+				Tools:          t.registry,
 				Hooks: agent.Hooks{
 					OnToolCall: func(call api.ToolCall) {
 						flushContent()

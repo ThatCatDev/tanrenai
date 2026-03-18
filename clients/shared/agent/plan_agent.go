@@ -189,8 +189,9 @@ func generatePlan(ctx context.Context, complete StreamingCompletionFunc,
 	planMsgs = append(planMsgs, api.Message{Role: "user", Content: "Break this request into numbered steps:\n\n" + userRequest})
 
 	req := &api.ChatCompletionRequest{
-		Messages: planMsgs,
-		Stream:   true,
+		Messages:       planMsgs,
+		Stream:         true,
+		EnableThinking: cfg.EnableThinking,
 		// No tools, no token cap — let the model reason freely
 	}
 
@@ -264,8 +265,9 @@ func synthesize(ctx context.Context, complete StreamingCompletionFunc,
 	})
 
 	req := &api.ChatCompletionRequest{
-		Messages: synthMsgs,
-		Stream:   true,
+		Messages:       synthMsgs,
+		Stream:         true,
+		EnableThinking: cfg.EnableThinking,
 		// No tools, no token cap — synthesis only
 	}
 
@@ -376,8 +378,9 @@ func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 		}
 
 		req := &api.ChatCompletionRequest{
-			Messages: replanMsgs,
-			Stream:   true,
+			Messages:       replanMsgs,
+			Stream:         true,
+			EnableThinking: cfg.EnableThinking,
 		}
 
 		events, err := complete(ctx, req)

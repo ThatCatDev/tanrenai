@@ -137,6 +137,7 @@ var runCmd = &cobra.Command{
 		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 		maxTokens, _ := cmd.Flags().GetInt("max-tokens")
 		noScrolls, _ := cmd.Flags().GetBool("no-scrolls")
+		thinking, _ := cmd.Flags().GetBool("thinking")
 		local, _ := cmd.Flags().GetBool("local")
 		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
 		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
@@ -277,6 +278,7 @@ var runCmd = &cobra.Command{
 			t.scrollsEnabled = !noScrolls && len(allScrolls) > 0
 			t.maxIterations = maxIterations
 			t.maxResponseTokens = maxTokens
+			t.enableThinking = thinking
 			t.agentMode = agentMode
 			t.completeFn = completeFn
 			t.streamFn = streamFn
@@ -309,6 +311,7 @@ var chatCmd = &cobra.Command{
 		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 		maxTokens, _ := cmd.Flags().GetInt("max-tokens")
 		noScrolls, _ := cmd.Flags().GetBool("no-scrolls")
+		thinking, _ := cmd.Flags().GetBool("thinking")
 		local, _ := cmd.Flags().GetBool("local")
 		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
 		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
@@ -438,6 +441,7 @@ var chatCmd = &cobra.Command{
 			t.scrollsEnabled = !noScrolls && len(allScrolls) > 0
 			t.maxIterations = maxIterations
 			t.maxResponseTokens = maxTokens
+			t.enableThinking = thinking
 			t.agentMode = agentMode
 			t.completeFn = completeFn
 			t.streamFn = streamFn
@@ -928,6 +932,7 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("max-iterations", 0, "maximum agent tool-call iterations per turn (0 = unlimited)")
 	cmd.Flags().Int("max-tokens", 0, "max tokens per model response (0 = default 16384)")
 	cmd.Flags().Bool("no-scrolls", false, "disable automatic scroll injection")
+	cmd.Flags().Bool("thinking", true, "enable thinking/reasoning mode (for models that support it)")
 }
 
 var _ = time.Now
