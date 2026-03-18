@@ -177,16 +177,17 @@ func RunPlannedStreaming(ctx context.Context, complete StreamingCompletionFunc,
 // generatePlan calls the LLM with no tools to produce a numbered plan.
 func generatePlan(ctx context.Context, complete StreamingCompletionFunc,
 	messages []api.Message, userRequest string, cfg *PlanAgentConfig) (*Plan, error) {
-	planMsgs := []api.Message{
-		{Role: "system", Content: planningSystemPrompt},
-	}
-	// Include system messages from original conversation for context
+	// Merge planning prompt + original system messages into one
+	systemParts := []string{planningSystemPrompt}
 	for _, m := range messages {
-		if m.Role == "system" {
-			planMsgs = append(planMsgs, m)
+		if m.Role == "system" && m.Content != "" {
+			systemParts = append(systemParts, m.Content)
 		}
 	}
-	planMsgs = append(planMsgs, api.Message{Role: "user", Content: "Break this request into numbered steps:\n\n" + userRequest})
+	planMsgs := []api.Message{
+		{Role: "system", Content: strings.Join(systemParts, "\n\n")},
+		{Role: "user", Content: "Break this request into numbered steps:\n\n" + userRequest},
+	}
 
 	req := &api.ChatCompletionRequest{
 		Messages: planMsgs,
@@ -252,10 +253,17 @@ func executeStep(ctx context.Context, complete StreamingCompletionFunc,
 
 	preamble := fmt.Sprintf(stepPreambleTemplate, step.Index, total, step.Description, summaries)
 
-	// Build focused context: system + preamble + step description
+	// Build focused context: merge all system content into one message
+	var systemParts []string
+	for _, m := range systemMsgs {
+		if m.Content != "" {
+			systemParts = append(systemParts, m.Content)
+		}
+	}
+	systemParts = append(systemParts, preamble)
+
 	var stepMsgs []api.Message
-	stepMsgs = append(stepMsgs, systemMsgs...)
-	stepMsgs = append(stepMsgs, api.Message{Role: "system", Content: preamble})
+	stepMsgs = append(stepMsgs, api.Message{Role: "system", Content: strings.Join(systemParts, "\n\n")})
 	stepMsgs = append(stepMsgs, api.Message{Role: "user", Content: step.Description})
 
 	return RunStreaming(ctx, complete, stepMsgs, cfg.StreamingConfig)
@@ -266,13 +274,19 @@ func synthesize(ctx context.Context, complete StreamingCompletionFunc,
 	systemMsgs []api.Message, plan *Plan, userRequest string, cfg *PlanAgentConfig) (string, error) {
 	summaryBlock := formatStepSummaries(plan.Steps)
 
-	var synthMsgs []api.Message
-	synthMsgs = append(synthMsgs, systemMsgs...)
-	synthMsgs = append(synthMsgs, api.Message{Role: "system", Content: synthesisSystemPrompt})
-	synthMsgs = append(synthMsgs, api.Message{
-		Role:    "user",
-		Content: fmt.Sprintf("Original request: %s\n\nStep results:\n%s", userRequest, summaryBlock),
-	})
+	// Merge all system content into one message
+	var synthParts []string
+	for _, m := range systemMsgs {
+		if m.Content != "" {
+			synthParts = append(synthParts, m.Content)
+		}
+	}
+	synthParts = append(synthParts, synthesisSystemPrompt)
+
+	synthMsgs := []api.Message{
+		{Role: "system", Content: strings.Join(synthParts, "\n\n")},
+		{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nStep results:\n%s", userRequest, summaryBlock)},
+	}
 
 	req := &api.ChatCompletionRequest{
 		Messages:       synthMsgs,

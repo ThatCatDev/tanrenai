@@ -204,9 +204,11 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
 		}
 
+		reqMessages := mergeSystemMessages(messages)
+
 		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
-			Messages:       messages,
+			Messages:       reqMessages,
 			Stream:         false,
 			Tools:          apiTools,
 			MaxTokens:      &maxTokens,
@@ -297,9 +299,14 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
 		}
 
+		// Merge all system messages into a single one at position 0.
+		// Models like Qwen3 reject requests with system messages after
+		// non-system messages.
+		reqMessages := mergeSystemMessages(messages)
+
 		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
-			Messages:       messages,
+			Messages:       reqMessages,
 			Stream:         true,
 			Tools:          apiTools,
 			MaxTokens:      &maxTokens,
@@ -623,6 +630,38 @@ func removeRetryPrompts(messages []api.Message) []api.Message {
 	}
 
 	return cleaned
+}
+
+// mergeSystemMessages consolidates all system-role messages into a single
+// system message at position 0. Some models (Qwen3) require exactly one
+// system message at the beginning and reject requests with system messages
+// appearing after non-system messages.
+func mergeSystemMessages(messages []api.Message) []api.Message {
+	var systemParts []string
+	var rest []api.Message
+
+	for _, m := range messages {
+		if m.Role == "system" {
+			if m.Content != "" {
+				systemParts = append(systemParts, m.Content)
+			}
+		} else {
+			rest = append(rest, m)
+		}
+	}
+
+	if len(systemParts) == 0 {
+		return rest
+	}
+
+	merged := make([]api.Message, 0, 1+len(rest))
+	merged = append(merged, api.Message{
+		Role:    "system",
+		Content: strings.Join(systemParts, "\n\n"),
+	})
+	merged = append(merged, rest...)
+
+	return merged
 }
 
 func stripNarration(msg *api.Message) {
