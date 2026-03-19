@@ -105,79 +105,70 @@ jobs:
           sarif_file: sarif-results/infra.sarif
           category: gosec-infra
 
-  gpu:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - { name: gpu, dir: gpu }
+          - { name: server, dir: server }
+          - { name: shared, dir: clients/shared }
+          - { name: cli, dir: clients/cli }
+          - { name: infra, dir: infra }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: cd gpu && go build ./... && go vet ./...
-      - name: Test
-        run: cd gpu && go test ./...
 
-  server:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-      - run: cd server && go build ./... && go vet ./...
-      - name: Test
-        run: cd server && go test ./...
+      - name: Build & vet
+        run: cd ${{ matrix.module.dir }} && go build ./... && go vet ./...
 
-  clients-shared:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-      - run: cd clients/shared && go build ./... && go vet ./...
       - name: Test with coverage
         run: |
-          cd clients/shared
+          cd ${{ matrix.module.dir }}
           go test ./... -coverprofile=coverage.out -covermode=atomic
-          total=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
-          echo "Coverage: ${total}%"
-          threshold=75
-          if [ "$(echo "$total < $threshold" | bc -l)" -eq 1 ]; then
-            echo "::error::Coverage ${total}% is below threshold ${threshold}%"
-            exit 1
-          fi
-      - name: Per-package coverage
-        if: always()
-        run: |
-          cd clients/shared
-          echo "### clients/shared coverage by package" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          go tool cover -func=coverage.out | grep -E '(^total:|^github)' | awk '{printf "%-60s %s\n", $1, $NF}' >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-  clients-cli:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      # On main: save baseline breakdown per module
+      - name: Generate coverage baseline
+        if: github.ref == 'refs/heads/main'
+        uses: vladopajic/go-test-coverage@v2
         with:
-          go-version: '1.25'
-      - run: cd clients/cli && go build ./... && go vet ./...
-      - name: Test
-        run: cd clients/cli && go test ./...
+          config: ${{ github.workspace }}/.testcoverage.yml
+          profile: ${{ matrix.module.dir }}/coverage.out
+          breakdown-file-name: ${{ matrix.module.name }}-breakdown.json
 
-  infra:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Upload baseline artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
         with:
-          go-version: '1.25'
-      - run: cd infra && go build ./... && go vet ./...
-      - name: Test
-        run: cd infra && go test ./...
+          name: coverage-${{ matrix.module.name }}
+          path: ${{ matrix.module.name }}-breakdown.json
+          retention-days: 90
 
-  clients-desktop:
+      # On PRs: download baseline and diff
+      - name: Download baseline
+        if: github.event_name == 'pull_request'
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: coverage-${{ matrix.module.name }}
+          branch: main
+          workflow: ci.yml
+          if_no_artifact_found: warn
+
+      - name: Check coverage (PR)
+        if: github.event_name == 'pull_request'
+        uses: vladopajic/go-test-coverage@v2
+        with:
+          config: ${{ github.workspace }}/.testcoverage.yml
+          profile: ${{ matrix.module.dir }}/coverage.out
+          diff-base-breakdown-file-name: ${{ matrix.module.name }}-breakdown.json
+          github-action-output: true
+          git-token: ${{ github.token }}
+          git-branch: badges
+
+  test-desktop:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -191,265 +182,3 @@ jobs:
       - run: cd clients/desktop && go build ./... && go vet ./...
       - name: Test
         run: cd clients/desktop && go test ./...
-
-  changed-file-coverage:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-      - name: Check coverage of changed packages
-        run: |
-          THRESHOLD=80
-          FAILED=0
-
-          # Map module directories to their Go module roots
-          declare -A MODULE_ROOTS=(
-            ["gpu"]="gpu"
-            ["server"]="server"
-            ["clients/shared"]="clients/shared"
-            ["clients/cli"]="clients/cli"
-            ["infra"]="infra"
-          )
-
-          # Get changed .go files (excluding tests and generated)
-          CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- '*.go' | grep -v '_test.go' | grep -v '/generated/' || true)
-
-          if [ -z "$CHANGED_FILES" ]; then
-            echo "No Go source files changed."
-            exit 0
-          fi
-
-          echo "Changed Go files:"
-          echo "$CHANGED_FILES"
-          echo ""
-
-          # Collect unique packages that changed, grouped by module
-          declare -A CHANGED_PKGS
-
-          for f in $CHANGED_FILES; do
-            pkg_dir=$(dirname "$f")
-
-            # Find which module root this file belongs to
-            for name in "${!MODULE_ROOTS[@]}"; do
-              root="${MODULE_ROOTS[$name]}"
-              if [[ "$f" == "$root/"* ]]; then
-                # Get the Go package path relative to module root
-                rel_dir="${pkg_dir#$root/}"
-                # Skip packages with no testable logic:
-                # - root packages (main.go only)
-                # - pkg/api (pure struct definitions)
-                if [[ "$rel_dir" == "." || "$rel_dir" == pkg/api ]]; then
-                  continue
-                fi
-                key="$root|./$rel_dir"
-                CHANGED_PKGS["$key"]=1
-                break
-              fi
-            done
-          done
-
-          if [ ${#CHANGED_PKGS[@]} -eq 0 ]; then
-            echo "No testable packages changed (only cmd/ or root packages)."
-            exit 0
-          fi
-
-          echo "Checking coverage for changed packages:"
-          echo ""
-
-          # Packages that are warn-only (shown but don't block):
-          # TUI code requiring a live terminal, thin CLI entry points
-          WARN_PATTERNS="cmd"
-
-          is_warn_only() {
-            local pkg="$1"
-            local rel="${pkg#./}"
-            for pat in $WARN_PATTERNS; do
-              if [[ "$rel" == "$pat" || "$rel" == "$pat"/* ]]; then
-                return 0
-              fi
-            done
-            return 1
-          }
-
-          for key in "${!CHANGED_PKGS[@]}"; do
-            IFS='|' read -r mod_root pkg_path <<< "$key"
-            cd "$GITHUB_WORKSPACE/$mod_root"
-
-            warn_only=false
-            if is_warn_only "$pkg_path"; then
-              warn_only=true
-            fi
-
-            # Run tests for this specific package
-            cov_out=$(go test "$pkg_path" -coverprofile=/dev/null -covermode=atomic 2>&1 || true)
-            pct=$(echo "$cov_out" | grep -oP 'coverage: \K[0-9.]+' | head -1)
-
-            display="${mod_root}/${pkg_path#./}"
-
-            if [ -z "$pct" ]; then
-              if [ "$warn_only" = true ]; then
-                echo "  🟡 $display — no tests (warn only)"
-              else
-                echo "  🔴 $display — no tests"
-                FAILED=1
-              fi
-              continue
-            fi
-
-            if [ "$(echo "$pct < $THRESHOLD" | bc -l)" -eq 1 ]; then
-              if [ "$warn_only" = true ]; then
-                echo "  🟡 $display — ${pct}% (warn only, threshold ${THRESHOLD}%)"
-              else
-                echo "  🔴 $display — ${pct}% (below ${THRESHOLD}%)"
-                FAILED=1
-              fi
-            else
-              echo "  🟢 $display — ${pct}%"
-            fi
-
-            cd "$GITHUB_WORKSPACE"
-          done
-
-          echo ""
-          if [ "$FAILED" -eq 1 ]; then
-            echo "::error::Some changed packages have coverage below ${THRESHOLD}%"
-            exit 1
-          fi
-          echo "All changed packages meet the ${THRESHOLD}% coverage threshold."
-
-  coverage-comment:
-    if: always() && github.event_name == 'pull_request'
-    needs: [clients-shared, clients-cli, gpu, server, infra]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-      - name: Collect coverage
-        run: |
-          get_coverage() {
-            local dir="$1"
-            cd "$GITHUB_WORKSPACE/$dir"
-            go test ./... -coverprofile=cov.out -covermode=atomic > /dev/null 2>&1 || true
-            if [ -f cov.out ]; then
-              go tool cover -func=cov.out 2>/dev/null | awk '/^total:/{gsub(/%/,"",$NF); print $NF}'
-            fi
-            cd "$GITHUB_WORKSPACE"
-          }
-
-          # Module roots for package lookup
-          declare -A MODULE_ROOTS=(
-            ["gpu"]="gpu"
-            ["server"]="server"
-            ["clients/shared"]="clients/shared"
-            ["clients/cli"]="clients/cli"
-            ["infra"]="infra"
-          )
-
-          {
-            echo "## Test Coverage Report"
-            echo ""
-            echo "| Module | Coverage |"
-            echo "|--------|----------|"
-
-            for name in gpu server clients/shared clients/cli infra; do
-              pct=$(get_coverage "$name")
-              if [ -n "$pct" ]; then
-                if [ "$(echo "$pct >= 80" | bc -l)" -eq 1 ]; then
-                  icon="🟢"
-                elif [ "$(echo "$pct >= 60" | bc -l)" -eq 1 ]; then
-                  icon="🟡"
-                else
-                  icon="🔴"
-                fi
-                echo "| \`$name\` | $icon $pct% |"
-              else
-                echo "| \`$name\` | ⚪ n/a |"
-              fi
-            done
-
-            echo ""
-            echo "> 🟢 ≥80% · 🟡 ≥60% · 🔴 <60%"
-
-            # Changed packages coverage
-            CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- '*.go' | grep -v '_test.go' | grep -v '/generated/' || true)
-
-            if [ -n "$CHANGED_FILES" ]; then
-              declare -A CHANGED_PKGS
-              for f in $CHANGED_FILES; do
-                pkg_dir=$(dirname "$f")
-                for name in "${!MODULE_ROOTS[@]}"; do
-                  root="${MODULE_ROOTS[$name]}"
-                  if [[ "$f" == "$root/"* ]]; then
-                    rel_dir="${pkg_dir#$root/}"
-                    # Skip only root packages and pkg/api (pure types)
-                    if [[ "$rel_dir" == "." || "$rel_dir" == pkg/api ]]; then
-                      continue
-                    fi
-                    CHANGED_PKGS["$root|./$rel_dir"]=1
-                    break
-                  fi
-                done
-              done
-
-              if [ ${#CHANGED_PKGS[@]} -gt 0 ]; then
-                echo ""
-                echo "### Changed Packages (80% threshold)"
-                echo ""
-                echo "| Package | Coverage | Status |"
-                echo "|---------|----------|--------|"
-
-                for key in $(echo "${!CHANGED_PKGS[@]}" | tr ' ' '\n' | sort); do
-                  IFS='|' read -r mod_root pkg_path <<< "$key"
-                  cd "$GITHUB_WORKSPACE/$mod_root"
-                  cov_out=$(go test "$pkg_path" -coverprofile=/dev/null -covermode=atomic 2>&1 || true)
-                  pct=$(echo "$cov_out" | grep -oP 'coverage: \K[0-9.]+' | head -1)
-                  cd "$GITHUB_WORKSPACE"
-
-                  display="${mod_root}/${pkg_path#./}"
-                  rel="${pkg_path#./}"
-
-                  # cmd/ packages are warn-only (TUI/CLI code)
-                  is_cmd=false
-                  if [[ "$rel" == "cmd" || "$rel" == cmd/* ]]; then
-                    is_cmd=true
-                  fi
-
-                  if [ -z "$pct" ]; then
-                    if [ "$is_cmd" = true ]; then
-                      echo "| \`$display\` | — | 🟡 warn (TUI) |"
-                    else
-                      echo "| \`$display\` | — | 🔴 no tests |"
-                    fi
-                  elif [ "$(echo "$pct < 80" | bc -l)" -eq 1 ]; then
-                    if [ "$is_cmd" = true ]; then
-                      echo "| \`$display\` | ${pct}% | 🟡 warn (TUI) |"
-                    else
-                      echo "| \`$display\` | ${pct}% | 🔴 below 80% |"
-                    fi
-                  else
-                    echo "| \`$display\` | ${pct}% | 🟢 |"
-                  fi
-                done
-              fi
-            fi
-
-            echo ""
-            echo "_Updated by CI — $(date -u '+%Y-%m-%d %H:%M UTC')_"
-          } > /tmp/coverage_comment.md
-
-          cat /tmp/coverage_comment.md
-
-      - name: Post or update PR comment
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: coverage-report
-          path: /tmp/coverage_comment.md
