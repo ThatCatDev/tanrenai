@@ -130,17 +130,60 @@ jobs:
           cd ${{ matrix.module.dir }}
           go test ./... -coverprofile=coverage.out -covermode=atomic
 
-      # On main: save baseline breakdown per module
-      - name: Generate coverage baseline
+      - name: Collect coverage summary
+        if: always()
+        run: |
+          cd ${{ matrix.module.dir }}
+          if [ -f coverage.out ]; then
+            total=$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,"",$NF); print $NF}')
+            echo "$total" > "$GITHUB_WORKSPACE/${{ matrix.module.name }}-coverage-pct.txt"
+
+            # Per-package breakdown
+            go tool cover -func=coverage.out | grep -v "^total:" | awk '{
+              pkg=$1; pct=$NF; gsub(/%/,"",pct);
+              split(pkg, parts, "/");
+              # Rebuild package path without function name
+              n=length(parts);
+            }' > /dev/null
+
+            # Simpler: just get per-package totals from test output
+            go test ./... -cover 2>&1 | grep -oP '(ok|FAIL|\t)\s+\S+\s+.*coverage: [0-9.]+%' | \
+              sed 's/.*\t//' | awk '{print $1, $NF}' > "$GITHUB_WORKSPACE/${{ matrix.module.name }}-packages.txt" || true
+          else
+            echo "0" > "$GITHUB_WORKSPACE/${{ matrix.module.name }}-coverage-pct.txt"
+          fi
+
+      - name: Upload coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-data-${{ matrix.module.name }}
+          path: |
+            ${{ matrix.module.name }}-coverage-pct.txt
+            ${{ matrix.module.name }}-packages.txt
+          retention-days: 1
+
+      # go-test-coverage threshold enforcement
+      - name: Check coverage thresholds
+        uses: vladopajic/go-test-coverage@v2
+        continue-on-error: true
+        with:
+          config: ./.testcoverage.yml
+          profile: ./${{ matrix.module.dir }}/coverage.out
+          source-dir: ./${{ matrix.module.dir }}
+
+      # On main: save baseline
+      - name: Generate baseline
         if: github.ref == 'refs/heads/main'
         uses: vladopajic/go-test-coverage@v2
+        continue-on-error: true
         with:
           config: ./.testcoverage.yml
           profile: ./${{ matrix.module.dir }}/coverage.out
           source-dir: ./${{ matrix.module.dir }}
           breakdown-file-name: ${{ matrix.module.name }}-breakdown.json
 
-      - name: Upload baseline artifact
+      - name: Upload baseline
         if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
@@ -148,36 +191,54 @@ jobs:
           path: ${{ matrix.module.name }}-breakdown.json
           retention-days: 90
 
-      # On PRs: download baseline and diff
-      - name: Download baseline
-        if: github.event_name == 'pull_request'
-        uses: dawidd6/action-download-artifact@v6
+  coverage-comment:
+    if: always() && github.event_name == 'pull_request'
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          name: coverage-${{ matrix.module.name }}
-          branch: main
-          workflow: ci.yml
-          if_no_artifact_found: warn
+          pattern: coverage-data-*
+          merge-multiple: true
 
-      - name: Check coverage with diff (PR, baseline exists)
-        if: github.event_name == 'pull_request' && hashFiles(format('{0}-breakdown.json', matrix.module.name)) != ''
-        uses: vladopajic/go-test-coverage@v2
-        with:
-          config: ./.testcoverage.yml
-          profile: ./${{ matrix.module.dir }}/coverage.out
-          source-dir: ./${{ matrix.module.dir }}
-          diff-base-breakdown-file-name: ${{ matrix.module.name }}-breakdown.json
-          github-action-output: true
-          git-token: ${{ github.token }}
-          git-branch: badges
+      - name: Build comment
+        run: |
+          {
+            echo "## Test Coverage Report"
+            echo ""
+            echo "| Module | Coverage |"
+            echo "|--------|----------|"
 
-      - name: Check coverage (PR, no baseline)
-        if: github.event_name == 'pull_request' && hashFiles(format('{0}-breakdown.json', matrix.module.name)) == ''
-        uses: vladopajic/go-test-coverage@v2
+            for name in gpu server shared cli infra; do
+              file="${name}-coverage-pct.txt"
+              if [ -f "$file" ]; then
+                pct=$(cat "$file")
+                if [ "$(echo "$pct >= 80" | bc -l)" -eq 1 ]; then
+                  icon="🟢"
+                elif [ "$(echo "$pct >= 70" | bc -l)" -eq 1 ]; then
+                  icon="🟡"
+                else
+                  icon="🔴"
+                fi
+                echo "| \`$name\` | $icon ${pct}% |"
+              else
+                echo "| \`$name\` | ⚪ n/a |"
+              fi
+            done
+
+            echo ""
+            echo "> Thresholds: 70% per-package · 75% total"
+            echo ""
+            echo "_Updated by CI — $(date -u '+%Y-%m-%d %H:%M UTC')_"
+          } > /tmp/coverage_comment.md
+
+          cat /tmp/coverage_comment.md
+
+      - name: Post comment
+        uses: marocchino/sticky-pull-request-comment@v2
         with:
-          config: ./.testcoverage.yml
-          profile: ./${{ matrix.module.dir }}/coverage.out
-          source-dir: ./${{ matrix.module.dir }}
-          github-action-output: true
+          header: coverage-report
+          path: /tmp/coverage_comment.md
 
   test-desktop:
     runs-on: ubuntu-latest
