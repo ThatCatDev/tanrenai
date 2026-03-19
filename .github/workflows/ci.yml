@@ -137,6 +137,7 @@ jobs:
         with:
           config: ./.testcoverage.yml
           profile: ./${{ matrix.module.dir }}/coverage.out
+          source-dir: ./${{ matrix.module.dir }}
           breakdown-file-name: ${{ matrix.module.name }}-breakdown.json
 
       - name: Upload baseline artifact
@@ -163,6 +164,7 @@ jobs:
         with:
           config: ./.testcoverage.yml
           profile: ./${{ matrix.module.dir }}/coverage.out
+          source-dir: ./${{ matrix.module.dir }}
           diff-base-breakdown-file-name: ${{ matrix.module.name }}-breakdown.json
           github-action-output: true
           git-token: ${{ github.token }}
@@ -174,6 +176,7 @@ jobs:
         with:
           config: ./.testcoverage.yml
           profile: ./${{ matrix.module.dir }}/coverage.out
+          source-dir: ./${{ matrix.module.dir }}
           github-action-output: true
 
   test-desktop:
