@@ -128,7 +128,8 @@ func (t *tuiApp) handleStreamDone(content string, err error) {
 		if streamStart > len(t.lines) {
 			streamStart = len(t.lines)
 		}
-		rendered := fmt.Sprintf(" [purple::b] * [-:-:-]%s", t.renderMarkdown(content))
+		cleaned := stripToolCallXML(content)
+		rendered := fmt.Sprintf(" [purple::b] * [-:-:-]%s", t.renderMarkdown(cleaned))
 		t.lines = append(t.lines[:streamStart], strings.Split(rendered, "\n")...)
 	}
 
@@ -175,6 +176,7 @@ func (t *tuiApp) displayFinalContent(newMsgs []api.Message) {
 			break
 		}
 	}
+	finalContent = stripToolCallXML(finalContent)
 	if finalContent == "" {
 		return
 	}
