@@ -61,6 +61,16 @@ Found second file.`,
 			input: "Use <b>bold</b> text here",
 			want:  "Use <b>bold</b> text here",
 		},
+		{
+			name: "qwen3 format with equals",
+			input: "Good, I've seen the core system.ts. Let me continue reading the other core files.\n\n<tool_call>\n<function=file_read>\n<parameter=path>\nsrc/core/tasks.ts\n</parameter>\n</function>\n</tool_call>\nLet me continue reading the core files.",
+			want:  "Good, I've seen the core system.ts. Let me continue reading the other core files.\n\nLet me continue reading the core files.",
+		},
+		{
+			name:  "only qwen3 tool call",
+			input: "<tool_call>\n<function=file_read>\n<parameter=path>\nsrc/core/taskbar.ts\n</parameter>\n</function>\n</tool_call>",
+			want:  "",
+		},
 	}
 
 	for _, tt := range tests {
