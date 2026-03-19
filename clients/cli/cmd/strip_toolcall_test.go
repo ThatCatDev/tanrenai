@@ -82,3 +82,60 @@ Found second file.`,
 		})
 	}
 }
+
+func TestFilterToolCallXML_Streaming(t *testing.T) {
+	tests := []struct {
+		name   string
+		deltas []string // simulates streaming token by token
+		want   string
+	}{
+		{
+			name:   "no tool call",
+			deltas: []string{"Hello ", "world"},
+			want:   "Hello world",
+		},
+		{
+			name:   "tool call in single delta",
+			deltas: []string{"Before. <tool_call>\n<function=file_read>\n</function>\n</tool_call> After."},
+			want:   "Before. After.",
+		},
+		{
+			name: "tool call split across deltas",
+			deltas: []string{
+				"Let me read.",
+				"\n<tool_",
+				"call>\n<function=file_read>\n<parameter=path>\n",
+				"src/index.ts\n</parameter>\n</function>",
+				"\n</tool_call>\n",
+				"Done reading.",
+			},
+			want: "Let me read.\nDone reading.",
+		},
+		{
+			name: "multiple tool calls streamed",
+			deltas: []string{
+				"First. <tool_call>x</tool_call> ",
+				"Middle. <tool_call>y</tool_call> Last.",
+			},
+			want: "First. Middle. Last.",
+		},
+		{
+			name:   "only tool call",
+			deltas: []string{"<tool_call>\nstuff\n</tool_call>"},
+			want:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var filt xmlFilter
+			for _, d := range tt.deltas {
+				filt.write(d)
+			}
+			got := filt.out.String()
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

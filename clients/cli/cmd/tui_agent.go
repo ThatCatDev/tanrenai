@@ -333,7 +333,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 	})
 
 	toolCount := 0
-	var contentBuf strings.Builder
+	var contentFilt xmlFilter
 	var reasoningBuf strings.Builder
 
 	flushReasoning := func() {
@@ -354,11 +354,10 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 
 	flushContent := func() {
 		flushReasoning()
-		if contentBuf.Len() > 0 {
-			text := contentBuf.String()
-			contentBuf.Reset()
+		if contentFilt.len() > 0 {
+			text := contentFilt.string()
 			t.app.QueueUpdateDraw(func() {
-				trimmed := stripToolCallXML(strings.TrimSpace(text))
+				trimmed := strings.TrimSpace(text)
 				if trimmed != "" {
 					rendered := t.renderMarkdown(trimmed)
 					for _, line := range strings.Split(rendered, "\n") {
@@ -444,7 +443,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 			},
 			OnContentDelta: func(delta string) {
 				t.currentIterOutput += len(delta)
-				contentBuf.WriteString(delta)
+				contentFilt.write(delta)
 			},
 			OnReasoningDelta: func(delta string) {
 				t.currentIterOutput += len(delta)
@@ -727,4 +726,73 @@ func stripToolCallXML(text string) string {
 	cleaned := toolCallXMLPattern.ReplaceAllString(text, "")
 
 	return strings.TrimSpace(cleaned)
+}
+
+// xmlFilter tracks state for streaming <tool_call> block removal.
+// Call write() instead of buf.WriteString() to filter content in real-time.
+type xmlFilter struct {
+	out     strings.Builder // clean output (no tool_call blocks)
+	inBlock bool
+}
+
+// write appends delta content, filtering out <tool_call>...</tool_call> blocks.
+func (f *xmlFilter) write(delta string) {
+	const openTag = "<tool_call>"
+	const closeTag = "</tool_call>"
+
+	if f.inBlock {
+		// Inside a block — look for closing tag in the delta
+		idx := strings.Index(delta, closeTag)
+		if idx < 0 {
+			return // discard, still inside block
+		}
+		f.inBlock = false
+		// Process remainder after the closing tag
+		rest := strings.TrimLeft(delta[idx+len(closeTag):], "\n\r\t ")
+		if rest != "" {
+			f.write(rest)
+		}
+
+		return
+	}
+
+	// Not in block — append delta then check if accumulated output
+	// now contains an opening tag (handles tags split across deltas)
+	f.out.WriteString(delta)
+	cur := f.out.String()
+
+	idx := strings.Index(cur, openTag)
+	if idx < 0 {
+		return // no opening tag
+	}
+
+	// Found opening tag — keep content before it, enter block mode
+	f.inBlock = true
+	after := cur[idx+len(openTag):]
+	f.out.Reset()
+	f.out.WriteString(cur[:idx])
+
+	// Check if closing tag is in the same chunk
+	closeIdx := strings.Index(after, closeTag)
+	if closeIdx < 0 {
+		return // waiting for close
+	}
+	f.inBlock = false
+	rest := strings.TrimLeft(after[closeIdx+len(closeTag):], "\n\r\t ")
+	if rest != "" {
+		f.write(rest) // recurse for more blocks
+	}
+}
+
+// string returns the accumulated clean content and resets the buffer.
+func (f *xmlFilter) string() string {
+	s := f.out.String()
+	f.out.Reset()
+
+	return s
+}
+
+// len returns the length of accumulated clean content.
+func (f *xmlFilter) len() int {
+	return f.out.Len()
 }
