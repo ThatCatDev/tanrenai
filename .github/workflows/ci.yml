@@ -135,8 +135,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         uses: vladopajic/go-test-coverage@v2
         with:
-          config: ${{ github.workspace }}/.testcoverage.yml
-          profile: ${{ matrix.module.dir }}/coverage.out
+          config: ./.testcoverage.yml
+          profile: ./${{ matrix.module.dir }}/coverage.out
           breakdown-file-name: ${{ matrix.module.name }}-breakdown.json
 
       - name: Upload baseline artifact
@@ -157,16 +157,24 @@ jobs:
           workflow: ci.yml
           if_no_artifact_found: warn
 
-      - name: Check coverage (PR)
-        if: github.event_name == 'pull_request'
+      - name: Check coverage with diff (PR, baseline exists)
+        if: github.event_name == 'pull_request' && hashFiles(format('{0}-breakdown.json', matrix.module.name)) != ''
         uses: vladopajic/go-test-coverage@v2
         with:
-          config: ${{ github.workspace }}/.testcoverage.yml
-          profile: ${{ matrix.module.dir }}/coverage.out
+          config: ./.testcoverage.yml
+          profile: ./${{ matrix.module.dir }}/coverage.out
           diff-base-breakdown-file-name: ${{ matrix.module.name }}-breakdown.json
           github-action-output: true
           git-token: ${{ github.token }}
           git-branch: badges
+
+      - name: Check coverage (PR, no baseline)
+        if: github.event_name == 'pull_request' && hashFiles(format('{0}-breakdown.json', matrix.module.name)) == ''
+        uses: vladopajic/go-test-coverage@v2
+        with:
+          config: ./.testcoverage.yml
+          profile: ./${{ matrix.module.dir }}/coverage.out
+          github-action-output: true
 
   test-desktop:
     runs-on: ubuntu-latest
