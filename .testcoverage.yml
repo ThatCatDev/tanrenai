@@ -1,0 +1,15 @@
+profile: coverage.out
+
+threshold:
+  file: 0        # per-file threshold (0 = no per-file enforcement)
+  package: 80    # each package must be ≥80% covered
+  total: 80      # overall must be ≥80% covered
+
+diff:
+  threshold: 0   # don't allow coverage to drop on changed code
+
+exclude:
+  paths:
+    - cmd/.*           # CLI entry points (main, init)
+    - pkg/api/.*       # pure struct definitions
+    - main\.go

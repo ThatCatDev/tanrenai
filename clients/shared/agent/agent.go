@@ -64,6 +64,7 @@ type Config struct {
 	MaxTokens         int            // 0 = no limit (backward compatible)
 	MaxResponseTokens int            // max tokens per generation (0 = default 4096)
 	TokenEstimator    TokenEstimator // nil = no estimation
+	EnableThinking    bool           // send enable_thinking=true to the model
 }
 
 // StreamingCompletionFunc returns a channel of stream events instead of blocking.
@@ -77,6 +78,9 @@ type StreamingConfig struct {
 	OnThinkingDone   func()
 	OnContentDelta   func(delta string)
 	OnReasoningDelta func(delta string)
+	// UserInput is checked between iterations for mid-turn injection.
+	// If a message is available, it's appended as a user message.
+	UserInput <-chan string
 }
 
 const (
@@ -200,12 +204,15 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
 		}
 
+		reqMessages := mergeSystemMessages(messages)
+
 		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
-			Messages:  messages,
-			Stream:    false,
-			Tools:     apiTools,
-			MaxTokens: &maxTokens,
+			Messages:       reqMessages,
+			Stream:         false,
+			Tools:          apiTools,
+			MaxTokens:      &maxTokens,
+			EnableThinking: cfg.EnableThinking,
 		}
 
 		resp, err := complete(ctx, req)
@@ -292,12 +299,18 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
 		}
 
+		// Merge all system messages into a single one at position 0.
+		// Models like Qwen3 reject requests with system messages after
+		// non-system messages.
+		reqMessages := mergeSystemMessages(messages)
+
 		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
-			Messages:  messages,
-			Stream:    true,
-			Tools:     apiTools,
-			MaxTokens: &maxTokens,
+			Messages:       reqMessages,
+			Stream:         true,
+			Tools:          apiTools,
+			MaxTokens:      &maxTokens,
+			EnableThinking: cfg.EnableThinking,
 		}
 
 		if debugEnabled() {
@@ -386,6 +399,11 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		}
 		if !anySuccess && checkStuck(choice.Message.ToolCalls, errorCounts) {
 			return messages, fmt.Errorf("agent stuck: repeated identical failing tool calls")
+		}
+
+		// Check for user injection between iterations
+		if injection := readUserInput(cfg.UserInput); injection != "" {
+			messages = append(messages, api.Message{Role: "user", Content: injection})
 		}
 	}
 
@@ -612,6 +630,38 @@ func removeRetryPrompts(messages []api.Message) []api.Message {
 	}
 
 	return cleaned
+}
+
+// mergeSystemMessages consolidates all system-role messages into a single
+// system message at position 0. Some models (Qwen3) require exactly one
+// system message at the beginning and reject requests with system messages
+// appearing after non-system messages.
+func mergeSystemMessages(messages []api.Message) []api.Message {
+	var systemParts []string
+	var rest []api.Message
+
+	for _, m := range messages {
+		if m.Role == "system" {
+			if m.Content != "" {
+				systemParts = append(systemParts, m.Content)
+			}
+		} else {
+			rest = append(rest, m)
+		}
+	}
+
+	if len(systemParts) == 0 {
+		return rest
+	}
+
+	merged := make([]api.Message, 0, 1+len(rest))
+	merged = append(merged, api.Message{
+		Role:    "system",
+		Content: strings.Join(systemParts, "\n\n"),
+	})
+	merged = append(merged, rest...)
+
+	return merged
 }
 
 func stripNarration(msg *api.Message) {

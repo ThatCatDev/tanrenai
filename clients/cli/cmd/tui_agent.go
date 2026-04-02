@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -55,46 +56,35 @@ func (t *tuiApp) startChatTurn(input string) {
 		return
 	}
 
-	var full strings.Builder
-	for ev := range events {
-		if ev.Err != nil {
-			turnCancel()
-			t.mu.Lock()
-			t.turnCancel = nil
-			t.mu.Unlock()
-			content := full.String()
+	content, streamErr := streamSimpleChat(events, chatStreamHooks{
+		OnThinking: func() {
 			t.app.QueueUpdateDraw(func() {
-				t.handleStreamDone(content, ev.Err)
+				t.statusText = "Thinking..."
+				t.updateStatusBar()
 			})
-
-			return
-		}
-		if ev.Done {
-			break
-		}
-		if ev.Chunk == nil {
-			continue
-		}
-		for _, choice := range ev.Chunk.Choices {
-			if choice.Delta.Content != "" {
-				full.WriteString(choice.Delta.Content)
-				t.currentIterOutput += len(choice.Delta.Content)
-				t.app.QueueUpdateDraw(func() {
-					t.streaming.WriteString(choice.Delta.Content)
-					t.updateStreamingLine()
-					t.refreshChatView()
-				})
-			}
-		}
-	}
+		},
+		OnThinkingDone: func() {
+			t.app.QueueUpdateDraw(func() {
+				t.statusText = "Generating..."
+				t.updateStatusBar()
+			})
+		},
+		OnContentDelta: func(delta string) {
+			t.currentIterOutput += len(delta)
+			t.app.QueueUpdateDraw(func() {
+				t.streaming.WriteString(delta)
+				t.updateStreamingLine()
+				t.refreshChatView()
+			})
+		},
+	})
 	turnCancel()
 	t.mu.Lock()
 	t.turnCancel = nil
 	t.mu.Unlock()
 
-	content := full.String()
 	t.app.QueueUpdateDraw(func() {
-		t.handleStreamDone(content, nil)
+		t.handleStreamDone(content, streamErr)
 	})
 }
 
@@ -127,7 +117,8 @@ func (t *tuiApp) handleStreamDone(content string, err error) {
 		if streamStart > len(t.lines) {
 			streamStart = len(t.lines)
 		}
-		rendered := fmt.Sprintf(" [purple::b] * [-:-:-]%s", t.renderMarkdown(content))
+		cleaned := stripToolCallXML(content)
+		rendered := fmt.Sprintf(" [purple::b] * [-:-:-]%s", t.renderMarkdown(cleaned))
 		t.lines = append(t.lines[:streamStart], strings.Split(rendered, "\n")...)
 	}
 
@@ -174,6 +165,7 @@ func (t *tuiApp) displayFinalContent(newMsgs []api.Message) {
 			break
 		}
 	}
+	finalContent = stripToolCallXML(finalContent)
 	if finalContent == "" {
 		return
 	}
@@ -323,19 +315,36 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 	t.mu.Unlock()
 
 	// Create user injection channel for mid-turn input
-	userInputCh := make(chan string, 1)
+	userInputCh := make(chan string, 8)
 	t.app.QueueUpdateDraw(func() {
 		t.userInputCh = userInputCh
 		t.plannedMode = true
 	})
 
 	toolCount := 0
-	var contentBuf strings.Builder
+	var contentFilt xmlFilter
+	var reasoningBuf strings.Builder
+
+	flushReasoning := func() {
+		if reasoningBuf.Len() > 0 {
+			text := reasoningBuf.String()
+			reasoningBuf.Reset()
+			t.app.QueueUpdateDraw(func() {
+				trimmed := strings.TrimSpace(text)
+				if trimmed != "" {
+					for _, line := range strings.Split(trimmed, "\n") {
+						t.addLine("[gray::-]    " + tview.Escape(line) + "[-:-:-]")
+					}
+					t.refreshChatView()
+				}
+			})
+		}
+	}
 
 	flushContent := func() {
-		if contentBuf.Len() > 0 {
-			text := contentBuf.String()
-			contentBuf.Reset()
+		flushReasoning()
+		if contentFilt.len() > 0 {
+			text := contentFilt.string()
 			t.app.QueueUpdateDraw(func() {
 				trimmed := strings.TrimSpace(text)
 				if trimmed != "" {
@@ -352,8 +361,9 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 	cfg := agent.PlanAgentConfig{
 		StreamingConfig: agent.StreamingConfig{
 			Config: agent.Config{
-				MaxIterations: t.maxIterations,
-				Tools:         t.registry,
+				MaxIterations:  t.maxIterations,
+				EnableThinking: t.enableThinking,
+				Tools:          t.registry,
 				Hooks: agent.Hooks{
 					OnToolCall: func(call api.ToolCall) {
 						flushContent()
@@ -422,15 +432,13 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 			},
 			OnContentDelta: func(delta string) {
 				t.currentIterOutput += len(delta)
-				contentBuf.WriteString(delta)
+				contentFilt.write(delta)
 			},
 			OnReasoningDelta: func(delta string) {
 				t.currentIterOutput += len(delta)
-				t.app.QueueUpdateDraw(func() {
-					t.statusText = "Reasoning..."
-					t.updateStatusBar()
-				})
+				reasoningBuf.WriteString(delta)
 			},
+			UserInput: userInputCh,
 		},
 		UserInput: userInputCh,
 		OnPlanningStart: func() {
@@ -694,4 +702,86 @@ func (t *tuiApp) approveToolCall(call api.ToolCall) agent.ApprovalAction {
 	})
 
 	return <-responseCh
+}
+
+// toolCallXMLPattern matches <tool_call>...</tool_call> blocks that some models
+// emit as text content instead of using native tool calling.
+var toolCallXMLPattern = regexp.MustCompile(`(?s)<tool_call>.*?</tool_call>\s*`)
+
+// stripToolCallXML removes XML-style tool call blocks from model output.
+// These are already handled by the native tool calling mechanism and
+// shouldn't be displayed to the user.
+func stripToolCallXML(text string) string {
+	cleaned := toolCallXMLPattern.ReplaceAllString(text, "")
+
+	return strings.TrimSpace(cleaned)
+}
+
+// xmlFilter tracks state for streaming <tool_call> block removal.
+// Call write() instead of buf.WriteString() to filter content in real-time.
+type xmlFilter struct {
+	out     strings.Builder // clean output (no tool_call blocks)
+	inBlock bool
+}
+
+// write appends delta content, filtering out <tool_call>...</tool_call> blocks.
+func (f *xmlFilter) write(delta string) {
+	const openTag = "<tool_call>"
+	const closeTag = "</tool_call>"
+
+	if f.inBlock {
+		// Inside a block — look for closing tag in the delta
+		idx := strings.Index(delta, closeTag)
+		if idx < 0 {
+			return // discard, still inside block
+		}
+		f.inBlock = false
+		// Process remainder after the closing tag
+		rest := strings.TrimLeft(delta[idx+len(closeTag):], "\n\r\t ")
+		if rest != "" {
+			f.write(rest)
+		}
+
+		return
+	}
+
+	// Not in block — append delta then check if accumulated output
+	// now contains an opening tag (handles tags split across deltas)
+	f.out.WriteString(delta)
+	cur := f.out.String()
+
+	idx := strings.Index(cur, openTag)
+	if idx < 0 {
+		return // no opening tag
+	}
+
+	// Found opening tag — keep content before it, enter block mode
+	f.inBlock = true
+	after := cur[idx+len(openTag):]
+	f.out.Reset()
+	f.out.WriteString(cur[:idx])
+
+	// Check if closing tag is in the same chunk
+	closeIdx := strings.Index(after, closeTag)
+	if closeIdx < 0 {
+		return // waiting for close
+	}
+	f.inBlock = false
+	rest := strings.TrimLeft(after[closeIdx+len(closeTag):], "\n\r\t ")
+	if rest != "" {
+		f.write(rest) // recurse for more blocks
+	}
+}
+
+// string returns the accumulated clean content and resets the buffer.
+func (f *xmlFilter) string() string {
+	s := f.out.String()
+	f.out.Reset()
+
+	return s
+}
+
+// len returns the length of accumulated clean content.
+func (f *xmlFilter) len() int {
+	return f.out.Len()
 }

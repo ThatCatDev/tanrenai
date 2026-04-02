@@ -17,6 +17,7 @@ import (
 
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	gpuserve "github.com/ThatCatDev/tanrenai/gpu/pkg/serve"
+	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/scrolls"
@@ -121,174 +122,69 @@ Important rules:
 8. To edit existing files, use patch_file. Only use file_write for creating new files or when you need to rewrite the entire file. Always use file_read first to understand what you're changing.
 9. After making changes, verify your work by building or running tests with shell_exec.`
 
+// parseRunParams reads the common flags from a cobra command into a runParams struct.
+func parseRunParams(cmd *cobra.Command, model string) (runParams, error) {
+	systemPrompt, _ := cmd.Flags().GetString("system")
+	systemFile, _ := cmd.Flags().GetString("system-file")
+	if systemFile != "" {
+		data, err := os.ReadFile(systemFile)
+		if err != nil {
+			return runParams{}, fmt.Errorf("failed to read system file: %w", err)
+		}
+		systemPrompt = string(data)
+	}
+
+	agentMode, _ := cmd.Flags().GetBool("agent")
+	ctxSize, _ := cmd.Flags().GetInt("ctx-size")
+	responseBudget, _ := cmd.Flags().GetInt("response-budget")
+	contextFiles, _ := cmd.Flags().GetStringSlice("context-file")
+	memoryEnabled, _ := cmd.Flags().GetBool("memory")
+	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
+	maxTokens, _ := cmd.Flags().GetInt("max-tokens")
+	noScrolls, _ := cmd.Flags().GetBool("no-scrolls")
+	thinking, _ := cmd.Flags().GetBool("thinking")
+	local, _ := cmd.Flags().GetBool("local")
+	gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
+	flashAttn, _ := cmd.Flags().GetBool("flash-attn")
+
+	return runParams{
+		model:          model,
+		systemPrompt:   systemPrompt,
+		agentMode:      agentMode,
+		ctxSize:        ctxSize,
+		ctxSizeChanged: cmd.Flags().Changed("ctx-size"),
+		responseBudget: responseBudget,
+		contextFiles:   contextFiles,
+		memoryEnabled:  memoryEnabled,
+		maxIterations:  maxIterations,
+		maxTokens:      maxTokens,
+		noScrolls:      noScrolls,
+		thinking:       thinking,
+		local:          local,
+		gpuLayers:      gpuLayers,
+		flashAttn:      flashAttn,
+	}, nil
+}
+
 var runCmd = &cobra.Command{
 	Use:   "run <model>",
 	Short: "Load a model and start an interactive chat",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		model := args[0]
-		systemPrompt, _ := cmd.Flags().GetString("system")
-		systemFile, _ := cmd.Flags().GetString("system-file")
-		agentMode, _ := cmd.Flags().GetBool("agent")
-		ctxSize, _ := cmd.Flags().GetInt("ctx-size")
-		responseBudget, _ := cmd.Flags().GetInt("response-budget")
-		contextFiles, _ := cmd.Flags().GetStringSlice("context-file")
-		memoryEnabled, _ := cmd.Flags().GetBool("memory")
-		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
-		maxTokens, _ := cmd.Flags().GetInt("max-tokens")
-		noScrolls, _ := cmd.Flags().GetBool("no-scrolls")
-		local, _ := cmd.Flags().GetBool("local")
-		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
-		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
-		ctxSizeChanged := cmd.Flags().Changed("ctx-size")
-		ctx := cmd.Context()
-
-		if systemFile != "" {
-			data, err := os.ReadFile(systemFile)
-			if err != nil {
-				return fmt.Errorf("failed to read system file: %w", err)
-			}
-			systemPrompt = string(data)
+		p, err := parseRunParams(cmd, args[0])
+		if err != nil {
+			return err
 		}
-
-		return startTUI(model, func(t *tuiApp, log *startupLog) error {
-			activeURL := serverURL
-			if local {
-				opts := localOpts{
-					GPULayers:      gpuLayers,
-					FlashAttention: flashAttn,
-					MemoryEnabled:  memoryEnabled,
-				}
-				if memoryEnabled {
-					if err := ensureEmbeddingModel(log); err != nil {
-						return err
-					}
-					opts.EmbeddingModel = defaultEmbeddingModel
-					opts.MemoryDir = projectMemoryDir()
-				}
-				url, cleanup, err := startLocalServers(ctx, opts, log)
-				if err != nil {
-					return err
-				}
-				t.cleanupFn = cleanup
-				activeURL = url
-			}
-
-			client := apiclient.New(activeURL)
-
-			log.Info("Loading model " + model + "...")
-			loadResp, err := client.LoadModel(ctx, model)
+		pipeMode, _ := cmd.Flags().GetBool("pipe")
+		if pipeMode {
+			return startPipe(cmd.Context(), p)
+		}
+		return startTUI(p.model, func(t *tuiApp, log *startupLog) error {
+			deps, err := setupSession(cmd.Context(), p, log)
 			if err != nil {
-				return fmt.Errorf("failed to load model (is the backend running?): %w", err)
+				return err
 			}
-
-			if !ctxSizeChanged && loadResp.CtxSize > 0 {
-				ctxSize = loadResp.CtxSize
-				log.Info(fmt.Sprintf("Using model context size: %d tokens", ctxSize))
-			}
-			if ctxSize == 0 {
-				ctxSize = 4096
-			}
-
-			estimator := chatctx.NewTokenEstimator()
-			calibrateEstimator(client, estimator, log)
-
-			toolsBudget := 0
-			if agentMode {
-				toolsBudget = 4000
-			}
-
-			mgr := chatctx.NewManager(chatctx.Config{
-				CtxSize:        ctxSize,
-				ResponseBudget: responseBudget,
-				ToolsBudget:    toolsBudget,
-			}, estimator)
-
-			for _, path := range contextFiles {
-				msg, err := loadContextFile(mgr, path)
-				if err != nil {
-					log.Warn(fmt.Sprintf("Failed to load context file %s: %v", path, err))
-				} else {
-					log.Info(msg)
-				}
-			}
-
-			// Load scrolls
-			var allScrolls []scrolls.Scroll
-			if !noScrolls {
-				projectScrollsDir := filepath.Join(".tanrenai", "scrolls")
-				globalScrollsDir := filepath.Join(tools.GlobalConfigDir(), "scrolls")
-				allScrolls, err = scrolls.Load(projectScrollsDir, globalScrollsDir)
-				if err != nil {
-					log.Warn(fmt.Sprintf("Failed to load scrolls: %v", err))
-				} else if len(allScrolls) > 0 {
-					log.Info(fmt.Sprintf("Loaded %d scrolls", len(allScrolls)))
-				}
-			}
-
-			if memoryEnabled && agentMode {
-				count, err := client.MemoryCount(ctx)
-				if err != nil {
-					log.Warn(fmt.Sprintf("Memory not available: %v", err))
-					memoryEnabled = false
-				} else {
-					log.Info(fmt.Sprintf("Memory enabled (%d stored memories)", count))
-				}
-			}
-
-			// Configure system prompt
-			if agentMode {
-				agentSystem := defaultAgentSystemPrompt
-				if systemPrompt != "" {
-					agentSystem += "\n\n" + systemPrompt
-				}
-				mgr.SetSystemPrompt(agentSystem)
-			} else if systemPrompt != "" {
-				mgr.SetSystemPrompt(systemPrompt)
-			}
-
-			var registry *tools.Registry
-			var procMgr *tools.ProcessManager
-			if agentMode {
-				registry = tools.DefaultRegistry()
-				procMgr = tools.NewProcessManager()
-				if st, ok := registry.Get("shell_exec").(*tools.ShellExecTool); ok {
-					st.ProcessManager = procMgr
-				}
-			}
-
-			completeFn := func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
-				req.Model = model
-
-				return client.ChatCompletion(ctx, req)
-			}
-			streamFn := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
-				req.Model = model
-
-				return client.StreamCompletion(ctx, req)
-			}
-
-			// Set TUI dependencies
-			t.client = client
-			t.mgr = mgr
-			t.registry = registry
-			t.memoryEnabled = memoryEnabled
-			t.allScrolls = allScrolls
-			t.scrollsEnabled = !noScrolls && len(allScrolls) > 0
-			t.maxIterations = maxIterations
-			t.maxResponseTokens = maxTokens
-			t.agentMode = agentMode
-			t.completeFn = completeFn
-			t.streamFn = streamFn
-			if procMgr != nil {
-				t.procMgr = procMgr
-				procMgr.OnChange = func() {
-					t.app.QueueUpdateDraw(func() {
-						t.refreshProcessPanel()
-					})
-				}
-			}
-
+			assignToTUI(t, deps)
 			return nil
 		})
 	},
@@ -299,157 +195,23 @@ var chatCmd = &cobra.Command{
 	Short: "Interactive chat with a loaded model",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		model, _ := cmd.Flags().GetString("model")
-		systemPrompt, _ := cmd.Flags().GetString("system")
-		systemFile, _ := cmd.Flags().GetString("system-file")
-		agentMode, _ := cmd.Flags().GetBool("agent")
-		ctxSize, _ := cmd.Flags().GetInt("ctx-size")
-		responseBudget, _ := cmd.Flags().GetInt("response-budget")
-		contextFiles, _ := cmd.Flags().GetStringSlice("context-file")
-		memoryEnabled, _ := cmd.Flags().GetBool("memory")
-		maxIterations, _ := cmd.Flags().GetInt("max-iterations")
-		maxTokens, _ := cmd.Flags().GetInt("max-tokens")
-		noScrolls, _ := cmd.Flags().GetBool("no-scrolls")
-		local, _ := cmd.Flags().GetBool("local")
-		gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
-		flashAttn, _ := cmd.Flags().GetBool("flash-attn")
-		ctx := cmd.Context()
-
 		if model == "" {
 			return fmt.Errorf("specify a model with --model")
 		}
-
-		if systemFile != "" {
-			data, err := os.ReadFile(systemFile)
-			if err != nil {
-				return fmt.Errorf("failed to read system file: %w", err)
-			}
-			systemPrompt = string(data)
+		p, err := parseRunParams(cmd, model)
+		if err != nil {
+			return err
 		}
-
-		return startTUI(model, func(t *tuiApp, log *startupLog) error {
-			activeURL := serverURL
-			if local {
-				opts := localOpts{
-					GPULayers:      gpuLayers,
-					FlashAttention: flashAttn,
-					MemoryEnabled:  memoryEnabled,
-				}
-				if memoryEnabled {
-					if err := ensureEmbeddingModel(log); err != nil {
-						return err
-					}
-					opts.EmbeddingModel = defaultEmbeddingModel
-					opts.MemoryDir = projectMemoryDir()
-				}
-				url, cleanup, err := startLocalServers(ctx, opts, log)
-				if err != nil {
-					return err
-				}
-				t.cleanupFn = cleanup
-				activeURL = url
+		pipeMode, _ := cmd.Flags().GetBool("pipe")
+		if pipeMode {
+			return startPipe(cmd.Context(), p)
+		}
+		return startTUI(p.model, func(t *tuiApp, log *startupLog) error {
+			deps, err := setupSession(cmd.Context(), p, log)
+			if err != nil {
+				return err
 			}
-
-			client := apiclient.New(activeURL)
-
-			estimator := chatctx.NewTokenEstimator()
-			calibrateEstimator(client, estimator, log)
-
-			toolsBudget := 0
-			if agentMode {
-				toolsBudget = 4000
-			}
-
-			mgr := chatctx.NewManager(chatctx.Config{
-				CtxSize:        ctxSize,
-				ResponseBudget: responseBudget,
-				ToolsBudget:    toolsBudget,
-			}, estimator)
-
-			for _, path := range contextFiles {
-				msg, err := loadContextFile(mgr, path)
-				if err != nil {
-					log.Warn(fmt.Sprintf("Failed to load context file %s: %v", path, err))
-				} else {
-					log.Info(msg)
-				}
-			}
-
-			// Load scrolls
-			var allScrolls []scrolls.Scroll
-			if !noScrolls {
-				projectScrollsDir := filepath.Join(".tanrenai", "scrolls")
-				globalScrollsDir := filepath.Join(tools.GlobalConfigDir(), "scrolls")
-				var scrollErr error
-				allScrolls, scrollErr = scrolls.Load(projectScrollsDir, globalScrollsDir)
-				if scrollErr != nil {
-					log.Warn(fmt.Sprintf("Failed to load scrolls: %v", scrollErr))
-				} else if len(allScrolls) > 0 {
-					log.Info(fmt.Sprintf("Loaded %d scrolls", len(allScrolls)))
-				}
-			}
-
-			if memoryEnabled && agentMode {
-				count, err := client.MemoryCount(ctx)
-				if err != nil {
-					log.Warn(fmt.Sprintf("Memory not available: %v", err))
-					memoryEnabled = false
-				} else {
-					log.Info(fmt.Sprintf("Memory enabled (%d stored memories)", count))
-				}
-			}
-
-			// Configure system prompt
-			if agentMode {
-				agentSystem := defaultAgentSystemPrompt
-				if systemPrompt != "" {
-					agentSystem += "\n\n" + systemPrompt
-				}
-				mgr.SetSystemPrompt(agentSystem)
-			} else if systemPrompt != "" {
-				mgr.SetSystemPrompt(systemPrompt)
-			}
-
-			var registry *tools.Registry
-			var procMgr *tools.ProcessManager
-			if agentMode {
-				registry = tools.DefaultRegistry()
-				procMgr = tools.NewProcessManager()
-				if st, ok := registry.Get("shell_exec").(*tools.ShellExecTool); ok {
-					st.ProcessManager = procMgr
-				}
-			}
-
-			completeFn := func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
-				req.Model = model
-
-				return client.ChatCompletion(ctx, req)
-			}
-			streamFn := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
-				req.Model = model
-
-				return client.StreamCompletion(ctx, req)
-			}
-
-			t.client = client
-			t.mgr = mgr
-			t.registry = registry
-			t.memoryEnabled = memoryEnabled
-			t.allScrolls = allScrolls
-			t.scrollsEnabled = !noScrolls && len(allScrolls) > 0
-			t.maxIterations = maxIterations
-			t.maxResponseTokens = maxTokens
-			t.agentMode = agentMode
-			t.completeFn = completeFn
-			t.streamFn = streamFn
-			if procMgr != nil {
-				t.procMgr = procMgr
-				procMgr.OnChange = func() {
-					t.app.QueueUpdateDraw(func() {
-						t.refreshProcessPanel()
-					})
-				}
-			}
-
+			assignToTUI(t, deps)
 			return nil
 		})
 	},
@@ -917,6 +679,253 @@ func truncate(s string, max int) string {
 	return s[:max] + "..."
 }
 
+// chatStreamHooks are callbacks for the shared simple-chat streaming loop.
+type chatStreamHooks struct {
+	OnThinking     func()
+	OnThinkingDone func()
+	OnContentDelta func(delta string)
+}
+
+// streamSimpleChat runs a single streaming chat completion and invokes hooks
+// for thinking and content deltas. Returns the accumulated assistant content.
+// Both TUI and pipe mode call this so the logic lives in one place.
+func streamSimpleChat(events <-chan apiclient.StreamEvent, hooks chatStreamHooks) (string, error) {
+	var full strings.Builder
+	thinking := false
+	for ev := range events {
+		if ev.Err != nil {
+			return full.String(), ev.Err
+		}
+		if ev.Done {
+			break
+		}
+		if ev.Chunk == nil {
+			continue
+		}
+		for _, choice := range ev.Chunk.Choices {
+			if choice.Delta.ReasoningContent != "" && !thinking {
+				thinking = true
+				if hooks.OnThinking != nil {
+					hooks.OnThinking()
+				}
+			}
+			if choice.Delta.Content != "" {
+				if thinking {
+					thinking = false
+					if hooks.OnThinkingDone != nil {
+						hooks.OnThinkingDone()
+					}
+				}
+				full.WriteString(choice.Delta.Content)
+				if hooks.OnContentDelta != nil {
+					hooks.OnContentDelta(choice.Delta.Content)
+				}
+			}
+		}
+	}
+	return full.String(), nil
+}
+
+// runParams captures all parsed flags shared by the run and chat commands.
+type runParams struct {
+	model          string
+	systemPrompt   string
+	agentMode      bool
+	ctxSize        int
+	ctxSizeChanged bool
+	responseBudget int
+	contextFiles   []string
+	memoryEnabled  bool
+	maxIterations  int
+	maxTokens      int
+	noScrolls      bool
+	thinking       bool
+	local          bool
+	gpuLayers      int
+	flashAttn      bool
+}
+
+// sessionDeps holds the initialised resources for a chat/agent session.
+type sessionDeps struct {
+	client         *apiclient.Client
+	mgr            *chatctx.Manager
+	registry       *tools.Registry
+	procMgr        *tools.ProcessManager
+	memoryEnabled  bool
+	allScrolls     []scrolls.Scroll
+	scrollsEnabled bool
+	maxIterations  int
+	maxTokens      int
+	enableThinking bool
+	agentMode      bool
+	completeFn     agent.CompletionFunc
+	streamFn       agent.StreamingCompletionFunc
+	cleanupFn      func()
+	modelName      string
+}
+
+// setupSession initialises the backend client, model, context manager,
+// tools, scrolls, and memory — everything both TUI and pipe mode need.
+func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDeps, error) {
+	deps := &sessionDeps{modelName: p.model}
+
+	activeURL := serverURL
+	if p.local {
+		opts := localOpts{
+			GPULayers:      p.gpuLayers,
+			FlashAttention: p.flashAttn,
+			MemoryEnabled:  p.memoryEnabled,
+		}
+		if p.memoryEnabled {
+			if err := ensureEmbeddingModel(log); err != nil {
+				return nil, err
+			}
+			opts.EmbeddingModel = defaultEmbeddingModel
+			opts.MemoryDir = projectMemoryDir()
+		}
+		url, cleanup, err := startLocalServers(ctx, opts, log)
+		if err != nil {
+			return nil, err
+		}
+		deps.cleanupFn = cleanup
+		activeURL = url
+	}
+
+	client := apiclient.New(activeURL)
+	deps.client = client
+
+	log.Info("Loading model " + p.model + "...")
+	loadResp, err := client.LoadModel(ctx, p.model)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load model (is the backend running?): %w", err)
+	}
+
+	ctxSize := p.ctxSize
+	if !p.ctxSizeChanged && loadResp.CtxSize > 0 {
+		ctxSize = loadResp.CtxSize
+		log.Info(fmt.Sprintf("Using model context size: %d tokens", ctxSize))
+	}
+	if ctxSize == 0 {
+		ctxSize = 4096
+	}
+
+	estimator := chatctx.NewTokenEstimator()
+	calibrateEstimator(client, estimator, log)
+
+	toolsBudget := 0
+	if p.agentMode {
+		toolsBudget = 4000
+	}
+
+	mgr := chatctx.NewManager(chatctx.Config{
+		CtxSize:        ctxSize,
+		ResponseBudget: p.responseBudget,
+		ToolsBudget:    toolsBudget,
+	}, estimator)
+	deps.mgr = mgr
+
+	for _, path := range p.contextFiles {
+		msg, loadErr := loadContextFile(mgr, path)
+		if loadErr != nil {
+			log.Warn(fmt.Sprintf("Failed to load context file %s: %v", path, loadErr))
+		} else {
+			log.Info(msg)
+		}
+	}
+
+	// Load scrolls
+	var allScrolls []scrolls.Scroll
+	if !p.noScrolls {
+		projectScrollsDir := filepath.Join(".tanrenai", "scrolls")
+		globalScrollsDir := filepath.Join(tools.GlobalConfigDir(), "scrolls")
+		allScrolls, err = scrolls.Load(projectScrollsDir, globalScrollsDir)
+		if err != nil {
+			log.Warn(fmt.Sprintf("Failed to load scrolls: %v", err))
+		} else if len(allScrolls) > 0 {
+			log.Info(fmt.Sprintf("Loaded %d scrolls", len(allScrolls)))
+		}
+	}
+	deps.allScrolls = allScrolls
+	deps.scrollsEnabled = !p.noScrolls && len(allScrolls) > 0
+
+	memoryEnabled := p.memoryEnabled
+	if memoryEnabled && p.agentMode {
+		count, memErr := client.MemoryCount(ctx)
+		if memErr != nil {
+			log.Warn(fmt.Sprintf("Memory not available: %v", memErr))
+			memoryEnabled = false
+		} else {
+			log.Info(fmt.Sprintf("Memory enabled (%d stored memories)", count))
+		}
+	}
+	deps.memoryEnabled = memoryEnabled
+
+	// Configure system prompt
+	if p.agentMode {
+		agentSystem := defaultAgentSystemPrompt
+		if p.systemPrompt != "" {
+			agentSystem += "\n\n" + p.systemPrompt
+		}
+		mgr.SetSystemPrompt(agentSystem)
+	} else if p.systemPrompt != "" {
+		mgr.SetSystemPrompt(p.systemPrompt)
+	}
+
+	if p.agentMode {
+		registry := tools.DefaultRegistry()
+		procMgr := tools.NewProcessManager()
+		if st, ok := registry.Get("shell_exec").(*tools.ShellExecTool); ok {
+			st.ProcessManager = procMgr
+		}
+		deps.registry = registry
+		deps.procMgr = procMgr
+	}
+
+	deps.maxIterations = p.maxIterations
+	deps.maxTokens = p.maxTokens
+	deps.enableThinking = p.thinking
+	deps.agentMode = p.agentMode
+
+	model := p.model
+	deps.completeFn = func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
+		req.Model = model
+		return client.ChatCompletion(ctx, req)
+	}
+	deps.streamFn = func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
+		req.Model = model
+		return client.StreamCompletion(ctx, req)
+	}
+
+	return deps, nil
+}
+
+// assignToTUI copies sessionDeps fields onto a tuiApp.
+func assignToTUI(t *tuiApp, deps *sessionDeps) {
+	t.client = deps.client
+	t.mgr = deps.mgr
+	t.registry = deps.registry
+	t.memoryEnabled = deps.memoryEnabled
+	t.allScrolls = deps.allScrolls
+	t.scrollsEnabled = deps.scrollsEnabled
+	t.maxIterations = deps.maxIterations
+	t.maxResponseTokens = deps.maxTokens
+	t.enableThinking = deps.enableThinking
+	t.agentMode = deps.agentMode
+	t.completeFn = deps.completeFn
+	t.streamFn = deps.streamFn
+	if deps.cleanupFn != nil {
+		t.cleanupFn = deps.cleanupFn
+	}
+	if deps.procMgr != nil {
+		t.procMgr = deps.procMgr
+		deps.procMgr.OnChange = func() {
+			t.app.QueueUpdateDraw(func() {
+				t.refreshProcessPanel()
+			})
+		}
+	}
+}
+
 func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().String("system", "", "system prompt")
 	cmd.Flags().String("system-file", "", "read system prompt from file")
@@ -925,9 +934,11 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("response-budget", 512, "tokens reserved for model response")
 	cmd.Flags().StringSlice("context-file", nil, "files to load into context")
 	cmd.Flags().Bool("memory", false, "enable memory/RAG")
-	cmd.Flags().Int("max-iterations", 200, "maximum agent tool-call iterations per turn (0 = unlimited)")
+	cmd.Flags().Int("max-iterations", 0, "maximum agent tool-call iterations per turn (0 = unlimited)")
 	cmd.Flags().Int("max-tokens", 0, "max tokens per model response (0 = default 16384)")
 	cmd.Flags().Bool("no-scrolls", false, "disable automatic scroll injection")
+	cmd.Flags().Bool("thinking", true, "enable thinking/reasoning mode (for models that support it)")
+	cmd.Flags().Bool("pipe", false, "non-interactive pipe mode: read from stdin, write to stdout")
 }
 
 var _ = time.Now

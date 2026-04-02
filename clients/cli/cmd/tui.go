@@ -126,6 +126,7 @@ type tuiApp struct {
 	scrollsEnabled    bool
 	maxIterations     int
 	maxResponseTokens int
+	enableThinking    bool
 	agentMode         bool
 	completeFn        agent.CompletionFunc
 	streamFn          agent.StreamingCompletionFunc

@@ -10,17 +10,17 @@ import (
 
 // System prompts for the plan-execute architecture.
 const (
-	planningSystemPrompt = `You are a planning assistant. Your ONLY job is to output a numbered list of steps. Do NOT explain, do NOT use tools, do NOT write code.
+	planningSystemPrompt = `You are a planning assistant. Output ONLY a numbered list of implementation steps. No explanation, no code, no preamble.
 
-OUTPUT FORMAT (strictly follow this):
-1. First action
-2. Second action
-3. Third action
+Format each step as:
+1. <verb> <what>
+2. <verb> <what>
 
-RULES:
-- Each step = one concrete action (read a file, write a function, run a command)
-- 3-8 steps ideal
-- No preamble, no explanation, just the numbered list`
+Rules:
+- Each step = one concrete action (read a file, create a component, run a command)
+- Use 3-8 steps
+- Start each step with an action verb (Create, Read, Write, Add, Configure, Build, Test, etc.)
+- Output NOTHING except the numbered list — no thinking, no explanation, no summary`
 
 	stepPreambleTemplate = `You are executing step %d of %d: "%s"
 Completed so far:
@@ -47,151 +47,35 @@ type PlanAgentConfig struct {
 	OnSynthesize    func()
 }
 
-// RunPlannedStreaming executes a plan-execute agent loop:
-// 1. Plan phase: decompose user request into steps
-// 2. Execute phase: run each step as an isolated sub-agent
-// 3. Synthesize phase: produce a final summary
-//
-// If planning fails or produces a single step, it degrades to normal RunStreaming.
+// RunPlannedStreaming runs a single continuous agent loop, keeping the full
+// conversation history in context. This delegates directly to RunStreaming —
+// the model decides on its own how to decompose and execute the task.
 func RunPlannedStreaming(ctx context.Context, complete StreamingCompletionFunc,
 	messages []api.Message, cfg PlanAgentConfig) ([]api.Message, error) {
-	// Extract the original user request (last user message).
-	userRequest := ""
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			userRequest = messages[i].Content
-
-			break
-		}
-	}
-	if userRequest == "" || !needsPlanning(userRequest) {
-		debugf("skipping planning: empty=%v needsPlanning=%v", userRequest == "", needsPlanning(userRequest))
-
-		return RunStreaming(ctx, complete, messages, cfg.StreamingConfig)
-	}
-
-	// Extract system messages from the original conversation.
-	var systemMsgs []api.Message
-	for _, m := range messages {
-		if m.Role == "system" {
-			systemMsgs = append(systemMsgs, m)
-		}
-	}
-
-	// ── Phase 1: Plan ──────────────────────────────────────────────
-	if cfg.OnPlanningStart != nil {
-		cfg.OnPlanningStart()
-	}
-	plan, err := generatePlan(ctx, complete, messages, userRequest, &cfg)
-	if err != nil {
-		debugf("plan generation failed, falling back: %v", err)
-		if cfg.OnPlanGenerated != nil {
-			cfg.OnPlanGenerated(&Plan{RawText: "(planning failed, using direct mode)"})
-		}
-
-		return RunStreaming(ctx, complete, messages, cfg.StreamingConfig)
-	}
-
-	debugf("plan generated: %d steps, raw: %q", len(plan.Steps), plan.RawText)
-	for i, s := range plan.Steps {
-		debugf("  step[%d]: %q", i, s.Description)
-	}
-
-	// Single step = degrade to normal agent (no overhead)
-	if len(plan.Steps) <= 1 {
-		debugf("single-step plan, using normal RunStreaming")
-		if cfg.OnPlanGenerated != nil {
-			cfg.OnPlanGenerated(plan)
-		}
-
-		return RunStreaming(ctx, complete, messages, cfg.StreamingConfig)
-	}
-
-	if cfg.OnPlanGenerated != nil {
-		cfg.OnPlanGenerated(plan)
-	}
-
-	// ── Phase 2: Execute steps ─────────────────────────────────────
-	for i := range plan.Steps {
-		if ctx.Err() != nil {
-			break
-		}
-
-		step := &plan.Steps[i]
-
-		// Check for user injection (non-blocking)
-		if injection := readUserInput(cfg.UserInput); injection != "" {
-			plan, i = handleInjection(ctx, complete, messages, plan, i, injection, userRequest, &cfg)
-			if i < 0 {
-				break // /stop
-			}
-			step = &plan.Steps[i]
-		}
-
-		if step.Status == StepSkipped {
-			continue
-		}
-
-		step.Status = StepRunning
-		if cfg.OnStepStart != nil {
-			cfg.OnStepStart(i, step)
-		}
-
-		result, stepErr := executeStep(ctx, complete, systemMsgs, plan, i, &cfg)
-		if stepErr != nil {
-			step.Status = StepFailed
-			step.Error = stepErr.Error()
-			if len(step.Error) > maxResultLen {
-				step.Error = step.Error[:maxResultLen]
-			}
-		} else {
-			step.Status = StepDone
-			step.Result = extractStepResult(result)
-		}
-
-		if cfg.OnStepDone != nil {
-			cfg.OnStepDone(i, step)
-		}
-	}
-
-	// ── Phase 3: Synthesize ────────────────────────────────────────
-	if cfg.OnSynthesize != nil {
-		cfg.OnSynthesize()
-	}
-
-	synthResult, err := synthesize(ctx, complete, systemMsgs, plan, userRequest, &cfg)
-	if err != nil {
-		debugf("synthesis failed: %v", err)
-		// Return messages with a summary appended
-		summary := buildFallbackSummary(plan)
-		messages = append(messages, api.Message{Role: "assistant", Content: summary})
-
-		return messages, nil
-	}
-
-	messages = append(messages, api.Message{Role: "assistant", Content: synthResult})
-
-	return messages, nil
+	return RunStreaming(ctx, complete, messages, cfg.StreamingConfig)
 }
 
 // generatePlan calls the LLM with no tools to produce a numbered plan.
 func generatePlan(ctx context.Context, complete StreamingCompletionFunc,
 	messages []api.Message, userRequest string, cfg *PlanAgentConfig) (*Plan, error) {
-	planMsgs := []api.Message{
-		{Role: "system", Content: planningSystemPrompt},
-	}
-	// Include system messages from original conversation for context
+	// Merge planning prompt + original system messages into one
+	systemParts := []string{planningSystemPrompt}
 	for _, m := range messages {
-		if m.Role == "system" {
-			planMsgs = append(planMsgs, m)
+		if m.Role == "system" && m.Content != "" {
+			systemParts = append(systemParts, m.Content)
 		}
 	}
-	planMsgs = append(planMsgs, api.Message{Role: "user", Content: "Break this request into numbered steps:\n\n" + userRequest})
+	planMsgs := []api.Message{
+		{Role: "system", Content: strings.Join(systemParts, "\n\n")},
+		{Role: "user", Content: "Break this request into numbered steps:\n\n" + userRequest},
+	}
 
 	req := &api.ChatCompletionRequest{
 		Messages: planMsgs,
 		Stream:   true,
-		// No tools, no token cap — let the model reason freely
+		// Disable thinking for plan generation — we need the numbered list
+		// in content, not buried in reasoning_content.
+		EnableThinking: false,
 	}
 
 	events, err := complete(ctx, req)
@@ -227,7 +111,16 @@ func generatePlan(ctx context.Context, complete StreamingCompletionFunc,
 		text = reasoning.String()
 	}
 
-	plan := parsePlan(text, userRequest)
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("model returned empty plan")
+	}
+
+	debugf("plan raw text (%d chars): %s", len(text), text)
+
+	plan := parsePlan(text)
+	if plan == nil {
+		return nil, fmt.Errorf("model did not produce numbered steps")
+	}
 
 	return plan, nil
 }
@@ -241,10 +134,17 @@ func executeStep(ctx context.Context, complete StreamingCompletionFunc,
 
 	preamble := fmt.Sprintf(stepPreambleTemplate, step.Index, total, step.Description, summaries)
 
-	// Build focused context: system + preamble + step description
+	// Build focused context: merge all system content into one message
+	var systemParts []string
+	for _, m := range systemMsgs {
+		if m.Content != "" {
+			systemParts = append(systemParts, m.Content)
+		}
+	}
+	systemParts = append(systemParts, preamble)
+
 	var stepMsgs []api.Message
-	stepMsgs = append(stepMsgs, systemMsgs...)
-	stepMsgs = append(stepMsgs, api.Message{Role: "system", Content: preamble})
+	stepMsgs = append(stepMsgs, api.Message{Role: "system", Content: strings.Join(systemParts, "\n\n")})
 	stepMsgs = append(stepMsgs, api.Message{Role: "user", Content: step.Description})
 
 	return RunStreaming(ctx, complete, stepMsgs, cfg.StreamingConfig)
@@ -255,17 +155,24 @@ func synthesize(ctx context.Context, complete StreamingCompletionFunc,
 	systemMsgs []api.Message, plan *Plan, userRequest string, cfg *PlanAgentConfig) (string, error) {
 	summaryBlock := formatStepSummaries(plan.Steps)
 
-	var synthMsgs []api.Message
-	synthMsgs = append(synthMsgs, systemMsgs...)
-	synthMsgs = append(synthMsgs, api.Message{Role: "system", Content: synthesisSystemPrompt})
-	synthMsgs = append(synthMsgs, api.Message{
-		Role:    "user",
-		Content: fmt.Sprintf("Original request: %s\n\nStep results:\n%s", userRequest, summaryBlock),
-	})
+	// Merge all system content into one message
+	var synthParts []string
+	for _, m := range systemMsgs {
+		if m.Content != "" {
+			synthParts = append(synthParts, m.Content)
+		}
+	}
+	synthParts = append(synthParts, synthesisSystemPrompt)
+
+	synthMsgs := []api.Message{
+		{Role: "system", Content: strings.Join(synthParts, "\n\n")},
+		{Role: "user", Content: fmt.Sprintf("Original request: %s\n\nStep results:\n%s", userRequest, summaryBlock)},
+	}
 
 	req := &api.ChatCompletionRequest{
-		Messages: synthMsgs,
-		Stream:   true,
+		Messages:       synthMsgs,
+		Stream:         true,
+		EnableThinking: cfg.EnableThinking,
 		// No tools, no token cap — synthesis only
 	}
 
@@ -376,8 +283,9 @@ func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 		}
 
 		req := &api.ChatCompletionRequest{
-			Messages: replanMsgs,
-			Stream:   true,
+			Messages:       replanMsgs,
+			Stream:         true,
+			EnableThinking: cfg.EnableThinking,
 		}
 
 		events, err := complete(ctx, req)
@@ -407,7 +315,11 @@ func handleInjection(ctx context.Context, complete StreamingCompletionFunc,
 			}
 		}
 
-		newPlan := parsePlan(content.String(), userRequest)
+		newPlan := parsePlan(content.String())
+		if newPlan == nil {
+			// Replan failed, continue with current plan
+			return plan, currentIdx
+		}
 		// Preserve completed steps
 		var merged []PlanStep
 		for _, s := range plan.Steps {

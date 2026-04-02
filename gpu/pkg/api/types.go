@@ -47,15 +47,16 @@ type ToolCallDelta struct {
 
 // ChatCompletionRequest matches the OpenAI chat completions request schema.
 type ChatCompletionRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	TopP        *float64  `json:"top_p,omitempty"`
-	MaxTokens   *int      `json:"max_tokens,omitempty"`
-	Stream      bool      `json:"stream,omitempty"`
-	Stop        []string  `json:"stop,omitempty"`
-	Tools       []Tool    `json:"tools,omitempty"`
-	ToolChoice  any       `json:"tool_choice,omitempty"`
+	Model          string    `json:"model"`
+	Messages       []Message `json:"messages"`
+	Temperature    *float64  `json:"temperature,omitempty"`
+	TopP           *float64  `json:"top_p,omitempty"`
+	MaxTokens      *int      `json:"max_tokens,omitempty"`
+	Stream         bool      `json:"stream,omitempty"`
+	Stop           []string  `json:"stop,omitempty"`
+	Tools          []Tool    `json:"tools,omitempty"`
+	ToolChoice     any       `json:"tool_choice,omitempty"`
+	EnableThinking bool      `json:"enable_thinking,omitempty"`
 }
 
 // ChatCompletionResponse matches the OpenAI chat completions response schema.

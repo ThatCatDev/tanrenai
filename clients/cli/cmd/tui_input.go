@@ -214,7 +214,8 @@ func (t *tuiApp) handleMidTurnInput(event *tcell.EventKey) *tcell.EventKey {
 		t.addLine(fmt.Sprintf("[yellow::b]>>> %s [gray](injected)[-:-:-]", tview.Escape(text)))
 		t.refreshChatView()
 	default:
-		// channel full, drop
+		t.addLine(fmt.Sprintf("[yellow::b]>>> %s [red](dropped — agent busy)[-:-:-]", tview.Escape(text)))
+		t.refreshChatView()
 	}
 
 	return nil
