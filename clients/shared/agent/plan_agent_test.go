@@ -163,45 +163,15 @@ func mockStreamComplete(content string) StreamingCompletionFunc {
 
 // ── Step Execution Test ────────────────────────────────────────────────
 
-func TestRunPlannedStreaming_MultiStep(t *testing.T) {
-	callCount := 0
-	complete := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
-		callCount++
-		var content string
-		switch callCount {
-		case 1:
-			// Planning call
-			content = "1. Read the file\n2. Write the function\n3. Test it"
-		default:
-			// Step execution or synthesis
-			content = "Done with this step."
-		}
-
-		ch := make(chan apiclient.StreamEvent, 2)
-		go func() {
-			defer close(ch)
-			fr := "stop"
-			ch <- apiclient.StreamEvent{
-				Chunk: &api.ChatCompletionChunk{
-					Choices: []api.ChunkChoice{{
-						Delta:        api.MessageDelta{Role: "assistant", Content: content},
-						FinishReason: &fr,
-					}},
-				},
-			}
-			ch <- apiclient.StreamEvent{Done: true}
-		}()
-
-		return ch, nil
-	}
+func TestRunPlannedStreaming_DelegatesToRunStreaming(t *testing.T) {
+	// RunPlannedStreaming now delegates directly to RunStreaming (no planning).
+	// Verify messages flow through correctly.
+	complete := mockStreamComplete("Here is the complete implementation.")
 
 	messages := []api.Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "Create a Go HTTP server with tests, add a Dockerfile, and deploy it to production"},
 	}
-
-	var planSteps int
-	var stepsStarted, stepsDone int
 
 	cfg := PlanAgentConfig{
 		StreamingConfig: StreamingConfig{
@@ -210,16 +180,6 @@ func TestRunPlannedStreaming_MultiStep(t *testing.T) {
 				Tools:         tools.NewRegistry(),
 			},
 		},
-
-		OnPlanGenerated: func(plan *Plan) {
-			planSteps = len(plan.Steps)
-		},
-		OnStepStart: func(idx int, step *PlanStep) {
-			stepsStarted++
-		},
-		OnStepDone: func(idx int, step *PlanStep) {
-			stepsDone++
-		},
 	}
 
 	result, err := RunPlannedStreaming(context.Background(), complete, messages, cfg)
@@ -227,17 +187,17 @@ func TestRunPlannedStreaming_MultiStep(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if planSteps != 3 {
-		t.Errorf("expected 3 plan steps, got %d", planSteps)
-	}
-	if stepsStarted != 3 {
-		t.Errorf("expected 3 steps started, got %d", stepsStarted)
-	}
-	if stepsDone != 3 {
-		t.Errorf("expected 3 steps done, got %d", stepsDone)
-	}
 	if len(result) == 0 {
-		t.Error("expected non-empty result messages")
+		t.Fatal("expected non-empty result messages")
+	}
+
+	// Last message should be the assistant response
+	last := result[len(result)-1]
+	if last.Role != "assistant" {
+		t.Errorf("expected last message role=assistant, got %s", last.Role)
+	}
+	if last.Content != "Here is the complete implementation." {
+		t.Errorf("unexpected content: %s", last.Content)
 	}
 }
 
@@ -299,43 +259,18 @@ func TestHandleInjection_Redo(t *testing.T) {
 	}
 }
 
-// ── Step Failure Continues Plan ────────────────────────────────────────
+// ── Continuous Loop Completes Without Planning ───────────────────────
 
-func TestRunPlannedStreaming_StepFailureContinues(t *testing.T) {
-	callCount := 0
-	complete := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
-		callCount++
-		var content string
-		switch callCount {
-		case 1:
-			content = "1. Step one\n2. Step two"
-		default:
-			content = "Step completed."
-		}
-
-		ch := make(chan apiclient.StreamEvent, 2)
-		go func() {
-			defer close(ch)
-			fr := "stop"
-			ch <- apiclient.StreamEvent{
-				Chunk: &api.ChatCompletionChunk{
-					Choices: []api.ChunkChoice{{
-						Delta:        api.MessageDelta{Role: "assistant", Content: content},
-						FinishReason: &fr,
-					}},
-				},
-			}
-			ch <- apiclient.StreamEvent{Done: true}
-		}()
-
-		return ch, nil
-	}
+func TestRunPlannedStreaming_NoPlanningPhase(t *testing.T) {
+	// Verify that even complex requests go directly through RunStreaming
+	// without any plan generation or step callbacks.
+	complete := mockStreamComplete("I'll handle all of this in one go.")
 
 	messages := []api.Message{
 		{Role: "user", Content: "Create a new module, write the tests, and configure the CI pipeline"},
 	}
 
-	var doneCount int
+	var planGenerated, stepStarted bool
 	cfg := PlanAgentConfig{
 		StreamingConfig: StreamingConfig{
 			Config: Config{
@@ -343,51 +278,32 @@ func TestRunPlannedStreaming_StepFailureContinues(t *testing.T) {
 				Tools:         tools.NewRegistry(),
 			},
 		},
-
-		OnStepDone: func(idx int, step *PlanStep) {
-			doneCount++
-		},
+		OnPlanGenerated: func(plan *Plan) { planGenerated = true },
+		OnStepStart:     func(idx int, step *PlanStep) { stepStarted = true },
 	}
 
 	_, err := RunPlannedStreaming(context.Background(), complete, messages, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if doneCount != 2 {
-		t.Errorf("expected 2 steps done, got %d", doneCount)
+	if planGenerated {
+		t.Error("planning should not occur — RunPlannedStreaming delegates to RunStreaming")
+	}
+	if stepStarted {
+		t.Error("step callbacks should not fire — RunPlannedStreaming delegates to RunStreaming")
 	}
 }
 
-// ── Single Step Fallback ───────────────────────────────────────────────
+// ── Simple Question Passthrough ───────────────────────────────────────
 
-func TestRunPlannedStreaming_SingleStepFallback(t *testing.T) {
-	callCount := 0
-	complete := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
-		callCount++
-		content := "Here's the answer to your question."
-		ch := make(chan apiclient.StreamEvent, 2)
-		go func() {
-			defer close(ch)
-			fr := "stop"
-			ch <- apiclient.StreamEvent{
-				Chunk: &api.ChatCompletionChunk{
-					Choices: []api.ChunkChoice{{
-						Delta:        api.MessageDelta{Role: "assistant", Content: content},
-						FinishReason: &fr,
-					}},
-				},
-			}
-			ch <- apiclient.StreamEvent{Done: true}
-		}()
-
-		return ch, nil
-	}
+func TestRunPlannedStreaming_SimpleQuestion(t *testing.T) {
+	// Verify simple questions pass through to RunStreaming directly.
+	complete := mockStreamComplete("Go is a programming language.")
 
 	messages := []api.Message{
 		{Role: "user", Content: "What is Go?"},
 	}
 
-	var planSteps int
 	cfg := PlanAgentConfig{
 		StreamingConfig: StreamingConfig{
 			Config: Config{
@@ -395,17 +311,17 @@ func TestRunPlannedStreaming_SingleStepFallback(t *testing.T) {
 				Tools:         tools.NewRegistry(),
 			},
 		},
-		OnPlanGenerated: func(plan *Plan) {
-			planSteps = len(plan.Steps)
-		},
 	}
 
-	_, err := RunPlannedStreaming(context.Background(), complete, messages, cfg)
+	result, err := RunPlannedStreaming(context.Background(), complete, messages, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Single-step plan should fall back to RunStreaming
-	if planSteps > 1 {
-		t.Errorf("expected single-step fallback, got %d steps", planSteps)
+	if len(result) == 0 {
+		t.Fatal("expected non-empty result")
+	}
+	last := result[len(result)-1]
+	if last.Content != "Go is a programming language." {
+		t.Errorf("unexpected content: %s", last.Content)
 	}
 }

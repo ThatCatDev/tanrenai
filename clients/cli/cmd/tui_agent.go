@@ -56,46 +56,35 @@ func (t *tuiApp) startChatTurn(input string) {
 		return
 	}
 
-	var full strings.Builder
-	for ev := range events {
-		if ev.Err != nil {
-			turnCancel()
-			t.mu.Lock()
-			t.turnCancel = nil
-			t.mu.Unlock()
-			content := full.String()
+	content, streamErr := streamSimpleChat(events, chatStreamHooks{
+		OnThinking: func() {
 			t.app.QueueUpdateDraw(func() {
-				t.handleStreamDone(content, ev.Err)
+				t.statusText = "Thinking..."
+				t.updateStatusBar()
 			})
-
-			return
-		}
-		if ev.Done {
-			break
-		}
-		if ev.Chunk == nil {
-			continue
-		}
-		for _, choice := range ev.Chunk.Choices {
-			if choice.Delta.Content != "" {
-				full.WriteString(choice.Delta.Content)
-				t.currentIterOutput += len(choice.Delta.Content)
-				t.app.QueueUpdateDraw(func() {
-					t.streaming.WriteString(choice.Delta.Content)
-					t.updateStreamingLine()
-					t.refreshChatView()
-				})
-			}
-		}
-	}
+		},
+		OnThinkingDone: func() {
+			t.app.QueueUpdateDraw(func() {
+				t.statusText = "Generating..."
+				t.updateStatusBar()
+			})
+		},
+		OnContentDelta: func(delta string) {
+			t.currentIterOutput += len(delta)
+			t.app.QueueUpdateDraw(func() {
+				t.streaming.WriteString(delta)
+				t.updateStreamingLine()
+				t.refreshChatView()
+			})
+		},
+	})
 	turnCancel()
 	t.mu.Lock()
 	t.turnCancel = nil
 	t.mu.Unlock()
 
-	content := full.String()
 	t.app.QueueUpdateDraw(func() {
-		t.handleStreamDone(content, nil)
+		t.handleStreamDone(content, streamErr)
 	})
 }
 
