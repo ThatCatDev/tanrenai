@@ -147,6 +147,12 @@ func parseRunParams(cmd *cobra.Command, model string) (runParams, error) {
 	local, _ := cmd.Flags().GetBool("local")
 	gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
 	flashAttn, _ := cmd.Flags().GetBool("flash-attn")
+	swarmMode, _ := cmd.Flags().GetBool("swarm")
+
+	// Swarm mode implies agent mode.
+	if swarmMode {
+		agentMode = true
+	}
 
 	return runParams{
 		model:          model,
@@ -161,6 +167,7 @@ func parseRunParams(cmd *cobra.Command, model string) (runParams, error) {
 		maxTokens:      maxTokens,
 		noScrolls:      noScrolls,
 		thinking:       thinking,
+		swarmMode:      swarmMode,
 		local:          local,
 		gpuLayers:      gpuLayers,
 		flashAttn:      flashAttn,
@@ -741,6 +748,7 @@ type runParams struct {
 	maxTokens      int
 	noScrolls      bool
 	thinking       bool
+	swarmMode      bool
 	local          bool
 	gpuLayers      int
 	flashAttn      bool
@@ -759,6 +767,7 @@ type sessionDeps struct {
 	maxTokens      int
 	enableThinking bool
 	agentMode      bool
+	swarmMode      bool
 	completeFn     agent.CompletionFunc
 	streamFn       agent.StreamingCompletionFunc
 	cleanupFn      func()
@@ -886,6 +895,7 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 	deps.maxTokens = p.maxTokens
 	deps.enableThinking = p.thinking
 	deps.agentMode = p.agentMode
+	deps.swarmMode = p.swarmMode
 
 	model := p.model
 	deps.completeFn = func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
@@ -912,6 +922,7 @@ func assignToTUI(t *tuiApp, deps *sessionDeps) {
 	t.maxResponseTokens = deps.maxTokens
 	t.enableThinking = deps.enableThinking
 	t.agentMode = deps.agentMode
+	t.swarmMode = deps.swarmMode
 	t.completeFn = deps.completeFn
 	t.streamFn = deps.streamFn
 	if deps.cleanupFn != nil {
@@ -940,6 +951,7 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("no-scrolls", false, "disable automatic scroll injection")
 	cmd.Flags().Bool("thinking", true, "enable thinking/reasoning mode (for models that support it)")
 	cmd.Flags().Bool("pipe", false, "non-interactive pipe mode: read from stdin, write to stdout")
+	cmd.Flags().Bool("swarm", false, "multi-agent swarm mode: orchestrator plans, workers execute with fresh contexts")
 }
 
 var _ = time.Now

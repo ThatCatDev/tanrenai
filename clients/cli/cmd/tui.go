@@ -128,6 +128,7 @@ type tuiApp struct {
 	maxResponseTokens int
 	enableThinking    bool
 	agentMode         bool
+	swarmMode         bool
 	completeFn        agent.CompletionFunc
 	streamFn          agent.StreamingCompletionFunc
 }

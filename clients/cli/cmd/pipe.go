@@ -149,8 +149,15 @@ func runPipeTurn(ctx context.Context, deps *sessionDeps, input string) error {
 		return runPipeSimpleTurn(ctx, deps, windowedMsgs)
 	}
 
-	cfg := buildPipeAgentConfig(deps)
-	result, err := agent.RunPlannedStreaming(ctx, deps.streamFn, windowedMsgs, cfg)
+	var result []api.Message
+	var err error
+	if deps.swarmMode {
+		cfg := buildPipeSwarmConfig(deps)
+		result, err = agent.RunSwarm(ctx, deps.streamFn, windowedMsgs, cfg)
+	} else {
+		cfg := buildPipeAgentConfig(deps)
+		result, err = agent.RunPlannedStreaming(ctx, deps.streamFn, windowedMsgs, cfg)
+	}
 	if err != nil {
 		return err
 	}
@@ -342,5 +349,111 @@ func persistPipeMemory(ctx context.Context, deps *sessionDeps, newMsgs []api.Mes
 	defer cancel()
 	if _, err := deps.client.MemoryStore(storeCtx, userInput, assistContent); err != nil {
 		slog.Error("failed to store memory", "error", err)
+	}
+}
+
+// buildPipeSwarmConfig wires swarm hooks to stderr for pipe mode.
+func buildPipeSwarmConfig(deps *sessionDeps) agent.SwarmConfig {
+	var contentFilt xmlFilter
+	var reasoningBuf strings.Builder
+
+	flushReasoning := func() {
+		if reasoningBuf.Len() > 0 {
+			fmt.Fprintf(os.Stderr, "[reasoning] %s\n", strings.TrimSpace(reasoningBuf.String()))
+			reasoningBuf.Reset()
+		}
+	}
+
+	flushContent := func() {
+		flushReasoning()
+		if contentFilt.len() > 0 {
+			os.Stdout.WriteString(contentFilt.string())
+		}
+	}
+
+	// Worker tools: filesystem + shell, no web_search or git_info.
+	var workerTools *tools.Registry
+	if deps.registry != nil {
+		workerTools = deps.registry.Subset(
+			"file_read", "file_write", "patch_file",
+			"list_dir", "grep_search", "shell_exec",
+		)
+	}
+
+	return agent.SwarmConfig{
+		StreamingConfig: agent.StreamingConfig{
+			Config: agent.Config{
+				MaxIterations:     deps.maxIterations,
+				MaxResponseTokens: deps.maxTokens,
+				EnableThinking:    deps.enableThinking,
+				Tools:             deps.registry,
+				Hooks: agent.Hooks{
+					OnToolCall: func(call api.ToolCall) {
+						flushContent()
+						args := call.Function.Arguments
+						if len(args) > 200 {
+							args = args[:200] + "..."
+						}
+						pipeStatus("tool_call: %s: %s", call.Function.Name, args)
+					},
+					OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
+						tag := "tool_result"
+						if result.IsError {
+							tag = "tool_result_error"
+						}
+						preview := strings.TrimSpace(result.Output)
+						if len(preview) > 200 {
+							preview = preview[:200] + "..."
+						}
+						pipeStatus("%s: %s: %s", tag, call.Function.Name, preview)
+					},
+					OnToolApproval: func(call api.ToolCall) agent.ApprovalAction {
+						return agent.ApprovalAllow
+					},
+					OnAssistantMessage: func(content string) {},
+				},
+			},
+			OnIterationStart: func(iteration, maxIter int, messages []api.Message) {
+				flushContent()
+			},
+			OnContentDelta: func(delta string) {
+				contentFilt.write(delta)
+				if text := contentFilt.string(); text != "" {
+					os.Stdout.WriteString(text)
+				}
+			},
+			OnReasoningDelta: func(delta string) {
+				reasoningBuf.WriteString(delta)
+				if strings.ContainsAny(delta, ".\n") && reasoningBuf.Len() > 40 {
+					fmt.Fprintf(os.Stderr, "[reasoning] %s\n", strings.TrimSpace(reasoningBuf.String()))
+					reasoningBuf.Reset()
+				}
+			},
+			OnThinking: func() {
+				pipeStatus("thinking")
+			},
+			OnThinkingDone: func() {
+				flushReasoning()
+				pipeStatus("generating")
+			},
+		},
+		WorkerTools: workerTools,
+		OnPlanGenerated: func(depth int, plan *agent.Plan) {
+			for _, step := range plan.Steps {
+				pipeStatus("swarm_plan d=%d: %d. %s", depth, step.Index, step.Description)
+			}
+		},
+		OnWorkerStart: func(depth, stepIdx int, step *agent.PlanStep) {
+			flushContent()
+			pipeStatus("swarm_worker_start d=%d %d: %s", depth, step.Index, step.Description)
+		},
+		OnWorkerDone: func(depth, stepIdx int, step *agent.PlanStep) {
+			flushContent()
+			pipeStatus("swarm_worker_done d=%d %d: %s", depth, step.Index, step.Status.String())
+		},
+		OnVerifyStart: func() {
+			flushContent()
+			pipeStatus("swarm_verify")
+		},
 	}
 }

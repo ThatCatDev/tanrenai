@@ -62,6 +62,18 @@ func (r *Registry) APITools() []api.Tool {
 	return out
 }
 
+// Subset creates a new registry containing only the named tools.
+// Unknown names are silently skipped.
+func (r *Registry) Subset(names ...string) *Registry {
+	sub := NewRegistry()
+	for _, name := range names {
+		if t := r.tools[name]; t != nil {
+			sub.Register(t)
+		}
+	}
+	return sub
+}
+
 // DefaultRegistry returns a registry pre-loaded with all built-in tools.
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
