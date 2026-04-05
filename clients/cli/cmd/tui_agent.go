@@ -693,9 +693,18 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 		WorkerTools: workerTools,
 		OnPlanGenerated: func(depth int, plan *agent.Plan) {
 			t.app.QueueUpdateDraw(func() {
-				t.addLine(fmt.Sprintf("[blue::b]  -- swarm plan (depth %d) --[-:-:-]", depth))
-				for _, step := range plan.Steps {
-					t.addLine(fmt.Sprintf("[gray::-]    %d. %s[-:-:-]", step.Index, tview.Escape(step.Description)))
+				tree := strings.Repeat("│   ", depth)
+				if depth == 0 {
+					t.addLine("[blue::b]  Orchestrator[-:-:-]")
+				} else {
+					t.addLine(fmt.Sprintf("[blue::-]  %s├── Sub-orchestrator[-:-:-]", tree[:len(tree)-4]))
+				}
+				for i, step := range plan.Steps {
+					branch := "├──"
+					if i == len(plan.Steps)-1 {
+						branch = "└──"
+					}
+					t.addLine(fmt.Sprintf("[gray::-]  %s%s %d. %s[-:-:-]", tree, branch, step.Index, tview.Escape(step.Description)))
 				}
 				t.addLine("")
 				t.refreshChatView()
@@ -703,22 +712,26 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 		},
 		OnWorkerStart: func(depth, stepIdx int, step *agent.PlanStep) {
 			flushContent()
+			tree := strings.Repeat("│   ", depth)
 			t.app.QueueUpdateDraw(func() {
-				t.addLine(fmt.Sprintf("[yellow::b]  -- worker %d (depth %d): %s --[-:-:-]", step.Index, depth, tview.Escape(step.Description)))
+				t.addLine(fmt.Sprintf("[yellow::b]  %s▶ Worker %d: %s[-:-:-]", tree, step.Index, tview.Escape(step.Description)))
 				t.refreshChatView()
-				t.statusText = fmt.Sprintf("worker %d/%d", step.Index, stepIdx+1)
+				t.statusText = fmt.Sprintf("Worker %d", step.Index)
+				if depth > 0 {
+					t.statusText = fmt.Sprintf("Sub-worker %d", step.Index)
+				}
 				t.updateStatusBar()
 			})
 		},
 		OnWorkerDone: func(depth, stepIdx int, step *agent.PlanStep) {
 			flushContent()
+			tree := strings.Repeat("│   ", depth)
 			t.app.QueueUpdateDraw(func() {
-				color := "green"
+				icon := "[green::-]✓[-:-:-]"
 				if step.Status == agent.StepFailed {
-					color = "red"
+					icon = "[red::-]✗[-:-:-]"
 				}
-				t.addLine(fmt.Sprintf("[%s::-]  -- worker %d: %s --[-:-:-]", color, step.Index, step.Status.String()))
-				t.addLine("")
+				t.addLine(fmt.Sprintf("  %s%s Worker %d: %s", tree, icon, step.Index, step.Status.String()))
 				t.refreshChatView()
 			})
 		},
