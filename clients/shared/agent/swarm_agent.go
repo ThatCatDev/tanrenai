@@ -28,17 +28,19 @@ Output a short spec (under 300 words) covering:
 Be specific and decisive. Do NOT hedge or offer alternatives.
 Output NOTHING except the spec.`
 
-const swarmPlanningPrompt = `You are a planning assistant. Break the request into independent, file-level tasks for separate agents.
+const swarmPlanningPrompt = `You are a planning assistant. Break the request into module-level tasks for separate agents. Each task should be a self-contained feature or module — NOT a single file.
 
 Output ONLY a numbered list. Format:
-1. <verb> <file_path> — <what to do>
-2. <verb> <file_path> — <what to do>
+1. <verb> <module/feature> — <what it includes>
+2. <verb> <module/feature> — <what it includes>
 
 Rules:
-- Each task should focus on one file or a small group of closely related files
-- Order tasks so dependencies come first (e.g. types/interfaces before implementations)
+- Each task = one module or feature (e.g. "Build the file browser" not "Create file-browser.ts")
+- A module task may produce multiple files — the worker decides what files to create
+- Order tasks so dependencies come first (e.g. shared types before components)
 - Workers can read files created by earlier workers using file_read
-- Start each with an action verb (Create, Update, Add, Configure, Test)
+- Use 5-10 tasks for a typical project
+- Start each with an action verb (Build, Implement, Create, Configure, Test)
 - Output NOTHING except the numbered list`
 
 const swarmStepPreamble = `You are worker %d of %d in a multi-agent team.
