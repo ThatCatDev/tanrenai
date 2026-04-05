@@ -26,6 +26,13 @@ type Config struct {
 	ChatTemplateFile string // path to custom Jinja chat template file
 	ReasoningFormat  string // reasoning format (e.g. "deepseek")
 	NoAutoTemplate   bool   // disable automatic template detection from GGUF metadata
+	CPUMoE           bool   // keep all MoE expert weights on CPU
+	CPUMoELayers     int    // keep first N layers' MoE experts on CPU
+	NoKVOffload      bool   // keep KV cache on CPU to save VRAM
+	FitVRAM          bool   // auto-adjust parameters to fit device memory
+	TensorSplit      string // per-GPU VRAM fractions
+	SplitMode        string // multi-GPU split strategy
+	OverrideTensor   string // fine-grained tensor buffer type overrides
 }
 
 // Start starts the GPU server and blocks until ctx is cancelled.
@@ -57,6 +64,13 @@ func Start(ctx context.Context, cfg Config) error {
 		icfg.ReasoningFormat = cfg.ReasoningFormat
 	}
 	icfg.NoAutoTemplate = cfg.NoAutoTemplate
+	icfg.CPUMoE = cfg.CPUMoE
+	icfg.CPUMoELayers = cfg.CPUMoELayers
+	icfg.NoKVOffload = cfg.NoKVOffload
+	icfg.FitVRAM = cfg.FitVRAM
+	icfg.TensorSplit = cfg.TensorSplit
+	icfg.SplitMode = cfg.SplitMode
+	icfg.OverrideTensor = cfg.OverrideTensor
 
 	// Handle chat template: explicit file takes precedence, then named template.
 	if cfg.ChatTemplateFile != "" {

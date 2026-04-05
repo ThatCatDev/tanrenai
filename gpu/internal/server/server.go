@@ -173,11 +173,29 @@ func (s *Server) LoadModel(ctx context.Context, modelName string) (*LoadResult, 
 	opts.ChatTemplateFile = s.cfg.ChatTemplateFile
 	opts.FlashAttention = s.cfg.FlashAttention
 	opts.ReasoningFormat = s.cfg.ReasoningFormat
+	opts.CPUMoE = s.cfg.CPUMoE
+	opts.CPUMoELayers = s.cfg.CPUMoELayers
+	opts.NoKVOffload = s.cfg.NoKVOffload
+	opts.FitVRAM = s.cfg.FitVRAM
+	opts.TensorSplit = s.cfg.TensorSplit
+	opts.SplitMode = s.cfg.SplitMode
+	opts.OverrideTensor = s.cfg.OverrideTensor
 
 	// Auto-detect context length from GGUF when config uses the default.
 	if meta != nil && meta.Architecture.ContextLength > 0 && opts.CtxSize == runner.DefaultOptions().CtxSize {
 		opts.CtxSize = int(meta.Architecture.ContextLength)
 		slog.Info("auto-detected context length from GGUF", "ctx_size", opts.CtxSize)
+	}
+
+	// Auto-detect MoE architecture and enable fit mode if not explicitly configured.
+	if meta != nil && meta.Architecture.ExpertCount > 0 {
+		slog.Info("MoE model detected",
+			"experts", meta.Architecture.ExpertCount,
+			"active", meta.Architecture.ExpertUsedCount)
+		if !opts.FitVRAM && opts.GPULayers == runner.DefaultOptions().GPULayers {
+			opts.FitVRAM = true
+			slog.Info("auto-enabled --fit for MoE model")
+		}
 	}
 
 	// Auto-detect chat template from GGUF metadata when no explicit template is set.

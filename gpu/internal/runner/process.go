@@ -118,8 +118,37 @@ func (r *ProcessRunner) buildArgs() []string {
 
 	if r.opts.GPULayers >= 0 {
 		args = append(args, "--n-gpu-layers", strconv.Itoa(r.opts.GPULayers))
+	} else if r.opts.FitVRAM {
+		args = append(args, "--n-gpu-layers", "auto")
 	} else {
 		args = append(args, "--n-gpu-layers", "999")
+	}
+
+	// MoE-specific flags
+	if r.opts.CPUMoE {
+		args = append(args, "--cpu-moe")
+	} else if r.opts.CPUMoELayers > 0 {
+		args = append(args, "--n-cpu-moe", strconv.Itoa(r.opts.CPUMoELayers))
+	}
+
+	if r.opts.NoKVOffload {
+		args = append(args, "--no-kv-offload")
+	}
+
+	if r.opts.FitVRAM {
+		args = append(args, "--fit", "on")
+	}
+
+	if r.opts.TensorSplit != "" {
+		args = append(args, "--tensor-split", r.opts.TensorSplit)
+	}
+
+	if r.opts.SplitMode != "" {
+		args = append(args, "--split-mode", r.opts.SplitMode)
+	}
+
+	if r.opts.OverrideTensor != "" {
+		args = append(args, "--override-tensor", r.opts.OverrideTensor)
 	}
 
 	if r.opts.Threads > 0 {

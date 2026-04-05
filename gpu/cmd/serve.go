@@ -71,6 +71,29 @@ var serveCmd = &cobra.Command{
 			cfg.NoAutoTemplate = nat
 		}
 
+		// MoE / multi-GPU flags
+		if cmd.Flags().Changed("cpu-moe") {
+			cfg.CPUMoE, _ = cmd.Flags().GetBool("cpu-moe")
+		}
+		if n, _ := cmd.Flags().GetInt("n-cpu-moe"); n > 0 {
+			cfg.CPUMoELayers = n
+		}
+		if cmd.Flags().Changed("no-kv-offload") {
+			cfg.NoKVOffload, _ = cmd.Flags().GetBool("no-kv-offload")
+		}
+		if cmd.Flags().Changed("fit") {
+			cfg.FitVRAM, _ = cmd.Flags().GetBool("fit")
+		}
+		if ts, _ := cmd.Flags().GetString("tensor-split"); ts != "" {
+			cfg.TensorSplit = ts
+		}
+		if sm, _ := cmd.Flags().GetString("split-mode"); sm != "" {
+			cfg.SplitMode = sm
+		}
+		if ot, _ := cmd.Flags().GetString("override-tensor"); ot != "" {
+			cfg.OverrideTensor = ot
+		}
+
 		if err := config.EnsureDirs(); err != nil {
 			return err
 		}
@@ -104,5 +127,12 @@ func init() {
 	serveCmd.Flags().String("reasoning-format", "", "reasoning format for thinking mode (e.g. deepseek)")
 	serveCmd.Flags().Bool("flash-attn", true, "enable flash attention")
 	serveCmd.Flags().Bool("no-auto-template", false, "disable automatic chat template detection from GGUF metadata")
+	serveCmd.Flags().Bool("cpu-moe", false, "keep all MoE expert weights on CPU")
+	serveCmd.Flags().Int("n-cpu-moe", 0, "keep first N layers' MoE experts on CPU")
+	serveCmd.Flags().Bool("no-kv-offload", false, "keep KV cache on CPU to save VRAM")
+	serveCmd.Flags().Bool("fit", false, "auto-adjust parameters to fit device memory")
+	serveCmd.Flags().String("tensor-split", "", "per-GPU VRAM fractions (e.g. 0.7,0.3)")
+	serveCmd.Flags().String("split-mode", "", "multi-GPU split: none, layer, row")
+	serveCmd.Flags().String("override-tensor", "", "fine-grained tensor buffer type overrides")
 	rootCmd.AddCommand(serveCmd)
 }
