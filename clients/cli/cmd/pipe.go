@@ -438,6 +438,9 @@ func buildPipeSwarmConfig(deps *sessionDeps) agent.SwarmConfig {
 			},
 		},
 		WorkerTools: workerTools,
+		OnArchitectSpec: func(depth int, spec string) {
+			pipeStatus("swarm_architect d=%d: %s", depth, strings.ReplaceAll(strings.TrimSpace(spec), "\n", " | "))
+		},
 		OnPlanGenerated: func(depth int, plan *agent.Plan) {
 			for _, step := range plan.Steps {
 				pipeStatus("swarm_plan d=%d: %d. %s", depth, step.Index, step.Description)
