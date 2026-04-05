@@ -41,6 +41,7 @@ sudo cp bin/llama-server /usr/local/share/tanrenai/bin/
 
 ### macOS
 
+
 **One-line install** (recommended):
 
 ```bash
@@ -138,12 +139,28 @@ Global Flags:
 Run Flags:
   --agent               Enable agent mode with tool calling
   --memory              Enable persistent memory/RAG
+  --pipe                Non-interactive pipe mode (stdin/stdout)
   --system string       Custom system prompt
   --system-file string  Load system prompt from file
   --ctx-size int        Override context size (0 = auto-detect from model)
-  --max-iterations int  Max agent iterations per turn (default 25)
+  --max-iterations int  Max agent iterations per turn (0 = unlimited)
   --context-file strings  Inject files into context
 ```
+
+### Pipe Mode
+
+For programmatic interaction (scripts, CI, other tools), use `--pipe` to bypass the TUI:
+
+```bash
+printf 'Create a hello world script at /tmp/hello.py\n---END---' | \
+  tanrenai --local run Qwen3.5-4B-Q4_K_M --agent --pipe
+```
+
+- **Input**: messages delimited by `---END---` (supports multi-line)
+- **stdout**: streamed assistant content + `---END---` after each turn
+- **stderr**: status tags (`[thinking]`, `[tool_call]`, `[tool_result]`, etc.)
+- Tools are auto-approved in pipe mode
+- Full session context (memory, scrolls, context windowing) works across turns
 
 ## Agent Mode
 
@@ -267,17 +284,15 @@ tanrenai run model-name --agent --memory --server-url http://backend-host:8080
 
 ## Cloud Deployment (vast.ai)
 
-Deploy the GPU server to vast.ai with a Headscale/Tailscale mesh network, so both sides can connect without public IPs.
+Deploy the GPU server to vast.ai, run the backend as a Docker container, and connect the CLI. The three tiers communicate over a Headscale/Tailscale mesh network — no public IPs needed.
 
-### Infrastructure CLI
+### Step 1: Deploy GPU Server to vast.ai
+
+Build the infra CLI and deploy:
 
 ```bash
 cd infra/ && go build -o tanrenai-infra .
-```
 
-### Deploy GPU Server
-
-```bash
 # Interactive — pick existing instance or create new
 # --model-size auto-calculates VRAM and disk requirements
 tanrenai-infra deploy \
@@ -301,7 +316,11 @@ The deploy process:
 3. Install Tailscale and join Headscale network
 4. Start GPU server, health check through tunnel
 
-### Run Backend (Docker)
+### Step 2: Run Backend (Docker)
+
+The backend handles memory/RAG and proxies requests to the GPU server.
+
+**With Headscale** (recommended for vast.ai) — auto-discovers GPU server on mesh:
 
 ```bash
 docker run -d --name tanrenai-server -p 8080:8080 \
@@ -313,6 +332,35 @@ docker run -d --name tanrenai-server -p 8080:8080 \
 ```
 
 The image auto-generates a Headscale auth key, joins the network, discovers the GPU server, and sets `--gpu-url` automatically.
+
+**Without Headscale** — point directly at a GPU server:
+
+```bash
+# Build from source
+docker build -f server/docker/Dockerfile -t tanrenai-server .
+
+# Run (replace GPU_HOST with your GPU server's address)
+docker run -d --name tanrenai-server -p 8080:8080 \
+  tanrenai-server \
+  serve --host 0.0.0.0 --gpu-url http://GPU_HOST:11435 --memory
+```
+
+### Step 3: Connect CLI
+
+```bash
+# Pull a model (downloads to the GPU server)
+tanrenai pull --server-url http://localhost:8080 hf://unsloth/Qwen3.5-122B-A10B-GGUF/UD-Q4_K_XL
+
+# Chat with agent mode and memory
+tanrenai run model-name --agent --memory --server-url http://localhost:8080
+```
+
+Or set the env var to avoid passing `--server-url` every time:
+
+```bash
+export TANRENAI_SERVER_URL=http://localhost:8080
+tanrenai run model-name --agent --memory
+```
 
 | Env Var | Description |
 |---------|-------------|

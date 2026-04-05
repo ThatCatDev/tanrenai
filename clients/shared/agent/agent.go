@@ -191,10 +191,6 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = 1<<31 - 1
 	}
-	if cfg.MaxResponseTokens <= 0 {
-		cfg.MaxResponseTokens = defaultMaxResponseTokens
-	}
-
 	apiTools := cfg.Tools.APITools()
 	errorCounts := make(map[string]int)
 	retryCount := 0
@@ -206,13 +202,15 @@ func Run(ctx context.Context, complete CompletionFunc, messages []api.Message, c
 
 		reqMessages := mergeSystemMessages(messages)
 
-		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
 			Messages:       reqMessages,
 			Stream:         false,
 			Tools:          apiTools,
-			MaxTokens:      &maxTokens,
 			EnableThinking: cfg.EnableThinking,
+		}
+		if cfg.MaxResponseTokens > 0 {
+			maxTokens := cfg.MaxResponseTokens
+			req.MaxTokens = &maxTokens
 		}
 
 		resp, err := complete(ctx, req)
@@ -282,10 +280,6 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = 1<<31 - 1
 	}
-	if cfg.MaxResponseTokens <= 0 {
-		cfg.MaxResponseTokens = defaultMaxResponseTokens
-	}
-
 	apiTools := cfg.Tools.APITools()
 	errorCounts := make(map[string]int)
 	retryCount := 0
@@ -304,13 +298,15 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 		// non-system messages.
 		reqMessages := mergeSystemMessages(messages)
 
-		maxTokens := cfg.MaxResponseTokens
 		req := &api.ChatCompletionRequest{
 			Messages:       reqMessages,
 			Stream:         true,
 			Tools:          apiTools,
-			MaxTokens:      &maxTokens,
 			EnableThinking: cfg.EnableThinking,
+		}
+		if cfg.MaxResponseTokens > 0 {
+			maxTokens := cfg.MaxResponseTokens
+			req.MaxTokens = &maxTokens
 		}
 
 		if debugEnabled() {
