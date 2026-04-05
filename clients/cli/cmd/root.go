@@ -31,4 +31,7 @@ func init() {
 	rootCmd.PersistentFlags().Bool("local", false, "start embedded GPU + backend servers (single-binary mode)")
 	rootCmd.PersistentFlags().Int("gpu-layers", -1, "GPU offload layers (-1 = all); only used with --local")
 	rootCmd.PersistentFlags().Bool("flash-attn", true, "enable flash attention; only used with --local")
+	rootCmd.PersistentFlags().Bool("cpu-moe", false, "keep MoE expert weights on CPU; only used with --local")
+	rootCmd.PersistentFlags().Bool("no-kv-offload", false, "keep KV cache on CPU to save VRAM; only used with --local")
+	rootCmd.PersistentFlags().Bool("fit", false, "auto-adjust to fit device memory; only used with --local")
 }

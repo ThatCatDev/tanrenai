@@ -31,6 +31,32 @@ type Options struct {
 	// (e.g. "deepseek" for thinking/reasoning mode).
 	ReasoningFormat string
 
+	// CPUMoE keeps all MoE expert weights on CPU when true.
+	// Useful when VRAM is limited — only attention/router layers use GPU.
+	CPUMoE bool
+
+	// CPUMoELayers keeps MoE expert weights of the first N layers on CPU.
+	// 0 = disabled. Mutually exclusive with CPUMoE.
+	CPUMoELayers int
+
+	// NoKVOffload keeps the KV cache on CPU to save VRAM for model weights.
+	NoKVOffload bool
+
+	// FitVRAM enables llama-server's auto-fit mode which adjusts
+	// parameters to fit available device memory.
+	FitVRAM bool
+
+	// TensorSplit specifies per-GPU VRAM fractions for multi-GPU setups.
+	// E.g., "0.7,0.3" for 70%/30% split across 2 GPUs.
+	TensorSplit string
+
+	// SplitMode controls multi-GPU splitting strategy: "none", "layer", "row".
+	SplitMode string
+
+	// OverrideTensor allows fine-grained tensor buffer type overrides.
+	// Format: "pattern=type,pattern=type"
+	OverrideTensor string
+
 	// Quiet suppresses subprocess stdout/stderr output.
 	Quiet bool
 

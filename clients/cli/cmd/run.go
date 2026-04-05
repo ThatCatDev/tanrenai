@@ -148,6 +148,9 @@ func parseRunParams(cmd *cobra.Command, model string) (runParams, error) {
 	gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
 	flashAttn, _ := cmd.Flags().GetBool("flash-attn")
 	swarmMode, _ := cmd.Flags().GetBool("swarm")
+	cpuMoE, _ := cmd.Flags().GetBool("cpu-moe")
+	noKVOffload, _ := cmd.Flags().GetBool("no-kv-offload")
+	fitVRAM, _ := cmd.Flags().GetBool("fit")
 
 	// Swarm mode implies agent mode.
 	if swarmMode {
@@ -171,6 +174,9 @@ func parseRunParams(cmd *cobra.Command, model string) (runParams, error) {
 		local:          local,
 		gpuLayers:      gpuLayers,
 		flashAttn:      flashAttn,
+		cpuMoE:         cpuMoE,
+		noKVOffload:    noKVOffload,
+		fitVRAM:        fitVRAM,
 	}, nil
 }
 
@@ -752,6 +758,9 @@ type runParams struct {
 	local          bool
 	gpuLayers      int
 	flashAttn      bool
+	cpuMoE         bool
+	noKVOffload    bool
+	fitVRAM        bool
 }
 
 // sessionDeps holds the initialised resources for a chat/agent session.
@@ -785,6 +794,9 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 			GPULayers:      p.gpuLayers,
 			FlashAttention: p.flashAttn,
 			MemoryEnabled:  p.memoryEnabled,
+			CPUMoE:         p.cpuMoE,
+			NoKVOffload:    p.noKVOffload,
+			FitVRAM:        p.fitVRAM,
 		}
 		if p.memoryEnabled {
 			if err := ensureEmbeddingModel(log); err != nil {
