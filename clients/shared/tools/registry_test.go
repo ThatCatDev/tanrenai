@@ -83,3 +83,37 @@ func TestAPITools(t *testing.T) {
 		}
 	}
 }
+
+func TestSubset(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&stubTool{name: "alpha"})
+	r.Register(&stubTool{name: "beta"})
+	r.Register(&stubTool{name: "gamma"})
+
+	sub := r.Subset("alpha", "gamma")
+	if sub.Get("alpha") == nil {
+		t.Error("expected alpha in subset")
+	}
+	if sub.Get("gamma") == nil {
+		t.Error("expected gamma in subset")
+	}
+	if sub.Get("beta") != nil {
+		t.Error("beta should not be in subset")
+	}
+	if len(sub.APITools()) != 2 {
+		t.Errorf("expected 2 tools in subset, got %d", len(sub.APITools()))
+	}
+}
+
+func TestSubset_MissingTool(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&stubTool{name: "alpha"})
+
+	sub := r.Subset("alpha", "nonexistent")
+	if sub.Get("alpha") == nil {
+		t.Error("expected alpha in subset")
+	}
+	if len(sub.APITools()) != 1 {
+		t.Errorf("expected 1 tool in subset, got %d", len(sub.APITools()))
+	}
+}

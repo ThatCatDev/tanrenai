@@ -530,6 +530,234 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 	})
 }
 
+// ── Swarm Agent Turn ──────────────────────────────────────────────────
+
+func (t *tuiApp) startSwarmAgentTurn(input string) {
+	t.mgr.Append(api.Message{Role: "user", Content: input})
+
+	if t.scrollsEnabled {
+		matched := scrolls.Match(t.allScrolls, input, 3)
+		if len(matched) > 0 {
+			var scrollMsgs []api.Message
+			var names []string
+			for _, s := range matched {
+				content := fmt.Sprintf("[Scroll: %s]\n%s", s.Name, s.Content)
+				scrollMsgs = append(scrollMsgs, api.Message{Role: "system", Content: content})
+				names = append(names, s.Name)
+			}
+			t.mgr.SetScrolls(scrollMsgs)
+			t.addLine(fmt.Sprintf("[gray::-]  [scrolls matched: %s][-:-:-]", strings.Join(names, ", ")))
+		} else {
+			t.mgr.ClearScrolls()
+		}
+	}
+
+	if t.memoryEnabled {
+		results, err := t.client.MemorySearch(context.Background(), input, 3)
+		if err == nil && len(results.Results) > 0 {
+			var memMsgs []api.Message
+			for _, r := range results.Results {
+				userMsg := truncate(r.Entry.UserMsg, 200)
+				assistMsg := truncate(r.Entry.AssistMsg, 500)
+				memContent := fmt.Sprintf("[Memory from %s] User asked: %s\nAssistant replied: %s",
+					r.Entry.Timestamp.Format("2006-01-02"), userMsg, assistMsg)
+				memMsgs = append(memMsgs, api.Message{Role: "system", Content: memContent})
+			}
+			t.mgr.SetMemories(memMsgs)
+		} else {
+			t.mgr.ClearMemories()
+		}
+	}
+
+	if t.mgr.NeedsSummary() {
+		_ = t.mgr.Summarize(context.Background(), chatctx.CompletionFunc(t.completeFn))
+	}
+
+	windowedMsgs := t.mgr.Messages()
+
+	turnCtx, turnCancel := context.WithCancel(context.Background())
+	t.mu.Lock()
+	t.turnCancel = turnCancel
+	t.mu.Unlock()
+
+	var contentFilt xmlFilter
+	var reasoningBuf strings.Builder
+
+	flushReasoning := func() {
+		if reasoningBuf.Len() > 0 {
+			text := reasoningBuf.String()
+			reasoningBuf.Reset()
+			t.app.QueueUpdateDraw(func() {
+				trimmed := strings.TrimSpace(text)
+				if trimmed != "" {
+					for _, line := range strings.Split(trimmed, "\n") {
+						t.addLine("[gray::-]    " + tview.Escape(line) + "[-:-:-]")
+					}
+					t.refreshChatView()
+				}
+			})
+		}
+	}
+
+	flushContent := func() {
+		flushReasoning()
+		if contentFilt.len() > 0 {
+			text := contentFilt.string()
+			t.app.QueueUpdateDraw(func() {
+				trimmed := strings.TrimSpace(text)
+				if trimmed != "" {
+					rendered := t.renderMarkdown(trimmed)
+					for _, line := range strings.Split(rendered, "\n") {
+						t.addLine("    " + line)
+					}
+					t.refreshChatView()
+				}
+			})
+		}
+	}
+
+	// Worker tools: filesystem + shell.
+	var workerTools *tools.Registry
+	if t.registry != nil {
+		workerTools = t.registry.Subset(
+			"file_read", "file_write", "patch_file",
+			"list_dir", "grep_search", "shell_exec",
+		)
+	}
+
+	cfg := agent.SwarmConfig{
+		StreamingConfig: agent.StreamingConfig{
+			Config: agent.Config{
+				MaxIterations:  t.maxIterations,
+				EnableThinking: t.enableThinking,
+				Tools:          t.registry,
+				Hooks: agent.Hooks{
+					OnToolCall: func(call api.ToolCall) {
+						flushContent()
+						name := call.Function.Name
+						t.app.QueueUpdateDraw(func() {
+							t.statusText = name
+							t.updateStatusBar()
+							switch name {
+							case "file_read", "file_write", "patch_file":
+								path := extractFilePath(call)
+								t.addLine("[gray::-]    > " + tview.Escape(name) + " [-:-:-][#00afff::u]" + tview.Escape(path) + "[::U][-:-:-]")
+							case "shell_exec":
+								cmd := extractShellCommand(call)
+								t.addLine("[gray::-]    > " + tview.Escape(name) + " [-:-:-][yellow::-]$ " + tview.Escape(cmd) + "[-:-:-]")
+							default:
+								t.addLine("[gray::-]    > " + tview.Escape(name) + "[-:-:-]")
+							}
+							t.refreshChatView()
+						})
+					},
+					OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
+						t.app.QueueUpdateDraw(func() {
+							t.displayToolResult(result)
+							t.refreshChatView()
+						})
+					},
+					OnAssistantMessage: func(content string) {},
+					OnToolApproval: func(call api.ToolCall) agent.ApprovalAction {
+						return t.approveToolCall(call)
+					},
+				},
+			},
+			OnIterationStart: func(iteration, maxIter int, messages []api.Message) {
+				flushContent()
+				t.app.QueueUpdateDraw(func() {
+					t.startProgressTicker()
+					t.iterStartTime = time.Now()
+					t.updateStatusBar()
+				})
+			},
+			OnContentDelta: func(delta string) {
+				contentFilt.write(delta)
+			},
+			OnReasoningDelta: func(delta string) {
+				reasoningBuf.WriteString(delta)
+			},
+			OnThinking: func() {
+				t.app.QueueUpdateDraw(func() {
+					t.statusText = "Thinking..."
+					t.updateStatusBar()
+				})
+			},
+			OnThinkingDone: func() {
+				t.app.QueueUpdateDraw(func() {
+					t.statusText = "Generating..."
+					t.updateStatusBar()
+				})
+			},
+		},
+		WorkerTools: workerTools,
+		OnPlanGenerated: func(depth int, plan *agent.Plan) {
+			t.app.QueueUpdateDraw(func() {
+				tree := strings.Repeat("│   ", depth)
+				if depth == 0 {
+					t.addLine("[blue::b]  Orchestrator[-:-:-]")
+				} else {
+					t.addLine(fmt.Sprintf("[blue::-]  %s├── Sub-orchestrator[-:-:-]", tree[:len(tree)-4]))
+				}
+				for i, step := range plan.Steps {
+					branch := "├──"
+					if i == len(plan.Steps)-1 {
+						branch = "└──"
+					}
+					t.addLine(fmt.Sprintf("[gray::-]  %s%s %d. %s[-:-:-]", tree, branch, step.Index, tview.Escape(step.Description)))
+				}
+				t.addLine("")
+				t.refreshChatView()
+			})
+		},
+		OnWorkerStart: func(depth, stepIdx int, step *agent.PlanStep) {
+			flushContent()
+			tree := strings.Repeat("│   ", depth)
+			t.app.QueueUpdateDraw(func() {
+				t.addLine(fmt.Sprintf("[yellow::b]  %s▶ Worker %d: %s[-:-:-]", tree, step.Index, tview.Escape(step.Description)))
+				t.refreshChatView()
+				t.statusText = fmt.Sprintf("Worker %d", step.Index)
+				if depth > 0 {
+					t.statusText = fmt.Sprintf("Sub-worker %d", step.Index)
+				}
+				t.updateStatusBar()
+			})
+		},
+		OnWorkerDone: func(depth, stepIdx int, step *agent.PlanStep) {
+			flushContent()
+			tree := strings.Repeat("│   ", depth)
+			t.app.QueueUpdateDraw(func() {
+				icon := "[green::-]✓[-:-:-]"
+				if step.Status == agent.StepFailed {
+					icon = "[red::-]✗[-:-:-]"
+				}
+				t.addLine(fmt.Sprintf("  %s%s Worker %d: %s", tree, icon, step.Index, step.Status.String()))
+				t.refreshChatView()
+			})
+		},
+		OnVerifyStart: func() {
+			flushContent()
+			t.app.QueueUpdateDraw(func() {
+				t.addLine("[blue::b]  -- verifying --[-:-:-]")
+				t.refreshChatView()
+				t.statusText = "Verifying..."
+				t.updateStatusBar()
+			})
+		},
+	}
+
+	result, err := agent.RunSwarm(turnCtx, t.streamFn, windowedMsgs, cfg)
+	flushContent()
+	turnCancel()
+	t.mu.Lock()
+	t.turnCancel = nil
+	t.mu.Unlock()
+
+	t.app.QueueUpdateDraw(func() {
+		t.handleTurnDone(result, windowedMsgs, err)
+	})
+}
+
 // ── Progress Tracking ───────────────────────────────────────────────────
 
 func (t *tuiApp) startProgressTicker() {

@@ -412,7 +412,9 @@ func (t *tuiApp) handleEnter(text string) {
 	t.updateStatusBar()
 	t.streaming.Reset()
 
-	if t.agentMode {
+	if t.swarmMode {
+		go t.startSwarmAgentTurn(text)
+	} else if t.agentMode {
 		go t.startPlannedAgentTurn(text)
 	} else {
 		go t.startChatTurn(text)
