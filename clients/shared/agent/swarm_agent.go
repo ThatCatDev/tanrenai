@@ -154,7 +154,7 @@ func runSwarmAtDepth(ctx context.Context, complete StreamingCompletionFunc,
 	}
 
 	// ── Phase 1: Plan ──────────────────────────────────────────────
-	plan, err := generateSwarmPlan(ctx, complete, messages, userRequest)
+	plan, err := generateSwarmPlan(ctx, complete, messages, userRequest, archSpec)
 	if err != nil {
 		debugf("swarm depth=%d: plan failed (%v), using RunStreaming", depth, err)
 		return RunStreaming(ctx, complete, messages, cfg.StreamingConfig)
@@ -287,10 +287,14 @@ func generateArchitectureSpec(ctx context.Context, complete StreamingCompletionF
 }
 
 // generateSwarmPlan calls the LLM with the swarm planning prompt.
+// The architecture spec is included so the planner respects framework/structure decisions.
 func generateSwarmPlan(ctx context.Context, complete StreamingCompletionFunc,
-	messages []api.Message, userRequest string) (*Plan, error) {
+	messages []api.Message, userRequest, archSpec string) (*Plan, error) {
 
 	systemParts := []string{swarmPlanningPrompt}
+	if archSpec != "" {
+		systemParts = append(systemParts, "Architecture spec (follow this when planning tasks):\n"+archSpec)
+	}
 	for _, m := range messages {
 		if m.Role == "system" && m.Content != "" {
 			systemParts = append(systemParts, m.Content)
