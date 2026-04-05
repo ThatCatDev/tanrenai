@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
@@ -73,7 +74,8 @@ type SwarmConfig struct {
 	StreamingConfig
 	WorkerTools     *tools.Registry                       // tools for workers (nil = same as main)
 	MaxDepth        int                                   // max recursion depth (0 = default 2)
-	OnArchitectSpec func(depth int, spec string)           // fired when architecture spec is generated
+	ArchitectFile   string                                // path to .tanrenai/architect.md (empty = auto-generate)
+	OnArchitectSpec func(depth int, spec string)           // fired when architecture spec is loaded/generated
 	OnPlanGenerated func(depth int, plan *Plan)            // fired when a plan is generated at any depth
 	OnWorkerStart   func(depth, stepIdx int, step *PlanStep)
 	OnWorkerDone    func(depth, stepIdx int, step *PlanStep)
@@ -124,13 +126,27 @@ func runSwarmAtDepth(ctx context.Context, complete StreamingCompletionFunc,
 	// ── Phase 0: Architecture spec (only at depth 0) ───────────────
 	archSpec := parentSpec
 	if depth == 0 {
-		spec, err := generateArchitectureSpec(ctx, complete, messages, userRequest)
-		if err != nil {
-			debugf("swarm: architecture spec failed (%v), continuing without", err)
-			archSpec = "(no architecture spec available)"
-		} else {
-			archSpec = spec
-			debugf("swarm: architecture spec generated (%d chars)", len(spec))
+		// Try loading from .tanrenai/architect.md first.
+		if cfg.ArchitectFile != "" {
+			data, readErr := os.ReadFile(cfg.ArchitectFile)
+			if readErr == nil && len(data) > 0 {
+				archSpec = string(data)
+				debugf("swarm: loaded architecture spec from %s (%d chars)", cfg.ArchitectFile, len(archSpec))
+			} else {
+				debugf("swarm: architect file %s not found or empty, auto-generating", cfg.ArchitectFile)
+			}
+		}
+
+		// Fall back to auto-generation if no file or file was empty.
+		if archSpec == "" {
+			spec, err := generateArchitectureSpec(ctx, complete, messages, userRequest)
+			if err != nil {
+				debugf("swarm: architecture spec failed (%v), continuing without", err)
+				archSpec = "(no architecture spec available)"
+			} else {
+				archSpec = spec
+				debugf("swarm: architecture spec generated (%d chars)", len(spec))
+			}
 		}
 		if cfg.OnArchitectSpec != nil {
 			cfg.OnArchitectSpec(depth, archSpec)
