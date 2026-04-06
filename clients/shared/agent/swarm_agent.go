@@ -28,18 +28,19 @@ Output a short spec (under 300 words) covering:
 Be specific and decisive. Do NOT hedge or offer alternatives.
 Output NOTHING except the spec.`
 
-const swarmPlanningPrompt = `You are a planning assistant. Break the request into module-level tasks for separate agents. Each task should be a self-contained feature or module — NOT a single file.
+const swarmPlanningPrompt = `You are a planning assistant. Break the request into module-level tasks for separate agents.
 
-Output ONLY a numbered list. Format:
-1. <verb> <module/feature> — <what it includes>
-2. <verb> <module/feature> — <what it includes>
+Output ONLY a numbered list. Each task MUST list the exact files to create.
+Format:
+1. <verb> <module> — <description> [files: path/a.ts, path/b.ts, path/c.css]
+2. <verb> <module> — <description> [files: path/d.ts, path/e.ts]
 
 Rules:
-- Each task = one module or feature (e.g. "Build the file browser" not "Create file-browser.ts")
-- A module task may produce multiple files — the worker decides what files to create
-- Order tasks so dependencies come first (e.g. shared types before components)
-- Workers can read files created by earlier workers using file_read
+- Each task = one module or feature with an explicit file list
+- Order tasks so dependencies come first (shared types before components)
+- Workers can file_read files created by earlier workers
 - Use 5-10 tasks for a typical project
+- Every file in the project must appear in exactly one task — no overlaps
 - Start each with an action verb (Build, Implement, Create, Configure, Test)
 - Output NOTHING except the numbered list`
 
@@ -57,7 +58,11 @@ Your task: "%s"
 
 Prior workers completed:
 %s
-Complete ONLY your task using tools. Follow the architecture spec exactly. Do not create files assigned to other workers. The previous workers' files already exist on disk — use file_read if you need to see them. When done, summarize what you created in 1-2 sentences.`
+RULES:
+- Create ONLY the files listed in your task. Do NOT create files from other tasks.
+- When your listed files are created and working, STOP and summarize what you did.
+- Follow the architecture spec exactly.
+- Use file_read to check files created by prior workers if you need to import from them.`
 
 const swarmVerifyPrompt = `You are the final verification agent. A team of workers just completed a multi-step task.
 
