@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -437,7 +438,11 @@ func buildPipeSwarmConfig(deps *sessionDeps) agent.SwarmConfig {
 				pipeStatus("generating")
 			},
 		},
-		WorkerTools: workerTools,
+		WorkerTools:   workerTools,
+		ArchitectFile: filepath.Join(".tanrenai", "architect.md"),
+		OnArchitectSpec: func(depth int, spec string) {
+			pipeStatus("swarm_architect d=%d: %s", depth, strings.ReplaceAll(strings.TrimSpace(spec), "\n", " | "))
+		},
 		OnPlanGenerated: func(depth int, plan *agent.Plan) {
 			for _, step := range plan.Steps {
 				pipeStatus("swarm_plan d=%d: %d. %s", depth, step.Index, step.Description)

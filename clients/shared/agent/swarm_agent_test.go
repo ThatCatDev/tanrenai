@@ -11,9 +11,8 @@ import (
 )
 
 // mockSwarmComplete returns different responses based on the system prompt content.
-func mockSwarmComplete(planText, workerResponse, verifyResponse string) StreamingCompletionFunc {
+func mockSwarmComplete(archSpec, planText, workerResponse, verifyResponse string) StreamingCompletionFunc {
 	return func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
-		// Determine which phase we're in based on system prompt.
 		system := ""
 		for _, m := range req.Messages {
 			if m.Role == "system" {
@@ -23,6 +22,8 @@ func mockSwarmComplete(planText, workerResponse, verifyResponse string) Streamin
 
 		var content string
 		switch {
+		case strings.Contains(system, "software architect"):
+			content = archSpec
 		case strings.Contains(system, "Break the request"):
 			content = planText
 		case strings.Contains(system, "Verify the project"):
@@ -51,6 +52,7 @@ func mockSwarmComplete(planText, workerResponse, verifyResponse string) Streamin
 
 func TestRunSwarm_PlanAndExecute(t *testing.T) {
 	complete := mockSwarmComplete(
+		"Use vanilla TypeScript with Vite.",
 		"1. Create types.ts\n2. Create app.ts\n3. Create tests.ts",
 		"Done with this task.",
 		"All verified.",
@@ -61,7 +63,7 @@ func TestRunSwarm_PlanAndExecute(t *testing.T) {
 		{Role: "user", Content: "Build a web app with types, app, and tests"},
 	}
 
-	var planDepth int
+	var archSpec string
 	var planSteps int
 	var workersStarted, workersDone int
 	var verifyStarted bool
@@ -73,9 +75,11 @@ func TestRunSwarm_PlanAndExecute(t *testing.T) {
 				Tools:         tools.NewRegistry(),
 			},
 		},
-		MaxDepth: 1, // workers degrade to RunStreaming (no sub-planning)
+		MaxDepth: 1,
+		OnArchitectSpec: func(depth int, spec string) {
+			archSpec = spec
+		},
 		OnPlanGenerated: func(depth int, plan *Plan) {
-			planDepth = depth
 			planSteps = len(plan.Steps)
 		},
 		OnWorkerStart: func(depth, stepIdx int, step *PlanStep) {
@@ -93,8 +97,8 @@ func TestRunSwarm_PlanAndExecute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if planDepth != 0 {
-		t.Errorf("expected plan at depth 0, got %d", planDepth)
+	if archSpec == "" {
+		t.Error("expected architecture spec to be generated")
 	}
 	if planSteps != 3 {
 		t.Errorf("expected 3 plan steps, got %d", planSteps)
@@ -114,8 +118,8 @@ func TestRunSwarm_PlanAndExecute(t *testing.T) {
 }
 
 func TestRunSwarm_PlanFailsFallback(t *testing.T) {
-	// Return non-numbered text so plan parsing fails.
 	complete := mockSwarmComplete(
+		"Use TypeScript.",
 		"I'll just do everything at once.",
 		"Done.",
 		"",
@@ -150,6 +154,7 @@ func TestRunSwarm_PlanFailsFallback(t *testing.T) {
 
 func TestRunSwarm_SingleStepFallback(t *testing.T) {
 	complete := mockSwarmComplete(
+		"Use TypeScript.",
 		"1. Do everything",
 		"Done.",
 		"",
@@ -178,17 +183,14 @@ func TestRunSwarm_SingleStepFallback(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if planGenerated {
-		t.Error("single-step plan should degrade to RunStreaming without firing OnPlanGenerated")
+		t.Error("single-step plan should degrade to RunStreaming")
 	}
 }
 
 func TestRunSwarm_MaxDepthDegrades(t *testing.T) {
-	// Even with a multi-step plan, MaxDepth=1 means workers can't sub-plan.
 	callCount := 0
 	complete := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
 		callCount++
-		content := "Done with task."
-
 		ch := make(chan apiclient.StreamEvent, 2)
 		go func() {
 			defer close(ch)
@@ -196,7 +198,7 @@ func TestRunSwarm_MaxDepthDegrades(t *testing.T) {
 			ch <- apiclient.StreamEvent{
 				Chunk: &api.ChatCompletionChunk{
 					Choices: []api.ChunkChoice{{
-						Delta:        api.MessageDelta{Role: "assistant", Content: content},
+						Delta:        api.MessageDelta{Role: "assistant", Content: "Done."},
 						FinishReason: &fr,
 					}},
 				},
@@ -217,53 +219,22 @@ func TestRunSwarm_MaxDepthDegrades(t *testing.T) {
 				Tools:         tools.NewRegistry(),
 			},
 		},
-		MaxDepth: 1, // workers immediately degrade to RunStreaming
+		MaxDepth: 1,
 	}
 
 	_, err := RunSwarm(context.Background(), complete, messages, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should complete without deep recursion.
 }
 
 func TestRunSwarm_WorkerFailureContinues(t *testing.T) {
-	callNum := 0
-	complete := func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
-		callNum++
-		system := ""
-		for _, m := range req.Messages {
-			if m.Role == "system" {
-				system = m.Content
-			}
-		}
-
-		var content string
-		switch {
-		case strings.Contains(system, "Break the request"):
-			content = "1. First task\n2. Second task"
-		case strings.Contains(system, "Verify the project"):
-			content = "Verified."
-		default:
-			content = "Worker done."
-		}
-
-		ch := make(chan apiclient.StreamEvent, 2)
-		go func() {
-			defer close(ch)
-			fr := "stop"
-			ch <- apiclient.StreamEvent{
-				Chunk: &api.ChatCompletionChunk{
-					Choices: []api.ChunkChoice{{
-						Delta:        api.MessageDelta{Role: "assistant", Content: content},
-						FinishReason: &fr,
-					}},
-				},
-			}
-			ch <- apiclient.StreamEvent{Done: true}
-		}()
-		return ch, nil
-	}
+	complete := mockSwarmComplete(
+		"Use TypeScript.",
+		"1. First task\n2. Second task",
+		"Worker done.",
+		"Verified.",
+	)
 
 	messages := []api.Message{
 		{Role: "user", Content: "Build two things"},
@@ -277,13 +248,14 @@ func TestRunSwarm_WorkerFailureContinues(t *testing.T) {
 				Tools:         tools.NewRegistry(),
 			},
 		},
-		MaxDepth: 1, // workers degrade to RunStreaming (no sub-planning)
+		MaxDepth:        1,
 		OnPlanGenerated: func(depth int, plan *Plan) {},
 		OnWorkerStart:   func(depth, stepIdx int, step *PlanStep) {},
 		OnWorkerDone: func(depth, stepIdx int, step *PlanStep) {
 			doneCount++
 		},
-		OnVerifyStart: func() {},
+		OnVerifyStart:   func() {},
+		OnArchitectSpec: func(depth int, spec string) {},
 	}
 
 	_, err := RunSwarm(context.Background(), complete, messages, cfg)
@@ -292,5 +264,83 @@ func TestRunSwarm_WorkerFailureContinues(t *testing.T) {
 	}
 	if doneCount != 2 {
 		t.Errorf("expected 2 workers done, got %d", doneCount)
+	}
+}
+
+func TestIsComplexTask(t *testing.T) {
+	tests := []struct {
+		desc string
+		want bool
+	}{
+		{"Create package.json", false},
+		{"Create tsconfig.json", false},
+		{"fix the bug", false},
+		// Long description = complex
+		{"Build the file browser component with navigation controls, breadcrumbs, search functionality, and tree view rendering for the desktop OS application", true},
+		// 3+ action words = complex
+		{"Create, implement, and test the authentication module", true},
+		{"Build the game, add scoring, configure settings, and write tests", true},
+		// 2 action words = not complex
+		{"Create and test the component", false},
+	}
+	for _, tt := range tests {
+		got := isComplexTask(tt.desc)
+		if got != tt.want {
+			t.Errorf("isComplexTask(%q) = %v, want %v", tt.desc, got, tt.want)
+		}
+	}
+}
+
+func TestFormatPlanList(t *testing.T) {
+	plan := &Plan{
+		Steps: []PlanStep{
+			{Index: 1, Description: "Create types.ts"},
+			{Index: 2, Description: "Create app.ts"},
+			{Index: 3, Description: "Write tests"},
+		},
+	}
+	got := formatPlanList(plan)
+	want := "1. Create types.ts\n2. Create app.ts\n3. Write tests\n"
+	if got != want {
+		t.Errorf("formatPlanList() = %q, want %q", got, want)
+	}
+}
+
+func TestRunSwarm_ArchitectSpecGenerated(t *testing.T) {
+	complete := mockSwarmComplete(
+		"Framework: Vanilla TypeScript\nBuild: Vite\nStructure: src/components/",
+		"1. Create types.ts\n2. Create app.ts",
+		"Done.",
+		"Verified.",
+	)
+
+	messages := []api.Message{
+		{Role: "user", Content: "Build a web app"},
+	}
+
+	var specReceived string
+	cfg := SwarmConfig{
+		StreamingConfig: StreamingConfig{
+			Config: Config{
+				MaxIterations: 5,
+				Tools:         tools.NewRegistry(),
+			},
+		},
+		MaxDepth: 1,
+		OnArchitectSpec: func(depth int, spec string) {
+			specReceived = spec
+		},
+		OnPlanGenerated: func(depth int, plan *Plan) {},
+		OnWorkerStart:   func(depth, stepIdx int, step *PlanStep) {},
+		OnWorkerDone:    func(depth, stepIdx int, step *PlanStep) {},
+		OnVerifyStart:   func() {},
+	}
+
+	_, err := RunSwarm(context.Background(), complete, messages, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(specReceived, "Vanilla TypeScript") {
+		t.Errorf("expected spec to contain 'Vanilla TypeScript', got %q", specReceived)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -690,7 +691,18 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 				})
 			},
 		},
-		WorkerTools: workerTools,
+		WorkerTools:   workerTools,
+		ArchitectFile: filepath.Join(".tanrenai", "architect.md"),
+		OnArchitectSpec: func(depth int, spec string) {
+			t.app.QueueUpdateDraw(func() {
+				t.addLine("[blue::b]  Architecture Spec[-:-:-]")
+				for _, line := range strings.Split(strings.TrimSpace(spec), "\n") {
+					t.addLine("[gray::-]    " + tview.Escape(line) + "[-:-:-]")
+				}
+				t.addLine("")
+				t.refreshChatView()
+			})
+		},
 		OnPlanGenerated: func(depth int, plan *agent.Plan) {
 			t.app.QueueUpdateDraw(func() {
 				tree := strings.Repeat("│   ", depth)
