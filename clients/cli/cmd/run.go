@@ -814,6 +814,9 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 	}
 
 	client := apiclient.New(activeURL)
+	if authToken != "" {
+		client.SetAuthToken(authToken)
+	}
 	deps.client = client
 
 	log.Info("Loading model " + p.model + "...")

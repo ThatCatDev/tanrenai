@@ -41,6 +41,9 @@ Supports:
 		}
 
 		client := apiclient.New(activeURL)
+		if authToken != "" {
+			client.SetAuthToken(authToken)
+		}
 
 		ch, err := client.PullModel(context.Background(), modelURL)
 		if err != nil {
