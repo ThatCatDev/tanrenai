@@ -33,12 +33,12 @@ var loginCmd = &cobra.Command{
 		verifier := generateCodeVerifier()
 		challenge := generateCodeChallenge(verifier)
 
-		// Start local callback server
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		// Start local callback server on a fixed port (must match Dex client config)
+		const callbackPort = 18293
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", callbackPort))
 		if err != nil {
-			return fmt.Errorf("start callback server: %w", err)
+			return fmt.Errorf("start callback server on port %d (is another login running?): %w", callbackPort, err)
 		}
-		callbackPort := listener.Addr().(*net.TCPAddr).Port
 		redirectURL := fmt.Sprintf("http://localhost:%d/callback", callbackPort)
 
 		cfg := &oauth2.Config{

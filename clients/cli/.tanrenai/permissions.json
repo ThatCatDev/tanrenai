@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {
+      "tool": "list_dir"
+    },
+    {
+      "tool": "file_read"
+    },
+    {
+      "tool": "file_write"
+    }
+  ]
+}

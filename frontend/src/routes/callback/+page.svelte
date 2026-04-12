@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { fetchUser } from '$lib/stores/user';
 
 	const OIDC_ISSUER = import.meta.env.VITE_OIDC_ISSUER || 'http://localhost:5556/dex';
 	const CLIENT_ID = import.meta.env.VITE_OIDC_CLIENT_ID || 'tanrenai-frontend';
-	const REDIRECT_URI = `${window.location.origin}/callback`;
 
 	let error = $state('');
 
 	onMount(async () => {
+		if (!browser) return;
+
+		const redirectUri = `${window.location.origin}/callback`;
 		const params = new URLSearchParams(window.location.search);
 		const code = params.get('code');
 		const state = params.get('state');
@@ -33,7 +36,7 @@
 				body: new URLSearchParams({
 					grant_type: 'authorization_code',
 					code,
-					redirect_uri: REDIRECT_URI,
+					redirect_uri: redirectUri,
 					client_id: CLIENT_ID,
 					code_verifier: verifier || '',
 				}),

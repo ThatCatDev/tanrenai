@@ -32,7 +32,7 @@ staticClients:
     name: Tanrenai CLI
     public: true
     redirectURIs:
-      - http://localhost:0/callback
+      - http://localhost:18293/callback
 
 enablePasswordDB: true
 

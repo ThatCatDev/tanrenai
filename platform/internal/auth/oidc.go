@@ -23,14 +23,17 @@ type Claims struct {
 }
 
 // NewOIDCVerifier creates a verifier that discovers the OIDC provider and validates tokens.
+// It accepts tokens from multiple audiences (backend, frontend, CLI all issue different client IDs).
 func NewOIDCVerifier(ctx context.Context, issuerURL, clientID string) (*OIDCVerifier, error) {
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("discover OIDC provider at %s: %w", issuerURL, err)
 	}
 
+	// Skip audience check so we accept tokens from any registered Dex client
+	// (backend, frontend, CLI). Signature and issuer are still validated.
 	verifier := provider.Verifier(&oidc.Config{
-		ClientID: clientID,
+		SkipClientIDCheck: true,
 	})
 
 	return &OIDCVerifier{
