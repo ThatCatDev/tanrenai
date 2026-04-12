@@ -18,6 +18,7 @@ import (
 // Client is a typed HTTP client that talks to the tanrenai backend server.
 type Client struct {
 	baseURL      string
+	authToken    string       // optional Bearer token for authenticated requests
 	httpClient   *http.Client // non-streaming requests (has timeout)
 	streamClient *http.Client // streaming requests (no timeout)
 }
@@ -28,6 +29,18 @@ func New(baseURL string) *Client {
 		baseURL:      baseURL,
 		httpClient:   &http.Client{Timeout: 2 * time.Minute},
 		streamClient: &http.Client{},
+	}
+}
+
+// SetAuthToken sets the Bearer token for authenticated requests.
+func (c *Client) SetAuthToken(token string) {
+	c.authToken = token
+}
+
+// applyAuth adds the Authorization header if an auth token is set.
+func (c *Client) applyAuth(req *http.Request) {
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
 	}
 }
 
@@ -56,6 +69,7 @@ func (c *Client) StreamCompletion(ctx context.Context, req *api.ChatCompletionRe
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.applyAuth(httpReq)
 
 	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
@@ -87,6 +101,7 @@ func (c *Client) ChatCompletion(ctx context.Context, req *api.ChatCompletionRequ
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.applyAuth(httpReq)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -154,6 +169,7 @@ func (c *Client) MemoryDelete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	c.applyAuth(httpReq)
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return connError(err)
@@ -175,6 +191,7 @@ func (c *Client) MemoryClear(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	c.applyAuth(httpReq)
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return connError(err)
@@ -247,6 +264,7 @@ func (c *Client) PullModel(ctx context.Context, url string) (<-chan PullModelEve
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.applyAuth(httpReq)
 
 	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
@@ -307,6 +325,7 @@ func (c *Client) Tokenize(ctx context.Context, text string) (int, error) {
 		return 0, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.applyAuth(httpReq)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -366,6 +385,7 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte, result 
 		return fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.applyAuth(httpReq)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -393,6 +413,7 @@ func (c *Client) getJSON(ctx context.Context, url string, result any) error {
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
+	c.applyAuth(httpReq)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
