@@ -44,9 +44,8 @@ func NewChromemStore(persistDir string, embedFunc EmbedFunc) (*ChromemStore, err
 		persistDir: persistDir,
 	}
 
-	// Load entry index from disk
-	if err := s.loadIndex(); err != nil {
-		// Not fatal — index may not exist yet
+	// Load entry index from disk (ignore file-not-found on first run)
+	if err := s.loadIndex(); err != nil && !os.IsNotExist(err) {
 		slog.Warn("failed to load memory index", "error", err)
 	}
 
