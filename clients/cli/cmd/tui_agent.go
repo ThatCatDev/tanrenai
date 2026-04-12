@@ -22,6 +22,26 @@ import (
 // ── Chat Turn (non-agent, streaming) ────────────────────────────────────
 
 func (t *tuiApp) startChatTurn(input string) {
+	if t.memoryEnabled {
+		results, err := t.client.MemorySearch(context.Background(), input, 3)
+		if err != nil {
+			slog.Warn("memory search failed", "error", err)
+		}
+		if err == nil && len(results.Results) > 0 {
+			var memMsgs []api.Message
+			for _, r := range results.Results {
+				userMsg := truncate(r.Entry.UserMsg, 200)
+				assistMsg := truncate(r.Entry.AssistMsg, 500)
+				memContent := fmt.Sprintf("[Memory from %s] User asked: %s\nAssistant replied: %s",
+					r.Entry.Timestamp.Format("2006-01-02"), userMsg, assistMsg)
+				memMsgs = append(memMsgs, api.Message{Role: "system", Content: memContent})
+			}
+			t.mgr.SetMemories(memMsgs)
+		} else {
+			t.mgr.ClearMemories()
+		}
+	}
+
 	t.mgr.Append(api.Message{Role: "user", Content: input})
 	windowedMsgs := t.mgr.Messages()
 
@@ -289,6 +309,9 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 
 	if t.memoryEnabled {
 		results, err := t.client.MemorySearch(context.Background(), input, 3)
+		if err != nil {
+			slog.Warn("memory search failed", "error", err)
+		}
 		if err == nil && len(results.Results) > 0 {
 			var memMsgs []api.Message
 			for _, r := range results.Results {
@@ -555,6 +578,9 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 
 	if t.memoryEnabled {
 		results, err := t.client.MemorySearch(context.Background(), input, 3)
+		if err != nil {
+			slog.Warn("memory search failed", "error", err)
+		}
 		if err == nil && len(results.Results) > 0 {
 			var memMsgs []api.Message
 			for _, r := range results.Results {
