@@ -26,7 +26,7 @@ services:
 
   platform:
     build:
-      context: ..
+      context: ../..
       dockerfile: platform/docker/Dockerfile
     ports:
       - "3000:3000"
@@ -37,10 +37,15 @@ services:
         condition: service_started
     environment:
       DATABASE_URL: postgres://tanrenai:tanrenai@postgres:5432/tanrenai?sslmode=disable
-      OIDC_ISSUER: http://dex:5556/dex
+      # Use localhost issuer so tokens validate from both inside docker (via extra_hosts)
+      # and outside (browser/CLI). Dex issuer must match token "iss" claim exactly.
+      OIDC_ISSUER: http://localhost:5556/dex
       OIDC_CLIENT_ID: tanrenai
       OIDC_CLIENT_SECRET: tanrenai-secret
       FRONTEND_ORIGIN: http://localhost:5173
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    extra_hosts:
+      - "localhost:host-gateway"
 
 volumes:
   pgdata:
