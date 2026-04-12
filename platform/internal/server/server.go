@@ -8,14 +8,16 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ThatCatDev/tanrenai/platform/internal/auth"
 	"github.com/ThatCatDev/tanrenai/platform/internal/config"
 	"github.com/ThatCatDev/tanrenai/platform/internal/database"
 )
 
 // Server is the platform HTTP server.
 type Server struct {
-	cfg config.Config
-	db  *database.DB
+	cfg  config.Config
+	db   *database.DB
+	auth *auth.Middleware
 }
 
 // New creates a new platform server.
@@ -25,6 +27,18 @@ func New(cfg config.Config, db *database.DB) *Server {
 
 // Start starts the HTTP server and blocks until the context is cancelled.
 func (s *Server) Start(ctx context.Context) error {
+	// Initialize OIDC if configured
+	if s.cfg.OIDCIssuer != "" {
+		verifier, err := auth.NewOIDCVerifier(ctx, s.cfg.OIDCIssuer, s.cfg.OIDCClientID)
+		if err != nil {
+			return fmt.Errorf("initialize OIDC: %w", err)
+		}
+		s.auth = auth.NewMiddleware(verifier, s.db)
+		slog.Info("OIDC authentication enabled", "issuer", s.cfg.OIDCIssuer)
+	} else {
+		slog.Warn("OIDC not configured — running without authentication")
+	}
+
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 

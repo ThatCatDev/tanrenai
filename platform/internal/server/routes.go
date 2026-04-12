@@ -3,35 +3,48 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/ThatCatDev/tanrenai/platform/internal/server/handlers"
 )
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Public
 	mux.HandleFunc("GET /health", s.handleHealth)
 
-	// TODO: Add OIDC auth middleware and protected routes in Phase 2
-	// For now, register placeholder routes
+	userHandler := &handlers.UserHandler{
+		DB:            s.db,
+		EncryptionKey: s.cfg.EncryptionKey,
+	}
+	instHandler := &handlers.InstanceHandler{
+		DB: s.db,
+	}
 
-	// User endpoints (will require auth)
-	mux.HandleFunc("GET /api/user/me", s.handleNotImplemented)
-	mux.HandleFunc("PUT /api/user/settings", s.handleNotImplemented)
-	mux.HandleFunc("POST /api/user/vastai-key", s.handleNotImplemented)
-	mux.HandleFunc("DELETE /api/user/vastai-key", s.handleNotImplemented)
+	if s.auth != nil {
+		// Authenticated routes
+		mux.Handle("GET /api/user/me", s.auth.WrapFunc(userHandler.Me))
+		mux.Handle("PUT /api/user/settings", s.auth.WrapFunc(userHandler.UpdateSettings))
+		mux.Handle("POST /api/user/vastai-key", s.auth.WrapFunc(userHandler.SetVastaiKey))
+		mux.Handle("DELETE /api/user/vastai-key", s.auth.WrapFunc(userHandler.DeleteVastaiKey))
 
-	// Instance endpoints (will require auth)
-	mux.HandleFunc("GET /api/instance/status", s.handleNotImplemented)
-	mux.HandleFunc("POST /api/instance/provision", s.handleNotImplemented)
-	mux.HandleFunc("POST /api/instance/destroy", s.handleNotImplemented)
-	mux.HandleFunc("GET /api/instance/cost", s.handleNotImplemented)
+		mux.Handle("GET /api/instance/status", s.auth.WrapFunc(instHandler.Status))
+		mux.Handle("POST /api/instance/provision", s.auth.WrapFunc(instHandler.Provision))
+		mux.Handle("POST /api/instance/destroy", s.auth.WrapFunc(instHandler.Destroy))
+		mux.Handle("GET /api/instance/cost", s.auth.WrapFunc(instHandler.Cost))
+	} else {
+		// No OIDC configured — register routes without auth (development mode)
+		mux.HandleFunc("GET /api/user/me", userHandler.Me)
+		mux.HandleFunc("PUT /api/user/settings", userHandler.UpdateSettings)
+		mux.HandleFunc("POST /api/user/vastai-key", userHandler.SetVastaiKey)
+		mux.HandleFunc("DELETE /api/user/vastai-key", userHandler.DeleteVastaiKey)
+
+		mux.HandleFunc("GET /api/instance/status", instHandler.Status)
+		mux.HandleFunc("POST /api/instance/provision", instHandler.Provision)
+		mux.HandleFunc("POST /api/instance/destroy", instHandler.Destroy)
+		mux.HandleFunc("GET /api/instance/cost", instHandler.Cost)
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-func (s *Server) handleNotImplemented(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "not_implemented", "message": "this endpoint is not yet implemented"})
 }
