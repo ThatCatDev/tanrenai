@@ -44,6 +44,10 @@ services:
       OIDC_CLIENT_SECRET: tanrenai-secret
       FRONTEND_ORIGIN: http://localhost:5173
       ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      # Headscale mesh networking — pass via env or .env file
+      HEADSCALE_URL: ${HEADSCALE_URL:-}
+      HEADSCALE_API_KEY: ${HEADSCALE_API_KEY:-}
+      HEADSCALE_USER: ${HEADSCALE_USER:-tanrenai}
     extra_hosts:
       - "localhost:host-gateway"
 
