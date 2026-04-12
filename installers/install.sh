@@ -58,12 +58,24 @@ EXTRACTED="tanrenai-cli-${OS}-${ARCH}"
 cp "${TMPDIR}/${EXTRACTED}/tanrenai-cli" "${INSTALL_DIR}/tanrenai"
 chmod +x "${INSTALL_DIR}/tanrenai"
 
-# Copy bundled llama-server if present
+# Copy bundled llama-server if present (preserve existing GPU libraries)
 if [ -d "${TMPDIR}/${EXTRACTED}/bin" ] && [ "$(ls -A "${TMPDIR}/${EXTRACTED}/bin")" ]; then
-  mkdir -p "${INSTALL_DIR}/../share/tanrenai/bin"
-  cp -r "${TMPDIR}/${EXTRACTED}/bin/"* "${INSTALL_DIR}/../share/tanrenai/bin/"
-  chmod +x "${INSTALL_DIR}/../share/tanrenai/bin/"* 2>/dev/null || true
-  echo "Installed llama-server to $(cd "${INSTALL_DIR}/../share/tanrenai/bin" && pwd)"
+  TANRENAI_BIN="${INSTALL_DIR}/../share/tanrenai/bin"
+  mkdir -p "$TANRENAI_BIN"
+  for f in "${TMPDIR}/${EXTRACTED}/bin/"*; do
+    fname="$(basename "$f")"
+    # Skip shared libraries that already exist (preserves user-built GPU/CUDA libs)
+    case "$fname" in
+      *.so|*.so.*|*.dylib)
+        if [ -e "${TANRENAI_BIN}/${fname}" ]; then
+          continue
+        fi
+        ;;
+    esac
+    cp "$f" "${TANRENAI_BIN}/${fname}"
+  done
+  chmod +x "${TANRENAI_BIN}/"* 2>/dev/null || true
+  echo "Installed llama-server to $(cd "${TANRENAI_BIN}" && pwd)"
 fi
 
 echo ""
