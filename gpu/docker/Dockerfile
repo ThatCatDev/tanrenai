@@ -34,7 +34,7 @@ RUN cd gpu && CGO_ENABLED=0 go build -o /tanrenai-gpu .
 FROM nvidia/cuda:12.8.1-runtime-ubuntu22.04
 
 RUN apt-get update -qq && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl libgomp1 && \
     rm -rf /var/lib/apt/lists/*
 
 # llama-server binary and shared libs
