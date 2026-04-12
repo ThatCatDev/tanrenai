@@ -11,18 +11,27 @@ import (
 	"github.com/ThatCatDev/tanrenai/platform/internal/auth"
 	"github.com/ThatCatDev/tanrenai/platform/internal/config"
 	"github.com/ThatCatDev/tanrenai/platform/internal/database"
+	"github.com/ThatCatDev/tanrenai/platform/internal/instance"
 )
 
 // Server is the platform HTTP server.
 type Server struct {
-	cfg  config.Config
-	db   *database.DB
-	auth *auth.Middleware
+	cfg     config.Config
+	db      *database.DB
+	auth    *auth.Middleware
+	manager *instance.Manager
 }
 
 // New creates a new platform server.
 func New(cfg config.Config, db *database.DB) *Server {
-	return &Server{cfg: cfg, db: db}
+	provisioner := instance.NewProvisioner(db, cfg.GPUDockerImage, cfg.EncryptionKey)
+	manager := instance.NewManager(db, provisioner)
+
+	return &Server{
+		cfg:     cfg,
+		db:      db,
+		manager: manager,
+	}
 }
 
 // Start starts the HTTP server and blocks until the context is cancelled.
@@ -53,6 +62,7 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		slog.Info("shutting down server")
+		s.manager.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)

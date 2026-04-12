@@ -16,7 +16,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		EncryptionKey: s.cfg.EncryptionKey,
 	}
 	instHandler := &handlers.InstanceHandler{
-		DB: s.db,
+		DB:      s.db,
+		Manager: s.manager,
+	}
+	proxyHandler := &handlers.ProxyHandler{
+		Manager: s.manager,
 	}
 
 	if s.auth != nil {
@@ -30,8 +34,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("POST /api/instance/provision", s.auth.WrapFunc(instHandler.Provision))
 		mux.Handle("POST /api/instance/destroy", s.auth.WrapFunc(instHandler.Destroy))
 		mux.Handle("GET /api/instance/cost", s.auth.WrapFunc(instHandler.Cost))
+
+		// GPU proxy routes
+		mux.Handle("POST /v1/chat/completions", s.auth.WrapFunc(proxyHandler.ChatCompletions))
+		mux.Handle("POST /tokenize", s.auth.WrapFunc(proxyHandler.Tokenize))
+		mux.Handle("GET /v1/models", s.auth.WrapFunc(proxyHandler.ListModels))
+		mux.Handle("POST /api/load", s.auth.WrapFunc(proxyHandler.LoadModel))
+		mux.Handle("POST /api/pull", s.auth.WrapFunc(proxyHandler.PullModel))
 	} else {
-		// No OIDC configured — register routes without auth (development mode)
+		// No OIDC — development mode without auth
 		mux.HandleFunc("GET /api/user/me", userHandler.Me)
 		mux.HandleFunc("PUT /api/user/settings", userHandler.UpdateSettings)
 		mux.HandleFunc("POST /api/user/vastai-key", userHandler.SetVastaiKey)
@@ -41,6 +52,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("POST /api/instance/provision", instHandler.Provision)
 		mux.HandleFunc("POST /api/instance/destroy", instHandler.Destroy)
 		mux.HandleFunc("GET /api/instance/cost", instHandler.Cost)
+
+		mux.HandleFunc("POST /v1/chat/completions", proxyHandler.ChatCompletions)
+		mux.HandleFunc("POST /tokenize", proxyHandler.Tokenize)
+		mux.HandleFunc("GET /v1/models", proxyHandler.ListModels)
+		mux.HandleFunc("POST /api/load", proxyHandler.LoadModel)
+		mux.HandleFunc("POST /api/pull", proxyHandler.PullModel)
 	}
 }
 
