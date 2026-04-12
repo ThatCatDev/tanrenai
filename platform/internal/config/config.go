@@ -15,6 +15,11 @@ type Config struct {
 	DefaultMaxCost   float64 // default max $/hr for offers
 	GPUDockerImage   string  // Docker image for GPU instances
 	FrontendOrigin   string  // frontend URL for CORS
+
+	// Headscale mesh networking
+	HeadscaleURL  string // e.g. "https://headscale.floretos.com"
+	HeadscaleAPI  string // API key
+	HeadscaleUser string // user name (default "tanrenai")
 }
 
 // Defaults returns a Config with sensible defaults, reading env vars.
@@ -31,6 +36,9 @@ func Defaults() Config {
 		DefaultMaxCost: 1.0,
 		GPUDockerImage: envOr("GPU_DOCKER_IMAGE", "thatcatdev/tanrenai-gpu:latest"),
 		FrontendOrigin: envOr("FRONTEND_ORIGIN", "http://localhost:5173"),
+		HeadscaleURL:   envOr("HEADSCALE_URL", ""),
+		HeadscaleAPI:   envOr("HEADSCALE_API_KEY", ""),
+		HeadscaleUser:  envOr("HEADSCALE_USER", "tanrenai"),
 	}
 }
 

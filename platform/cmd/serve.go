@@ -43,6 +43,15 @@ var serveCmd = &cobra.Command{
 		if origin, _ := cmd.Flags().GetString("frontend-origin"); origin != "" {
 			cfg.FrontendOrigin = origin
 		}
+		if hsURL, _ := cmd.Flags().GetString("headscale-url"); hsURL != "" {
+			cfg.HeadscaleURL = hsURL
+		}
+		if hsAPI, _ := cmd.Flags().GetString("headscale-api-key"); hsAPI != "" {
+			cfg.HeadscaleAPI = hsAPI
+		}
+		if hsUser, _ := cmd.Flags().GetString("headscale-user"); hsUser != "" {
+			cfg.HeadscaleUser = hsUser
+		}
 
 		// Generate encryption key if not provided
 		if cfg.EncryptionKey == "" {
@@ -79,6 +88,9 @@ func init() {
 	serveCmd.Flags().String("oidc-client-secret", "", "OIDC client secret")
 	serveCmd.Flags().String("encryption-key", "", "32-byte hex key for encrypting API keys")
 	serveCmd.Flags().String("frontend-origin", "", "frontend URL for CORS")
+	serveCmd.Flags().String("headscale-url", "", "Headscale server URL")
+	serveCmd.Flags().String("headscale-api-key", "", "Headscale API key")
+	serveCmd.Flags().String("headscale-user", "", "Headscale user name")
 
 	rootCmd.AddCommand(serveCmd)
 }

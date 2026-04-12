@@ -12,6 +12,7 @@ import (
 	"github.com/ThatCatDev/tanrenai/platform/internal/config"
 	"github.com/ThatCatDev/tanrenai/platform/internal/database"
 	"github.com/ThatCatDev/tanrenai/platform/internal/instance"
+	"github.com/ThatCatDev/tanrenai/platform/internal/network"
 )
 
 // Server is the platform HTTP server.
@@ -24,7 +25,13 @@ type Server struct {
 
 // New creates a new platform server.
 func New(cfg config.Config, db *database.DB) *Server {
-	provisioner := instance.NewProvisioner(db, cfg.GPUDockerImage, cfg.EncryptionKey)
+	var headscale *network.HeadscaleProvider
+	if cfg.HeadscaleURL != "" && cfg.HeadscaleAPI != "" {
+		headscale = network.NewHeadscaleProvider(cfg.HeadscaleURL, cfg.HeadscaleAPI, cfg.HeadscaleUser)
+		slog.Info("Headscale networking enabled", "url", cfg.HeadscaleURL, "user", cfg.HeadscaleUser)
+	}
+
+	provisioner := instance.NewProvisioner(db, cfg.GPUDockerImage, cfg.EncryptionKey, headscale)
 	manager := instance.NewManager(db, provisioner)
 
 	return &Server{
