@@ -71,29 +71,14 @@ fi
 			},
 		},
 		{
-			Name: "install-deps",
+			Name: "verify-binaries",
 			Commands: []string{
-				"apt-get update -qq",
-				"DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl",
-			},
-		},
-		{
-			Name: "install-gpu-binaries",
-			Commands: []string{
-				// Extract pre-built llama-server and tanrenai-gpu from Docker image.
-				// Uses docker create + cp to pull binaries without running the container.
-				`if [ -f /usr/local/bin/.tanrenai-gpu-image ]; then echo "GPU binaries already installed, skipping"; exit 0; fi`,
-				fmt.Sprintf(`docker pull %s`, DefaultGPUImage),
-				fmt.Sprintf(`CONTAINER=$(docker create %s)`, DefaultGPUImage),
-				`docker cp "$CONTAINER:/usr/local/bin/llama-server" /usr/local/bin/llama-server`,
-				`docker cp "$CONTAINER:/usr/local/bin/tanrenai-gpu" /usr/local/bin/tanrenai-gpu`,
+				// Image already has llama-server and tanrenai-gpu installed.
+				// Just ensure the tanrenai data dirs and symlinks are in place.
 				`mkdir -p /root/.local/share/tanrenai/bin`,
-				`docker cp "$CONTAINER:/usr/local/lib/." /root/.local/share/tanrenai/bin/`,
 				`ln -sf /usr/local/bin/llama-server /root/.local/share/tanrenai/bin/llama-server`,
-				`chmod +x /usr/local/bin/llama-server /usr/local/bin/tanrenai-gpu`,
-				`docker rm "$CONTAINER"`,
-				`touch /usr/local/bin/.tanrenai-gpu-image`,
-				`echo "Installed llama-server and tanrenai-gpu from Docker image"`,
+				`llama-server --version`,
+				`tanrenai-gpu version`,
 			},
 		},
 	}
