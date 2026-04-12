@@ -8,6 +8,14 @@
     },
     {
       "tool": "file_write"
+    },
+    {
+      "tool": "shell_exec",
+      "allowed_args": {
+        "command": [
+          "date *"
+        ]
+      }
     }
   ]
 }
