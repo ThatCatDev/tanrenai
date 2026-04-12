@@ -68,7 +68,11 @@ Supports:
 			case "downloaded":
 				_, _ = fmt.Fprintf(os.Stdout, "\rDownloaded: %s\n", ev.Event.Path)
 			case "error":
-				return fmt.Errorf("download failed: %s", ev.Event.Path)
+				msg := ev.Event.Error
+				if msg == "" {
+					msg = ev.Event.Path
+				}
+				return fmt.Errorf("download failed: %s", msg)
 			}
 		}
 
