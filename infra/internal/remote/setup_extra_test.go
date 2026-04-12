@@ -27,7 +27,7 @@ func TestGPUServerSetupStagesCommandContents(t *testing.T) {
 		t.Error("storage-setup should use mkdir")
 	}
 
-	// install-deps: should install git and build-essential
+	// install-deps: should use apt-get and install curl
 	deps, ok := stageMap["install-deps"]
 	if !ok {
 		t.Fatal("missing install-deps stage")
@@ -36,56 +36,27 @@ func TestGPUServerSetupStagesCommandContents(t *testing.T) {
 	if !strings.Contains(depsCmds, "apt-get") {
 		t.Error("install-deps should use apt-get")
 	}
-	if !strings.Contains(depsCmds, "git") {
-		t.Error("install-deps should install git")
-	}
-	if !strings.Contains(depsCmds, "build-essential") {
-		t.Error("install-deps should install build-essential")
-	}
-	if !strings.Contains(depsCmds, "cmake") {
-		t.Error("install-deps should install cmake")
+	if !strings.Contains(depsCmds, "curl") {
+		t.Error("install-deps should install curl")
 	}
 
-	// cuda-check: should reference nvidia-smi
-	cuda, ok := stageMap["cuda-check"]
+	// install-gpu-binaries: should pull Docker image and extract binaries
+	gpu, ok := stageMap["install-gpu-binaries"]
 	if !ok {
-		t.Fatal("missing cuda-check stage")
+		t.Fatal("missing install-gpu-binaries stage")
 	}
-	cudaCmds := strings.Join(cuda.Commands, "\n")
-	if !strings.Contains(cudaCmds, "nvidia-smi") {
-		t.Error("cuda-check should use nvidia-smi")
+	gpuCmds := strings.Join(gpu.Commands, "\n")
+	if !strings.Contains(gpuCmds, "docker pull") {
+		t.Error("install-gpu-binaries should docker pull the image")
 	}
-	if !strings.Contains(cudaCmds, "nvcc") {
-		t.Error("cuda-check should check nvcc version")
+	if !strings.Contains(gpuCmds, DefaultGPUImage) {
+		t.Errorf("install-gpu-binaries should reference %s", DefaultGPUImage)
 	}
-
-	// build-llama-cpp: should clone llama.cpp and build with CUDA
-	llama, ok := stageMap["build-llama-cpp"]
-	if !ok {
-		t.Fatal("missing build-llama-cpp stage")
+	if !strings.Contains(gpuCmds, "llama-server") {
+		t.Error("install-gpu-binaries should extract llama-server")
 	}
-	llamaCmds := strings.Join(llama.Commands, "\n")
-	if !strings.Contains(llamaCmds, "llama.cpp") {
-		t.Error("build-llama-cpp should reference llama.cpp repo")
-	}
-	if !strings.Contains(llamaCmds, "DGGML_CUDA=ON") {
-		t.Error("build-llama-cpp should build with CUDA")
-	}
-	if !strings.Contains(llamaCmds, "llama-server") {
-		t.Error("build-llama-cpp should build llama-server target")
-	}
-
-	// build-tanrenai-gpu: should clone tanrenai and build with go
-	tanrenai, ok := stageMap["build-tanrenai-gpu"]
-	if !ok {
-		t.Fatal("missing build-tanrenai-gpu stage")
-	}
-	tanrenaiCmds := strings.Join(tanrenai.Commands, "\n")
-	if !strings.Contains(tanrenaiCmds, "ThatCatDev/tanrenai") {
-		t.Error("build-tanrenai-gpu should clone tanrenai repo")
-	}
-	if !strings.Contains(tanrenaiCmds, "go build") {
-		t.Error("build-tanrenai-gpu should use go build")
+	if !strings.Contains(gpuCmds, "tanrenai-gpu") {
+		t.Error("install-gpu-binaries should extract tanrenai-gpu")
 	}
 
 	// start-gpu-server: should reference the configured port
@@ -130,9 +101,9 @@ func TestGPUServerSetupStagesCustomPort(t *testing.T) {
 func TestGPUServerSetupStagesWithModel(t *testing.T) {
 	stages := GPUServerSetupStages(nil, "qwen2.5:72b", 11435)
 
-	// With a model, expect: storage, install-deps, cuda-check, build-llama, build-tanrenai, pull-model, start-gpu
-	if len(stages) != 7 {
-		t.Fatalf("got %d stages, want 7 (with model, no network)", len(stages))
+	// With a model, expect: storage, install-deps, install-gpu-binaries, pull-model, start-gpu
+	if len(stages) != 5 {
+		t.Fatalf("got %d stages, want 5 (with model, no network)", len(stages))
 	}
 
 	var pullStage *SetupStage
@@ -204,17 +175,15 @@ func TestGPUServerSetupStagesOrderWithModelAndNetwork(t *testing.T) {
 	networkCmds := []string{"tailscale up"}
 	stages := GPUServerSetupStages(networkCmds, "mymodel", 11435)
 
-	// Expected order: storage, install-deps, cuda-check, build-llama, build-tanrenai, pull-model, setup-network, start-gpu
-	if len(stages) != 8 {
-		t.Fatalf("got %d stages, want 8", len(stages))
+	// Expected order: storage, install-deps, install-gpu-binaries, pull-model, setup-network, start-gpu
+	if len(stages) != 6 {
+		t.Fatalf("got %d stages, want 6", len(stages))
 	}
 
 	expectedOrder := []string{
 		"storage-setup",
 		"install-deps",
-		"cuda-check",
-		"build-llama-cpp",
-		"build-tanrenai-gpu",
+		"install-gpu-binaries",
 		"pull-model",
 		"setup-network",
 		"start-gpu-server",
@@ -276,7 +245,7 @@ func TestGPUServerSetupStagesNoNetwork(t *testing.T) {
 	}
 }
 
-func TestGPUServerSetupStagesInstallDepsHasCurlAndWget(t *testing.T) {
+func TestGPUServerSetupStagesInstallDepsHasCurl(t *testing.T) {
 	stages := GPUServerSetupStages(nil, "", 11435)
 
 	for _, s := range stages {
@@ -285,12 +254,18 @@ func TestGPUServerSetupStagesInstallDepsHasCurlAndWget(t *testing.T) {
 			if !strings.Contains(allCmds, "curl") {
 				t.Error("install-deps should install curl")
 			}
-			if !strings.Contains(allCmds, "wget") {
-				t.Error("install-deps should install wget")
-			}
 
 			return
 		}
 	}
 	t.Fatal("install-deps stage not found")
+}
+
+func TestDefaultGPUImage(t *testing.T) {
+	if DefaultGPUImage == "" {
+		t.Fatal("DefaultGPUImage should not be empty")
+	}
+	if !strings.Contains(DefaultGPUImage, "tanrenai-gpu") {
+		t.Errorf("DefaultGPUImage = %q, should contain tanrenai-gpu", DefaultGPUImage)
+	}
 }
