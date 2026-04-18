@@ -220,9 +220,12 @@ type MemoryCountResponse struct {
 
 // InstanceStatus represents the status of a GPU instance.
 type InstanceStatus struct {
-	Status    string     `json:"status"` // running, stopped, starting
-	GPUURL    string     `json:"gpu_url,omitempty"`
-	IdleSince *time.Time `json:"idle_since,omitempty"`
+	Status         string     `json:"status"`                    // none, pending, provisioning, running, destroying, destroyed
+	ProvisionState string     `json:"provision_state,omitempty"` // searching, creating, booting, ready, failed
+	GPUURL         string     `json:"gpu_url,omitempty"`
+	GPUName        string     `json:"gpu_name,omitempty"`
+	ModelLoaded    string     `json:"model_loaded,omitempty"`
+	IdleSince      *time.Time `json:"idle_since,omitempty"`
 }
 
 // Model pull types

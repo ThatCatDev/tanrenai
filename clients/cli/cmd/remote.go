@@ -171,7 +171,7 @@ func pollProvisionStatus(ctx context.Context, client *apiclient.Client, log *sta
 			if err != nil || st == nil {
 				continue
 			}
-			msg := humanizeStatus(st.Status)
+			msg := humanizeInstanceState(st.Status, st.ProvisionState, st.GPUName)
 			if msg != "" && msg != lastMsg {
 				log.Info(msg)
 				lastMsg = msg
@@ -180,20 +180,36 @@ func pollProvisionStatus(ctx context.Context, client *apiclient.Client, log *sta
 	}
 }
 
-// humanizeStatus turns the coarse instance states the platform reports
-// into user-friendly TUI lines. The platform's `/api/instance/status`
-// also emits a `provision_state` field; once the shared api.InstanceStatus
-// struct grows that field we can show finer-grained progress.
-func humanizeStatus(status string) string {
+// humanizeInstanceState converts the platform's status + provision_state
+// pair into a user-facing line. Deliberately provider-agnostic: never
+// names Vast.ai, Headscale, or any other infrastructure the user
+// doesn't need to care about. When `running`, returns "" so we stop
+// narrating.
+func humanizeInstanceState(status, provisionState, gpuName string) string {
+	switch provisionState {
+	case "searching":
+		return "Finding available GPU..."
+	case "creating":
+		if gpuName != "" {
+			return "Allocating " + gpuName + "..."
+		}
+		return "Allocating GPU..."
+	case "booting":
+		return "Booting GPU and connecting to secure network..."
+	case "ready":
+		return "GPU online, loading model..."
+	case "failed":
+		return "Provisioning failed."
+	}
 	switch status {
 	case "none":
-		return "GPU: provisioning (searching for offer)..."
+		return "Starting up..."
 	case "pending", "provisioning":
-		return "GPU: provisioning..."
+		return "Provisioning GPU..."
 	case "running":
 		return "" // don't spam once it's up
 	case "destroying":
-		return "GPU: shutting down..."
+		return "Shutting down GPU..."
 	}
 	return ""
 }
