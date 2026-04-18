@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -102,7 +103,9 @@ func modelNameFromDiskPath(p string) string {
 
 // loadModelWithProgress performs `client.LoadModel(ctx, model)` and, when in
 // remote mode, concurrently polls `/api/instance/status` every 5s to surface
-// provisioning progress to the TUI. The call blocks until LoadModel returns.
+// provisioning progress to the TUI. It retries on the platform's transient
+// "503 gpu_unavailable / still provisioning" responses, which happen while
+// the Vast.ai instance is booting or the GPU server is coming up.
 func loadModelWithProgress(ctx context.Context, client *apiclient.Client, mode sessionMode, model string, log *startupLog) (*api.LoadResponse, error) {
 	if mode != sessionModeRemote {
 		return client.LoadModel(ctx, model)
@@ -110,10 +113,46 @@ func loadModelWithProgress(ctx context.Context, client *apiclient.Client, mode s
 
 	done := make(chan struct{})
 	go pollProvisionStatus(ctx, client, log, done)
+	defer close(done)
 
-	resp, err := client.LoadModel(ctx, model)
-	close(done)
-	return resp, err
+	// Cold Vast.ai provision takes 5-15 min. The platform returns 503 with
+	// "still provisioning" during the window when EnsureRunning has kicked
+	// off work but the instance isn't ready yet. Retry with backoff.
+	const (
+		maxAttempts = 120 // 120 * 10s = 20 min ceiling
+		retryDelay  = 10 * time.Second
+	)
+	for attempt := 1; ; attempt++ {
+		resp, err := client.LoadModel(ctx, model)
+		if err == nil {
+			return resp, nil
+		}
+		if !isProvisioningInProgress(err) || attempt >= maxAttempts {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryDelay):
+		}
+	}
+}
+
+// isProvisioningInProgress reports whether the error indicates the platform
+// has started provisioning but the GPU isn't ready yet. It's transient — the
+// caller should wait and retry rather than abort.
+func isProvisioningInProgress(err error) bool {
+	var se *apiclient.StatusError
+	if !errors.As(err, &se) {
+		return false
+	}
+	if se.Code != 503 {
+		return false
+	}
+	body := strings.ToLower(se.Body)
+	return strings.Contains(body, "provisioning") ||
+		strings.Contains(body, "booting") ||
+		strings.Contains(body, "gpu_unavailable")
 }
 
 func pollProvisionStatus(ctx context.Context, client *apiclient.Client, log *startupLog, done <-chan struct{}) {

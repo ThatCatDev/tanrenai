@@ -220,13 +220,33 @@ func (c *Client) MemoryCount(ctx context.Context) (int, error) {
 // --- Models (proxied through backend to GPU) ---
 
 // LoadModel loads a model by name on the GPU server and returns the load response.
+// Uses the streaming (no-timeout) client because when routed through the hosted
+// platform, this call can block for 5-15 min on a cold Vast.ai provision.
 func (c *Client) LoadModel(ctx context.Context, model string) (*api.LoadResponse, error) {
 	body, _ := json.Marshal(map[string]string{"model": model})
-	var result api.LoadResponse
-	if err := c.postJSON(ctx, "/api/load", body, &result); err != nil {
-		return nil, err
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/load", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	c.applyAuth(httpReq)
+
+	resp, err := c.streamClient.Do(httpReq)
+	if err != nil {
+		return nil, connError(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, &StatusError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
+	var result api.LoadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
 	return &result, nil
 }
 
