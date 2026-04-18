@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -44,6 +45,39 @@ func isModelURI(s string) bool {
 	return strings.HasPrefix(s, "hf://") ||
 		strings.HasPrefix(s, "https://") ||
 		strings.HasPrefix(s, "http://")
+}
+
+// unslothQuantSuffix matches a trailing GGUF quant suffix using the Unsloth
+// naming convention. Captures the root (pre-quant part) and quant (with any
+// `UD-` dynamic prefix kept so it can be passed verbatim in the hf:// URI).
+//
+//	Qwen3.5-122B-A10B-UD-Q4_K_XL   -> root=Qwen3.5-122B-A10B  quant=UD-Q4_K_XL
+//	Qwen2.5-7B-Instruct-Q4_K_M     -> root=Qwen2.5-7B-Instruct quant=Q4_K_M
+//	gemma-2-27b-it-BF16            -> root=gemma-2-27b-it      quant=BF16
+var unslothQuantSuffix = regexp.MustCompile(`(?i)^(.+?)-((?:UD-)?(?:I?Q\d+(?:_\w+)*|F16|BF16|F32))$`)
+
+// resolveBareNameToURI guesses an hf:// URI for a bare model name using the
+// Unsloth GGUF repo convention `<name>-GGUF/<quant>`. Returns "" if no quant
+// suffix is recognizable — caller falls through to the generic "provide a
+// URI" error so non-Unsloth users still get a useful message.
+func resolveBareNameToURI(name string) string {
+	m := unslothQuantSuffix.FindStringSubmatch(name)
+	if m == nil {
+		return ""
+	}
+	root, quant := m[1], m[2]
+	return fmt.Sprintf("hf://unsloth/%s-GGUF/%s", root, quant)
+}
+
+// isModelNotFound reports whether a LoadModel error is the GPU saying the
+// requested model isn't on disk. Triggers the auto-pull path for bare names.
+func isModelNotFound(err error) bool {
+	var se *apiclient.StatusError
+	if !errors.As(err, &se) {
+		return false
+	}
+	body := strings.ToLower(se.Body)
+	return strings.Contains(body, "not found") && strings.Contains(body, "model")
 }
 
 // pullModelForRemote streams a download through the platform's /api/pull
