@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -23,13 +24,25 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Load stored credentials (from `tanrenai login`)
-		// Credentials override server-url if the flag wasn't explicitly set
-		if creds, err := loadCredentials(); err == nil {
+		// Load stored credentials (from `tanrenai login`). If the access
+		// token is expired or nearly so, transparently refresh via the
+		// platform's /api/auth/refresh endpoint before any command runs.
+		// Credentials override server-url if the flag wasn't explicitly set.
+		creds, err := loadCredentials()
+		if err != nil {
+			return
+		}
+		if !cmd.Flags().Changed("server-url") && creds.ServerURL != "" {
+			serverURL = creds.ServerURL
+		}
+		refreshed, rerr := maybeRefreshCredentials(creds)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "warning: token refresh failed: %v (continuing with existing token)\n", rerr)
+		}
+		if refreshed != nil {
+			authToken = refreshed.AccessToken
+		} else {
 			authToken = creds.AccessToken
-			if !cmd.Flags().Changed("server-url") && creds.ServerURL != "" {
-				serverURL = creds.ServerURL
-			}
 		}
 	},
 }

@@ -1,185 +1,186 @@
 package cmd
 
 import (
-	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2"
 )
+
+// callbackPort is the fixed port the CLI opens for the browser-driven
+// login handshake. The frontend is expected to redirect here with the
+// access token as a query string.
+const callbackPort = 18293
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with the tanrenai platform",
-	Long:  "Opens a browser to log in via OIDC (Dex). Stores tokens locally for CLI use.",
+	Long: "Opens a browser to the tanrenai web UI, waits for sign-in, and stores " +
+		"the resulting session token locally for CLI use. The CLI does not know " +
+		"(or care) which auth provider the web UI uses.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		platformURL, _ := cmd.Flags().GetString("platform-url")
-		clientID, _ := cmd.Flags().GetString("client-id")
-		issuer, _ := cmd.Flags().GetString("oidc-issuer")
+		platformURL := firstNonEmpty(
+			flagString(cmd, "platform-url"),
+			os.Getenv("TANRENAI_SERVER_URL"),
+			serverURL,
+		)
 
-		if issuer == "" {
-			return fmt.Errorf("--oidc-issuer is required (e.g. http://localhost:5556/dex)")
+		frontendURL := firstNonEmpty(
+			flagString(cmd, "web-url"),
+			os.Getenv("TANRENAI_WEB_URL"),
+		)
+		if frontendURL == "" {
+			return fmt.Errorf("--web-url is required (or set TANRENAI_WEB_URL), e.g. https://dev.tanrenai.com")
 		}
+		frontendURL = strings.TrimRight(frontendURL, "/")
 
-		// Generate PKCE verifier and challenge
-		verifier := generateCodeVerifier()
-		challenge := generateCodeChallenge(verifier)
-
-		// Start local callback server on a fixed port (must match Dex client config)
-		const callbackPort = 18293
 		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", callbackPort))
 		if err != nil {
 			return fmt.Errorf("start callback server on port %d (is another login running?): %w", callbackPort, err)
 		}
-		redirectURL := fmt.Sprintf("http://localhost:%d/callback", callbackPort)
 
-		cfg := &oauth2.Config{
-			ClientID:    clientID,
-			Endpoint:    oauth2.Endpoint{
-				AuthURL:  issuer + "/auth",
-				TokenURL: issuer + "/token",
-			},
-			RedirectURL: redirectURL,
-			Scopes:      []string{"openid", "email", "profile", "offline_access"},
+		callbackURL := fmt.Sprintf("http://localhost:%d/callback", callbackPort)
+		loginURL := fmt.Sprintf("%s/cli-login?callback=%s", frontendURL, url.QueryEscape(callbackURL))
+
+		type result struct {
+			accessToken  string
+			refreshToken string
+			expiresAt    time.Time
+			err          error
 		}
-
-		// Generate auth URL
-		state := generateState()
-		authURL := cfg.AuthCodeURL(state,
-			oauth2.SetAuthURLParam("code_challenge", challenge),
-			oauth2.SetAuthURLParam("code_challenge_method", "S256"),
-		)
-
-		fmt.Printf("Opening browser for login...\n")
-		fmt.Printf("If the browser doesn't open, visit:\n  %s\n\n", authURL)
-		_ = openBrowser(authURL)
-
-		// Wait for callback
-		codeCh := make(chan string, 1)
-		errCh := make(chan error, 1)
+		resultCh := make(chan result, 1)
 
 		mux := http.NewServeMux()
 		mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Query().Get("state") != state {
-				http.Error(w, "invalid state", http.StatusBadRequest)
-				errCh <- fmt.Errorf("state mismatch")
+			q := r.URL.Query()
+
+			if errParam := q.Get("error"); errParam != "" {
+				desc := q.Get("error_description")
+				http.Error(w, "login failed: "+errParam+" "+desc, http.StatusBadRequest)
+				resultCh <- result{err: fmt.Errorf("login failed: %s %s", errParam, desc)}
 				return
 			}
-			code := r.URL.Query().Get("code")
-			if code == "" {
-				errDesc := r.URL.Query().Get("error_description")
-				http.Error(w, "login failed", http.StatusBadRequest)
-				errCh <- fmt.Errorf("no authorization code: %s", errDesc)
+
+			access := q.Get("access_token")
+			if access == "" {
+				http.Error(w, "missing access_token", http.StatusBadRequest)
+				resultCh <- result{err: fmt.Errorf("callback missing access_token")}
 				return
 			}
-			fmt.Fprintf(w, "<html><body><h2>Login successful!</h2><p>You can close this tab.</p></body></html>")
-			codeCh <- code
+
+			var expiresAt time.Time
+			if v := q.Get("expires_at"); v != "" {
+				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+					expiresAt = time.Unix(n, 0)
+				}
+			}
+			if expiresAt.IsZero() {
+				if v := q.Get("expires_in"); v != "" {
+					if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+						expiresAt = time.Now().Add(time.Duration(n) * time.Second)
+					}
+				}
+			}
+
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<!doctype html><meta charset=utf-8>
+<title>tanrenai CLI login</title>
+<body style="font-family:system-ui;padding:3rem;background:#0f1419;color:#e6e6e6">
+<h2>Signed in.</h2><p>You can close this tab.</p></body>`))
+
+			resultCh <- result{
+				accessToken:  access,
+				refreshToken: q.Get("refresh_token"),
+				expiresAt:    expiresAt,
+			}
 		})
 
-		srv := &http.Server{Handler: mux}
+		srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 		go func() { _ = srv.Serve(listener) }()
+		defer func() { _ = srv.Close() }()
 
-		// Wait for code or timeout
-		var code string
+		fmt.Printf("Opening browser for sign-in...\n")
+		fmt.Printf("If the browser doesn't open, visit:\n  %s\n\n", loginURL)
+		_ = openBrowser(loginURL)
+
+		var r result
 		select {
-		case code = <-codeCh:
-		case err := <-errCh:
-			_ = srv.Close()
-			return err
-		case <-time.After(2 * time.Minute):
-			_ = srv.Close()
+		case r = <-resultCh:
+		case <-time.After(5 * time.Minute):
 			return fmt.Errorf("login timed out — no callback received")
 		}
-		_ = srv.Close()
-
-		// Exchange code for tokens
-		ctx := context.Background()
-		token, err := cfg.Exchange(ctx, code,
-			oauth2.SetAuthURLParam("code_verifier", verifier),
-		)
-		if err != nil {
-			return fmt.Errorf("exchange code for token: %w", err)
+		if r.err != nil {
+			return r.err
 		}
 
-		// Extract ID token
-		idToken, ok := token.Extra("id_token").(string)
-		if !ok || idToken == "" {
-			return fmt.Errorf("no id_token in response")
-		}
-
-		// Save credentials
 		creds := &Credentials{
 			ServerURL:    platformURL,
-			AccessToken:  idToken,
-			RefreshToken: token.RefreshToken,
-			ExpiresAt:    token.Expiry,
+			AccessToken:  r.accessToken,
+			RefreshToken: r.refreshToken,
+			ExpiresAt:    r.expiresAt,
 		}
 		if err := saveCredentials(creds); err != nil {
 			return fmt.Errorf("save credentials: %w", err)
 		}
 
-		fmt.Printf("Logged in successfully! Credentials saved.\n")
+		fmt.Println("Logged in.")
 		fmt.Printf("Platform: %s\n", platformURL)
+		if !r.expiresAt.IsZero() {
+			fmt.Printf("Token expires: %s\n", r.expiresAt.Local().Format(time.RFC3339))
+		}
 		return nil
 	},
-}
-
-func init() {
-	loginCmd.Flags().String("platform-url", "http://localhost:3000", "platform service URL")
-	loginCmd.Flags().String("client-id", "tanrenai-cli", "OIDC client ID")
-	loginCmd.Flags().String("oidc-issuer", "", "OIDC issuer URL (e.g. http://localhost:5556/dex)")
-	rootCmd.AddCommand(loginCmd)
 }
 
 var logoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Remove stored credentials",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := deleteCredentials(); err != nil {
+		if err := deleteCredentials(); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove credentials: %w", err)
 		}
-		fmt.Println("Logged out. Credentials removed.")
+		fmt.Println("Logged out.")
 		return nil
 	},
 }
 
 func init() {
+	loginCmd.Flags().String("platform-url", "", "Platform API URL (defaults to --server-url or TANRENAI_SERVER_URL)")
+	loginCmd.Flags().String("web-url", "", "tanrenai web UI URL, used for the sign-in flow (or set TANRENAI_WEB_URL)")
+	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)
 }
 
-func generateCodeVerifier() string {
-	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+func flagString(cmd *cobra.Command, name string) string {
+	v, _ := cmd.Flags().GetString(name)
+	return v
 }
 
-func generateCodeChallenge(verifier string) string {
-	h := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(h[:])
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
-func generateState() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func openBrowser(url string) error {
+func openBrowser(u string) error {
 	switch runtime.GOOS {
 	case "linux":
-		return exec.Command("xdg-open", url).Start()
+		return exec.Command("xdg-open", u).Start()
 	case "darwin":
-		return exec.Command("open", url).Start()
+		return exec.Command("open", u).Start()
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start()
 	}
 	return nil
 }
