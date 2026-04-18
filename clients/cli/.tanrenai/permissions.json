@@ -1,0 +1,21 @@
+{
+  "rules": [
+    {
+      "tool": "list_dir"
+    },
+    {
+      "tool": "file_read"
+    },
+    {
+      "tool": "file_write"
+    },
+    {
+      "tool": "shell_exec",
+      "allowed_args": {
+        "command": [
+          "date *"
+        ]
+      }
+    }
+  ]
+}

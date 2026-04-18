@@ -13,6 +13,9 @@ var listCmd = &cobra.Command{
 	Short: "List available models",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := apiclient.New(serverURL)
+		if authToken != "" {
+			client.SetAuthToken(authToken)
+		}
 		resp, err := client.ListModels(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("failed to list models: %w", err)

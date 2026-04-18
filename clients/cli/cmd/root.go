@@ -6,7 +6,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var serverURL string
+var (
+	serverURL string
+	authToken string // populated from stored credentials
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "tanrenai",
@@ -17,6 +20,15 @@ var rootCmd = &cobra.Command{
 		if !cmd.Flags().Changed("server-url") {
 			if v := os.Getenv("TANRENAI_SERVER_URL"); v != "" {
 				serverURL = v
+			}
+		}
+
+		// Load stored credentials (from `tanrenai login`)
+		// Credentials override server-url if the flag wasn't explicitly set
+		if creds, err := loadCredentials(); err == nil {
+			authToken = creds.AccessToken
+			if !cmd.Flags().Changed("server-url") && creds.ServerURL != "" {
+				serverURL = creds.ServerURL
 			}
 		}
 	},
