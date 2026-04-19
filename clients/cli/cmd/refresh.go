@@ -44,6 +44,18 @@ func maybeRefreshCredentials(creds *Credentials) (*Credentials, error) {
 	if !creds.ExpiresAt.IsZero() && time.Now().Before(creds.ExpiresAt.Add(-refreshLeeway)) {
 		return creds, nil
 	}
+	return refreshCredentials(creds)
+}
+
+// refreshCredentials unconditionally exchanges the stored refresh token
+// for a new access token via the platform's /api/auth/refresh proxy and
+// writes the result back to disk. Called from the proactive startup path
+// (via maybeRefreshCredentials, when near expiry) and reactively from
+// the apiclient's 401-retry transport during long-running sessions.
+func refreshCredentials(creds *Credentials) (*Credentials, error) {
+	if creds == nil || creds.RefreshToken == "" {
+		return creds, fmt.Errorf("no refresh token available")
+	}
 	if creds.ServerURL == "" {
 		return creds, fmt.Errorf("credentials missing server URL, can't refresh")
 	}

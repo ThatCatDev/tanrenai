@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 )
 
 var pullCmd = &cobra.Command{
@@ -40,10 +38,7 @@ Supports:
 			activeURL = url
 		}
 
-		client := apiclient.New(activeURL)
-		if authToken != "" {
-			client.SetAuthToken(authToken)
-		}
+		client := newAuthedClient(activeURL, authToken)
 
 		ch, err := client.PullModel(context.Background(), modelURL)
 		if err != nil {

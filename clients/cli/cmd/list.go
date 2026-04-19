@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/spf13/cobra"
 )
 
@@ -12,10 +11,7 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available models",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := apiclient.New(serverURL)
-		if authToken != "" {
-			client.SetAuthToken(authToken)
-		}
+		client := newAuthedClient(serverURL, authToken)
 		resp, err := client.ListModels(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("failed to list models: %w", err)

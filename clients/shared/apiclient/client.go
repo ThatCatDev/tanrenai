@@ -10,38 +10,152 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 )
 
+// RefreshFunc returns a fresh access token. Called by the transport when
+// a request returns 401. Returning (token, nil) signals "retry with this
+// token"; returning (_, err) signals "give up, surface the 401".
+type RefreshFunc func() (string, error)
+
 // Client is a typed HTTP client that talks to the tanrenai backend server.
 type Client struct {
 	baseURL      string
-	authToken    string       // optional Bearer token for authenticated requests
 	httpClient   *http.Client // non-streaming requests (has timeout)
 	streamClient *http.Client // streaming requests (no timeout)
+
+	authMu      sync.RWMutex
+	authToken   string
+	refreshFunc RefreshFunc
+	refreshMu   sync.Mutex // serializes concurrent refresh attempts
 }
 
 // New creates a new Client for the given backend URL.
+//
+// Both underlying http clients are wrapped in a refresh transport: when
+// a request returns 401 and a RefreshFunc is configured, the transport
+// invokes it, updates the bearer token, and retries the original request
+// once. The caller sees the retried response transparently.
 func New(baseURL string) *Client {
-	return &Client{
-		baseURL:      baseURL,
-		httpClient:   &http.Client{Timeout: 2 * time.Minute},
-		streamClient: &http.Client{},
+	c := &Client{baseURL: baseURL}
+	c.httpClient = &http.Client{
+		Timeout:   2 * time.Minute,
+		Transport: &refreshTransport{client: c, base: http.DefaultTransport},
 	}
+	c.streamClient = &http.Client{
+		Transport: &refreshTransport{client: c, base: http.DefaultTransport},
+	}
+	return c
 }
 
 // SetAuthToken sets the Bearer token for authenticated requests.
 func (c *Client) SetAuthToken(token string) {
+	c.authMu.Lock()
 	c.authToken = token
+	c.authMu.Unlock()
+}
+
+// SetRefreshFunc installs the callback invoked on 401. Safe to call nil
+// to disable auto-refresh.
+func (c *Client) SetRefreshFunc(fn RefreshFunc) {
+	c.authMu.Lock()
+	c.refreshFunc = fn
+	c.authMu.Unlock()
+}
+
+// getAuthToken reads the current token under the lock.
+func (c *Client) getAuthToken() string {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
+	return c.authToken
 }
 
 // applyAuth adds the Authorization header if an auth token is set.
 func (c *Client) applyAuth(req *http.Request) {
-	if c.authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	if tok := c.getAuthToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
+}
+
+// refreshTransport intercepts 401 responses, triggers the client's
+// RefreshFunc once, and retries the original request with the new token.
+// Both httpClient and streamClient share this behaviour so every API
+// call benefits, including streaming chat completions.
+type refreshTransport struct {
+	client *Client
+	base   http.RoundTripper
+}
+
+func (rt *refreshTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Buffer the request body once so we can replay it on retry. Most
+	// authed requests carry JSON bodies well under a MB; this is cheap.
+	var bodyBytes []byte
+	if req.Body != nil && req.Body != http.NoBody {
+		var err error
+		bodyBytes, err = io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	}
+
+	// Capture the token that was on the request so we can detect if
+	// another goroutine already refreshed out from under us.
+	tokenAtAttempt := rt.client.getAuthToken()
+
+	resp, err := rt.base.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+
+	rt.client.authMu.RLock()
+	fn := rt.client.refreshFunc
+	rt.client.authMu.RUnlock()
+	if fn == nil {
+		return resp, nil
+	}
+
+	// Drain and close the 401 response before retrying so the underlying
+	// connection can be reused.
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	rt.client.refreshMu.Lock()
+	// If the token changed while we were waiting on the lock, another
+	// concurrent 401 already triggered a refresh — use its result.
+	newToken := rt.client.getAuthToken()
+	if newToken == tokenAtAttempt {
+		fresh, refreshErr := fn()
+		if refreshErr != nil {
+			rt.client.refreshMu.Unlock()
+			// Give up on retry — reopen a 401 synthetically so the caller
+			// sees what they'd have seen without the transport.
+			return rt.base.RoundTrip(rebuildReq(req, bodyBytes, tokenAtAttempt))
+		}
+		rt.client.SetAuthToken(fresh)
+		newToken = fresh
+	}
+	rt.client.refreshMu.Unlock()
+
+	return rt.base.RoundTrip(rebuildReq(req, bodyBytes, newToken))
+}
+
+// rebuildReq clones the request with a fresh body reader and updates the
+// Authorization header. Needed because http.Request can't be replayed
+// after a body read.
+func rebuildReq(orig *http.Request, bodyBytes []byte, token string) *http.Request {
+	retry := orig.Clone(orig.Context())
+	if bodyBytes != nil {
+		retry.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	}
+	if token != "" {
+		retry.Header.Set("Authorization", "Bearer "+token)
+	}
+	return retry
 }
 
 // BaseURL returns the client's base URL.
