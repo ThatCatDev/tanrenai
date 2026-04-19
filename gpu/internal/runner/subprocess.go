@@ -37,6 +37,14 @@ type Subprocess struct {
 	stopped       bool          // true after explicit Close()
 	doneCh        chan struct{} // closed when the process exits
 	healthTimeout time.Duration
+
+	// tailBuf keeps the last N lines of the subprocess's merged
+	// stdout/stderr so we can attach them to crash errors. llama-server's
+	// OOM / SIGSEGV / loader messages arrive here; without this buffer
+	// the caller only ever sees "exit code -1" and has to guess at why.
+	tailBuf   []string
+	tailMu    sync.Mutex
+	tailLimit int
 }
 
 // SubprocessConfig holds everything needed to start a llama-server subprocess.
@@ -191,7 +199,41 @@ func NewSubprocess(cfg SubprocessConfig) (*Subprocess, error) {
 		baseURL:       fmt.Sprintf("http://127.0.0.1:%d", port),
 		healthTimeout: healthTimeout,
 		doneCh:        make(chan struct{}),
+		tailLimit:     50,
 	}, nil
+}
+
+// pushTail appends a line to the ring buffer, evicting the oldest when
+// over tailLimit. Thread-safe. Falls back to a sensible default when the
+// caller constructed a Subprocess directly without setting tailLimit.
+func (s *Subprocess) pushTail(line string) {
+	s.tailMu.Lock()
+	defer s.tailMu.Unlock()
+	limit := s.tailLimit
+	if limit <= 0 {
+		limit = 50
+	}
+	if len(s.tailBuf) >= limit {
+		// Drop as many oldest entries as needed to fit within limit-1
+		// (then append will bring us back to limit).
+		keep := limit - 1
+		if keep < 0 {
+			keep = 0
+		}
+		s.tailBuf = append(s.tailBuf[:0], s.tailBuf[len(s.tailBuf)-keep:]...)
+	}
+	s.tailBuf = append(s.tailBuf, line)
+}
+
+// snapshotTail returns a copy of the current tail buffer as a single
+// newline-separated string, suitable for embedding in an error message.
+func (s *Subprocess) snapshotTail() string {
+	s.tailMu.Lock()
+	defer s.tailMu.Unlock()
+	if len(s.tailBuf) == 0 {
+		return ""
+	}
+	return strings.Join(s.tailBuf, "\n")
 }
 
 // Port returns the port the subprocess is listening on.
@@ -368,7 +410,11 @@ func (s *Subprocess) waitForHealth(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-s.doneCh:
-			return fmt.Errorf("%s process exited during startup (exit code %d)", s.label, s.ExitCode())
+			tail := s.snapshotTail()
+			if tail != "" {
+				return fmt.Errorf("%s process exited during startup (exit code %d); last output:\n%s", s.label, s.ExitCode(), tail)
+			}
+			return fmt.Errorf("%s process exited during startup (exit code %d); no output captured", s.label, s.ExitCode())
 		case <-progressTicker.C:
 			slog.Info("subprocess still loading model", "label", s.label, "elapsed_s", int(time.Since(start).Seconds()))
 		case <-ticker.C:
@@ -418,6 +464,10 @@ func (s *Subprocess) scanLines(r io.Reader, prefix string) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)
 	for scanner.Scan() {
-		slog.Debug("subprocess output", "label", s.label, "line", scanner.Text())
+		line := scanner.Text()
+		s.pushTail(line)
+		// Info level so llama-server OOM / load errors actually reach the
+		// GPU container logs where an operator can grep them later.
+		slog.Info("subprocess output", "label", s.label, "line", line)
 	}
 }
