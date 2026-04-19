@@ -7,8 +7,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+// Shrink backoff/attempt count for the whole test binary. Production flows
+// use the defaults (1s base, 5 attempts ~= 31s worst case); tests want
+// near-instant retries so the NetworkError/ServerError cases don't run for
+// 30 seconds each.
+func init() {
+	DownloadBackoffBase = 1 * time.Millisecond
+	DownloadStallThreshold = 500 * time.Millisecond
+	// 2 attempts so dial-fail tests (NetworkError) don't take 5× the OS
+	// connect timeout. Production still uses 5.
+	DownloadMaxAttempts = 2
+}
 
 func TestDownload_NonGGUFURL(t *testing.T) {
 	_, err := Download("http://example.com/model.bin", t.TempDir(), nil)
@@ -173,8 +187,10 @@ func TestDownload_PresignedURLWithQuery(t *testing.T) {
 }
 
 func TestDownload_NetworkError(t *testing.T) {
-	// Use a URL that will fail to connect
-	_, err := Download("http://127.0.0.1:1/model.gguf", t.TempDir(), nil)
+	// .invalid is reserved by RFC 2606 — DNS fails fast, no slow connect
+	// attempt on any real port. We want a connect-level failure that
+	// doesn't take 30s in WSL.
+	_, err := Download("http://no-such-host.invalid/model.gguf", t.TempDir(), nil)
 	if err == nil {
 		t.Fatal("expected network error")
 	}
@@ -203,6 +219,109 @@ func TestDownload_HFProvenance(t *testing.T) {
 	}
 	if path == "" {
 		t.Error("expected non-empty path")
+	}
+}
+
+func TestDownload_StalledConnection(t *testing.T) {
+	// Server advertises a 1 MB file but writes only the first 32 KB, then
+	// hangs forever without closing. Without a stall detector the client
+	// would block indefinitely on resp.Body.Read.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1048576")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(make([]byte, 32*1024))
+		w.(http.Flusher).Flush()
+		// Block forever. The watchdog should cancel the context.
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	destDir := t.TempDir()
+	_, err := Download(srv.URL+"/stall.gguf", destDir, nil)
+	if err == nil {
+		t.Fatal("expected stall error; got success")
+	}
+	if !strings.Contains(err.Error(), "stall") && !strings.Contains(err.Error(), "context canceled") {
+		t.Errorf("expected stall-related error, got: %v", err)
+	}
+}
+
+func TestDownload_RetriesAndResumes(t *testing.T) {
+	// First GET drops after half the bytes (simulates flaky mid-stream close).
+	// Second GET serves the remainder via Range. Download should succeed
+	// with the full file assembled.
+	full := []byte(strings.Repeat("X", 2048))
+	var calls atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		rangeHeader := r.Header.Get("Range")
+		if n == 1 {
+			// First attempt: claim full size, deliver half, then close with partial.
+			w.Header().Set("Content-Length", "2048")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(full[:1024])
+			w.(http.Flusher).Flush()
+			// Hijack to force-close mid-stream.
+			hj, _ := w.(http.Hijacker)
+			if hj != nil {
+				conn, _, _ := hj.Hijack()
+				_ = conn.Close()
+			}
+			return
+		}
+		// Second attempt: resume via Range.
+		if rangeHeader != "bytes=1024-" {
+			t.Errorf("expected Range: bytes=1024-, got %q", rangeHeader)
+		}
+		w.Header().Set("Content-Length", "1024")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(full[1024:])
+	}))
+	defer srv.Close()
+
+	destDir := t.TempDir()
+	path, err := Download(srv.URL+"/retry.gguf", destDir, nil)
+	if err != nil {
+		t.Fatalf("Download error: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != string(full) {
+		t.Errorf("reassembled content length = %d, want %d", len(got), len(full))
+	}
+	if calls.Load() < 2 {
+		t.Errorf("expected at least 2 server calls (initial + Range), got %d", calls.Load())
+	}
+}
+
+func TestDownload_TruncatedStreamIsRetryable(t *testing.T) {
+	// Server advertises 2048 but returns only 1024 and cleanly closes.
+	// Old behavior: EOF treated as success, rename with 1024 bytes — silent corruption.
+	// New behavior: size validation catches it, retry kicks in. Since the
+	// server is deterministic (always truncates), the retry also fails —
+	// but we should see "truncated" in the error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "2048")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(make([]byte, 1024))
+	}))
+	defer srv.Close()
+
+	destDir := t.TempDir()
+	_, err := Download(srv.URL+"/trunc.gguf", destDir, nil)
+	if err == nil {
+		t.Fatal("expected truncation error; got success")
+	}
+	// Either path is acceptable: Go's http stack surfaces the body-shorter
+	// -than-Content-Length case as io.ErrUnexpectedEOF ("read body"), and
+	// for the rare case where the stream closes cleanly with a short size
+	// our own "truncated" check fires. Both are retryable and both
+	// prevent the old silent-success bug.
+	if !strings.Contains(err.Error(), "truncated") && !strings.Contains(err.Error(), "read body") {
+		t.Errorf("expected truncation-style error, got: %v", err)
 	}
 }
 

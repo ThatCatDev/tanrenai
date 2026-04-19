@@ -36,7 +36,9 @@ func TestResolveModel_NotFound(t *testing.T) {
 }
 
 func TestDownloadModel_InvalidURL(t *testing.T) {
-	_, err := DownloadModel("http://127.0.0.1:1/model.gguf", t.TempDir(), nil)
+	// .invalid is reserved (RFC 2606) — fails fast at DNS rather than
+	// burning each retry's OS connect timeout.
+	_, err := DownloadModel("http://no-such-host.invalid/model.gguf", t.TempDir(), nil)
 	if err == nil {
 		t.Fatal("expected error for unreachable URL")
 	}
