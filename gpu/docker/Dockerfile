@@ -2,12 +2,16 @@
 FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS llama-build
 
 ARG LLAMA_CPP_REF=master
-# Common CUDA architectures:
-#   89  = RTX 4090 / RTX PRO 6000
-#   90  = H100 / A100
-#   100 = Blackwell B200
-#   120 = Blackwell Ultra
-ARG CUDA_ARCHITECTURES="89;90;100;120"
+# Common CUDA architectures covering the GPUs we actually see on Vast.ai:
+#   80  = A100, A30 (Ampere datacenter)
+#   86  = RTX 30xx, A10, A40, A6000 (Ampere consumer)
+#   89  = RTX 4090, L40, L40S, RTX 6000 Ada (Ada Lovelace)
+#   90  = H100, H200 (Hopper)
+#   100 = B200 (Blackwell)
+#   120 = B200 Ultra (Blackwell Ultra)
+# Previous list omitted 80 — llama-server then aborts with "no kernel
+# image is available for execution on the device" on A100 hosts.
+ARG CUDA_ARCHITECTURES="80;86;89;90;100;120"
 
 RUN apt-get update -qq && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git build-essential curl && \
