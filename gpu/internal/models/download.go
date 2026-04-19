@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -17,9 +19,14 @@ type DownloadProgress func(downloaded, total int64)
 //
 //	https://huggingface.co/<repo>/resolve/main/<filename>.gguf
 func Download(url, destDir string, progress DownloadProgress) (string, error) {
-	// Extract filename from URL
-	parts := strings.Split(url, "/")
-	filename := parts[len(parts)-1]
+	// Extract filename from URL. Parse the URL so we ignore query strings
+	// and fragments — presigned S3/R2 URLs have a long ?X-Amz-... tail that
+	// would otherwise land in the filename and fail the .gguf suffix check.
+	parsed, err := neturl.Parse(url)
+	if err != nil {
+		return "", fmt.Errorf("parse URL: %w", err)
+	}
+	filename := path.Base(parsed.Path)
 	if !strings.HasSuffix(strings.ToLower(filename), ".gguf") {
 		return "", fmt.Errorf("URL does not point to a .gguf file: %s", filename)
 	}

@@ -144,6 +144,34 @@ func TestDownload_PartialResume(t *testing.T) {
 	}
 }
 
+func TestDownload_PresignedURLWithQuery(t *testing.T) {
+	// Presigned S3/R2 URLs have a long ?X-Amz-... query string. The
+	// filename extraction must ignore it, otherwise the .gguf suffix
+	// check rejects the URL even though the underlying object is valid.
+	content := []byte("gguf bytes from r2")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(content)
+	}))
+	defer srv.Close()
+
+	destDir := t.TempDir()
+	// Mirror what modelcache.Cache.Lookup returns.
+	url := srv.URL + "/models/unsloth/Qwen-GGUF/Q4_K_M/Qwen-Q4_K_M-00001-of-00003.gguf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeef"
+
+	path, err := Download(url, destDir, nil)
+	if err != nil {
+		t.Fatalf("Download error on presigned URL: %v", err)
+	}
+	if !strings.HasSuffix(path, "Qwen-Q4_K_M-00001-of-00003.gguf") {
+		t.Errorf("path should land without the query string: got %q", path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("file missing after successful download: %v", err)
+	}
+}
+
 func TestDownload_NetworkError(t *testing.T) {
 	// Use a URL that will fail to connect
 	_, err := Download("http://127.0.0.1:1/model.gguf", t.TempDir(), nil)
