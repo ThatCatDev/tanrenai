@@ -3,7 +3,7 @@ module github.com/ThatCatDev/tanrenai/client
 go 1.25.0
 
 require (
-	github.com/ThatCatDev/tanrenai/gpu v0.0.0
+	github.com/ThatCatDev/tanrenai-gpu v1.0.0
 	github.com/ThatCatDev/tanrenai/server v0.0.0
 	github.com/ThatCatDev/tanrenai/shared v0.0.0
 	github.com/alecthomas/chroma/v2 v2.23.1
@@ -11,11 +11,9 @@ require (
 	github.com/gdamore/tcell/v2 v2.13.8
 	github.com/rivo/tview v0.42.0
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/oauth2 v0.36.0
 )
 
 replace (
-	github.com/ThatCatDev/tanrenai/gpu => ../../gpu
 	github.com/ThatCatDev/tanrenai/server => ../../server
 	github.com/ThatCatDev/tanrenai/shared => ../shared
 )

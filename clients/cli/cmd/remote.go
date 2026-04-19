@@ -115,11 +115,14 @@ func loadModelWithProgress(ctx context.Context, client *apiclient.Client, mode s
 	go pollProvisionStatus(ctx, client, log, done)
 	defer close(done)
 
-	// Cold Vast.ai provision takes 5-15 min. The platform returns 503 with
-	// "still provisioning" during the window when EnsureRunning has kicked
-	// off work but the instance isn't ready yet. Retry with backoff.
+	// Cold Vast.ai provision + cache-miss HF pull + load can realistically
+	// take 25-35 min on a large multi-shard model; cache-hit pulls are
+	// faster but still want a generous ceiling so a slow Vast.ai host
+	// doesn't cause spurious failures. 60 min absolute cap; way past the
+	// practical worst case but bounded so a broken platform doesn't loop
+	// forever.
 	const (
-		maxAttempts = 120 // 120 * 10s = 20 min ceiling
+		maxAttempts = 360 // 360 * 10s = 60 min ceiling
 		retryDelay  = 10 * time.Second
 	)
 	for attempt := 1; ; attempt++ {
@@ -127,7 +130,11 @@ func loadModelWithProgress(ctx context.Context, client *apiclient.Client, mode s
 		if err == nil {
 			return resp, nil
 		}
-		if !isProvisioningInProgress(err) || attempt >= maxAttempts {
+		if !isProvisioningInProgress(err) {
+			return nil, err
+		}
+		if attempt >= maxAttempts {
+			log.Warn(fmt.Sprintf("gave up after %d retries (%s) while still seeing 503 — last error: %v", maxAttempts, time.Duration(maxAttempts)*retryDelay, err))
 			return nil, err
 		}
 		select {

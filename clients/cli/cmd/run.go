@@ -16,7 +16,7 @@ import (
 	"github.com/rivo/tview"
 
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
-	gpuserve "github.com/ThatCatDev/tanrenai/gpu/pkg/serve"
+	gpuserve "github.com/ThatCatDev/tanrenai-gpu/pkg/serve"
 	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"

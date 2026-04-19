@@ -3,7 +3,7 @@ module github.com/ThatCatDev/tanrenai/desktop
 go 1.25.0
 
 require (
-	github.com/ThatCatDev/tanrenai/gpu v0.0.0
+	github.com/ThatCatDev/tanrenai-gpu v1.0.0
 	github.com/ThatCatDev/tanrenai/server v0.0.0
 	github.com/ThatCatDev/tanrenai/shared v0.0.0
 	github.com/diamondburned/gotk4-adwaita/pkg v0.0.0-20250703085740-f81761ef0e0d
@@ -23,7 +23,6 @@ require (
 )
 
 replace (
-	github.com/ThatCatDev/tanrenai/gpu => ../../gpu
 	github.com/ThatCatDev/tanrenai/server => ../../server
 	github.com/ThatCatDev/tanrenai/shared => ../shared
 )

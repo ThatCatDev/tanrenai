@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	gpuserve "github.com/ThatCatDev/tanrenai/gpu/pkg/serve"
+	gpuserve "github.com/ThatCatDev/tanrenai-gpu/pkg/serve"
 )
 
 var gpuCmd = &cobra.Command{
