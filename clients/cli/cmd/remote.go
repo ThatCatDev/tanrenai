@@ -182,6 +182,28 @@ func pollProvisionStatus(ctx context.Context, client *apiclient.Client, log *sta
 	}
 }
 
+// formatDownloadProgress turns the platform's per-file download state into a
+// user-facing line like "Downloading model (shard 2/3, 47%)...". Multi-shard
+// pulls of 100B+ models take 10+ minutes; surfacing the shard count is what
+// tells the user "it's working, just big" vs "it's stuck".
+//
+// Percent is rounded down to the nearest 10 so the poll-based dedupe logic
+// (see pollProvisionStatus) emits at most ~11 progress lines per shard
+// instead of spamming the TUI on every 5s poll tick.
+func formatDownloadProgress(d *api.DownloadStatus) string {
+	bucket := (d.Percent / 10) * 10
+	switch {
+	case d.TotalFiles > 1 && bucket > 0:
+		return fmt.Sprintf("Downloading model (shard %d/%d, %d%%)...", d.CurrentFile, d.TotalFiles, bucket)
+	case d.TotalFiles > 1:
+		return fmt.Sprintf("Downloading model (shard %d/%d)...", d.CurrentFile, d.TotalFiles)
+	case bucket > 0:
+		return fmt.Sprintf("Downloading model (%d%%)...", bucket)
+	default:
+		return "Downloading model..."
+	}
+}
+
 // humanizeInstanceState converts the platform's status snapshot into a
 // user-facing line. Deliberately provider-agnostic: never names Vast.ai,
 // Headscale, or any other infrastructure the user doesn't need to care
@@ -190,7 +212,7 @@ func humanizeInstanceState(st *api.InstanceStatus) string {
 	// Auto-pull takes priority — it's the visible-to-the-user bottleneck
 	// while the GPU is technically already running.
 	if st.Download != nil && !st.Download.Done {
-		return "Downloading model..."
+		return formatDownloadProgress(st.Download)
 	}
 	switch st.ProvisionState {
 	case "searching":

@@ -233,11 +233,14 @@ type InstanceStatus struct {
 // on InstanceStatus while the platform is auto-pulling a model that
 // wasn't on disk yet.
 type DownloadStatus struct {
-	Model     string    `json:"model"`
-	URI       string    `json:"uri"`
-	StartedAt time.Time `json:"started_at"`
-	Done      bool      `json:"done"`
-	Error     string    `json:"error,omitempty"`
+	Model       string    `json:"model"`
+	URI         string    `json:"uri"`
+	StartedAt   time.Time `json:"started_at"`
+	Done        bool      `json:"done"`
+	Error       string    `json:"error,omitempty"`
+	CurrentFile int       `json:"current_file,omitempty"` // 1-indexed, across a multi-shard download
+	TotalFiles  int       `json:"total_files,omitempty"`  // >1 indicates a sharded model
+	Percent     int       `json:"percent,omitempty"`      // percent of the current file
 }
 
 // Model pull types
