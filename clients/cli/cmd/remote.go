@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -45,39 +44,6 @@ func isModelURI(s string) bool {
 	return strings.HasPrefix(s, "hf://") ||
 		strings.HasPrefix(s, "https://") ||
 		strings.HasPrefix(s, "http://")
-}
-
-// unslothQuantSuffix matches a trailing GGUF quant suffix using the Unsloth
-// naming convention. Captures the root (pre-quant part) and quant (with any
-// `UD-` dynamic prefix kept so it can be passed verbatim in the hf:// URI).
-//
-//	Qwen3.5-122B-A10B-UD-Q4_K_XL   -> root=Qwen3.5-122B-A10B  quant=UD-Q4_K_XL
-//	Qwen2.5-7B-Instruct-Q4_K_M     -> root=Qwen2.5-7B-Instruct quant=Q4_K_M
-//	gemma-2-27b-it-BF16            -> root=gemma-2-27b-it      quant=BF16
-var unslothQuantSuffix = regexp.MustCompile(`(?i)^(.+?)-((?:UD-)?(?:I?Q\d+(?:_\w+)*|F16|BF16|F32))$`)
-
-// resolveBareNameToURI guesses an hf:// URI for a bare model name using the
-// Unsloth GGUF repo convention `<name>-GGUF/<quant>`. Returns "" if no quant
-// suffix is recognizable — caller falls through to the generic "provide a
-// URI" error so non-Unsloth users still get a useful message.
-func resolveBareNameToURI(name string) string {
-	m := unslothQuantSuffix.FindStringSubmatch(name)
-	if m == nil {
-		return ""
-	}
-	root, quant := m[1], m[2]
-	return fmt.Sprintf("hf://unsloth/%s-GGUF/%s", root, quant)
-}
-
-// isModelNotFound reports whether a LoadModel error is the GPU saying the
-// requested model isn't on disk. Triggers the auto-pull path for bare names.
-func isModelNotFound(err error) bool {
-	var se *apiclient.StatusError
-	if !errors.As(err, &se) {
-		return false
-	}
-	body := strings.ToLower(se.Body)
-	return strings.Contains(body, "not found") && strings.Contains(body, "model")
 }
 
 // pullModelForRemote streams a download through the platform's /api/pull
@@ -173,8 +139,9 @@ func loadModelWithProgress(ctx context.Context, client *apiclient.Client, mode s
 }
 
 // isProvisioningInProgress reports whether the error indicates the platform
-// has started provisioning but the GPU isn't ready yet. It's transient — the
-// caller should wait and retry rather than abort.
+// is still getting the GPU ready — either provisioning a Vast.ai instance,
+// or auto-pulling the model the user asked for. In either case it's
+// transient; the caller should wait and retry rather than abort.
 func isProvisioningInProgress(err error) bool {
 	var se *apiclient.StatusError
 	if !errors.As(err, &se) {
@@ -186,7 +153,8 @@ func isProvisioningInProgress(err error) bool {
 	body := strings.ToLower(se.Body)
 	return strings.Contains(body, "provisioning") ||
 		strings.Contains(body, "booting") ||
-		strings.Contains(body, "gpu_unavailable")
+		strings.Contains(body, "gpu_unavailable") ||
+		strings.Contains(body, "downloading")
 }
 
 func pollProvisionStatus(ctx context.Context, client *apiclient.Client, log *startupLog, done <-chan struct{}) {
@@ -205,7 +173,7 @@ func pollProvisionStatus(ctx context.Context, client *apiclient.Client, log *sta
 			if err != nil || st == nil {
 				continue
 			}
-			msg := humanizeInstanceState(st.Status, st.ProvisionState, st.GPUName)
+			msg := humanizeInstanceState(st)
 			if msg != "" && msg != lastMsg {
 				log.Info(msg)
 				lastMsg = msg
@@ -214,18 +182,22 @@ func pollProvisionStatus(ctx context.Context, client *apiclient.Client, log *sta
 	}
 }
 
-// humanizeInstanceState converts the platform's status + provision_state
-// pair into a user-facing line. Deliberately provider-agnostic: never
-// names Vast.ai, Headscale, or any other infrastructure the user
-// doesn't need to care about. When `running`, returns "" so we stop
-// narrating.
-func humanizeInstanceState(status, provisionState, gpuName string) string {
-	switch provisionState {
+// humanizeInstanceState converts the platform's status snapshot into a
+// user-facing line. Deliberately provider-agnostic: never names Vast.ai,
+// Headscale, or any other infrastructure the user doesn't need to care
+// about. Returns "" when the instance is fully ready so we stop narrating.
+func humanizeInstanceState(st *api.InstanceStatus) string {
+	// Auto-pull takes priority — it's the visible-to-the-user bottleneck
+	// while the GPU is technically already running.
+	if st.Download != nil && !st.Download.Done {
+		return "Downloading model..."
+	}
+	switch st.ProvisionState {
 	case "searching":
 		return "Finding available GPU..."
 	case "creating":
-		if gpuName != "" {
-			return "Allocating " + gpuName + "..."
+		if st.GPUName != "" {
+			return "Allocating " + st.GPUName + "..."
 		}
 		return "Allocating GPU..."
 	case "booting":
@@ -235,7 +207,7 @@ func humanizeInstanceState(status, provisionState, gpuName string) string {
 	case "failed":
 		return "Provisioning failed."
 	}
-	switch status {
+	switch st.Status {
 	case "none":
 		return "Starting up..."
 	case "pending", "provisioning":

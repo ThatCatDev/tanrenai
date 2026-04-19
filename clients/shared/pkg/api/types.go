@@ -220,12 +220,24 @@ type MemoryCountResponse struct {
 
 // InstanceStatus represents the status of a GPU instance.
 type InstanceStatus struct {
-	Status         string     `json:"status"`                    // none, pending, provisioning, running, destroying, destroyed
-	ProvisionState string     `json:"provision_state,omitempty"` // searching, creating, booting, ready, failed
-	GPUURL         string     `json:"gpu_url,omitempty"`
-	GPUName        string     `json:"gpu_name,omitempty"`
-	ModelLoaded    string     `json:"model_loaded,omitempty"`
-	IdleSince      *time.Time `json:"idle_since,omitempty"`
+	Status         string          `json:"status"`                    // none, pending, provisioning, running, destroying, destroyed
+	ProvisionState string          `json:"provision_state,omitempty"` // searching, creating, booting, ready, failed
+	GPUURL         string          `json:"gpu_url,omitempty"`
+	GPUName        string          `json:"gpu_name,omitempty"`
+	ModelLoaded    string          `json:"model_loaded,omitempty"`
+	IdleSince      *time.Time      `json:"idle_since,omitempty"`
+	Download       *DownloadStatus `json:"download,omitempty"`
+}
+
+// DownloadStatus mirrors the platform's in-flight /api/pull tracker. Set
+// on InstanceStatus while the platform is auto-pulling a model that
+// wasn't on disk yet.
+type DownloadStatus struct {
+	Model     string    `json:"model"`
+	URI       string    `json:"uri"`
+	StartedAt time.Time `json:"started_at"`
+	Done      bool      `json:"done"`
+	Error     string    `json:"error,omitempty"`
 }
 
 // Model pull types

@@ -841,36 +841,7 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 	log.Info("Loading model " + modelToLoad + "...")
 
 	loadResp, err := loadModelWithProgress(ctx, client, mode, modelToLoad, log)
-	if err != nil && mode == sessionModeRemote && !isModelURI(modelToLoad) && isModelNotFound(err) {
-		// Bare name not on GPU — try to auto-resolve using the Unsloth GGUF
-		// repo convention, pull, then retry load.
-		if guess := resolveBareNameToURI(modelToLoad); guess != "" {
-			log.Info("Model not on GPU — attempting first-time download from Hugging Face...")
-			resolved, pullErr := pullModelForRemote(ctx, client, guess, log)
-			if pullErr != nil {
-				return nil, fmt.Errorf(
-					"auto-pull from %s failed: %w. "+
-						"If this model isn't on Unsloth, pass an explicit URI: "+
-						"`tanrenai run hf://<owner>/<repo>/<quant>`",
-					guess, pullErr,
-				)
-			}
-			modelToLoad = resolved
-			p.model = resolved
-			deps.modelName = resolved
-			log.Info("Loading model " + modelToLoad + "...")
-			loadResp, err = loadModelWithProgress(ctx, client, mode, modelToLoad, log)
-		}
-	}
 	if err != nil {
-		if mode == sessionModeRemote && !isModelURI(modelToLoad) {
-			return nil, fmt.Errorf(
-				"failed to load %q on remote GPU (not pulled yet?). "+
-					"For a first-time pull, pass an hf:// URI: "+
-					"`tanrenai run hf://<owner>/<repo>-GGUF/<quant>`. underlying error: %w",
-				modelToLoad, err,
-			)
-		}
 		return nil, fmt.Errorf("failed to load model (is the backend running?): %w", err)
 	}
 
