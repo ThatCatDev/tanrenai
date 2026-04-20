@@ -275,6 +275,7 @@ func (d *Deployer) createNewInstance(ctx context.Context) (*vastai.Instance, err
 		func() error {
 			var createErr error
 			inst, createErr = d.vastai.CreateInstance(ctx, choice.Offer.ID, vastai.CreateOpts{
+				Image:  remote.DefaultGPUImage,
 				DiskGB: d.cfg.DiskGB,
 			})
 

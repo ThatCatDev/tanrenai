@@ -44,3 +44,4 @@ __pycache__/
 # Test output
 coverage.out
 *.test
+platform/docker/.env

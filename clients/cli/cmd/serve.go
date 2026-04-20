@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	gpuserve "github.com/ThatCatDev/tanrenai/gpu/pkg/serve"
+	gpuserve "github.com/ThatCatDev/tanrenai-gpu/pkg/serve"
 	srvserve "github.com/ThatCatDev/tanrenai/server/pkg/serve"
 )
 

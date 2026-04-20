@@ -16,7 +16,7 @@ import (
 	"github.com/rivo/tview"
 
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
-	gpuserve "github.com/ThatCatDev/tanrenai/gpu/pkg/serve"
+	gpuserve "github.com/ThatCatDev/tanrenai-gpu/pkg/serve"
 	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
@@ -788,8 +788,10 @@ type sessionDeps struct {
 func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDeps, error) {
 	deps := &sessionDeps{modelName: p.model}
 
+	mode := resolveSessionMode(p, log)
+
 	activeURL := serverURL
-	if p.local {
+	if mode == sessionModeLocal {
 		opts := localOpts{
 			GPULayers:      p.gpuLayers,
 			FlashAttention: p.flashAttn,
@@ -811,13 +813,31 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 		}
 		deps.cleanupFn = cleanup
 		activeURL = url
+	} else if mode == sessionModeRemote && p.memoryEnabled {
+		// Memory features use a local embedding model even in remote mode —
+		// one-time download, works offline, avoids an extra network hop.
+		if err := ensureEmbeddingModel(log); err != nil {
+			return nil, err
+		}
 	}
 
-	client := apiclient.New(activeURL)
+	client := newAuthedClient(activeURL, authToken)
 	deps.client = client
 
-	log.Info("Loading model " + p.model + "...")
-	loadResp, err := client.LoadModel(ctx, p.model)
+	modelToLoad := p.model
+	if mode == sessionModeRemote && isModelURI(p.model) {
+		resolved, err := pullModelForRemote(ctx, client, p.model, log)
+		if err != nil {
+			return nil, fmt.Errorf("pull model: %w", err)
+		}
+		modelToLoad = resolved
+		p.model = resolved
+		deps.modelName = resolved
+	}
+
+	log.Info("Loading model " + modelToLoad + "...")
+
+	loadResp, err := loadModelWithProgress(ctx, client, mode, modelToLoad, log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load model (is the backend running?): %w", err)
 	}
