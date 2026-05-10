@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
 )
@@ -18,7 +21,7 @@ import (
 func TestRPCServer_RequestToolWritesAndReturnsResult(t *testing.T) {
 	var buf bytes.Buffer
 	var bufMu sync.Mutex // json.Encoder isn't safe for concurrent reads of the buffer
-	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, []string{"file_read"})
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, []string{"file_read"}, nil)
 
 	type result struct {
 		out *tools.ToolResult
@@ -57,7 +60,7 @@ func TestRPCServer_RequestToolWritesAndReturnsResult(t *testing.T) {
 func TestRPCServer_RequestToolErrorResult(t *testing.T) {
 	var buf bytes.Buffer
 	var bufMu sync.Mutex
-	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil)
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
 
 	resultCh := make(chan *tools.ToolResult, 1)
 	go func() {
@@ -89,7 +92,7 @@ func TestRPCServer_RequestToolErrorResult(t *testing.T) {
 func TestRPCServer_RequestToolRespectsCancellation(t *testing.T) {
 	var buf bytes.Buffer
 	var bufMu sync.Mutex
-	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil)
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -117,7 +120,7 @@ func TestRPCServer_RequestToolRespectsCancellation(t *testing.T) {
 func TestRPCServer_ApprovalRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	var bufMu sync.Mutex
-	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil)
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
 
 	resCh := make(chan int, 1)
 	go func() {
@@ -139,6 +142,70 @@ func TestRPCServer_ApprovalRoundTrip(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("requestApproval did not return")
+	}
+}
+
+func TestRPCServer_AlwaysPersistsPermission(t *testing.T) {
+	// Run in a tmp dir so .tanrenai/permissions.json is local to the test.
+	tmp := t.TempDir()
+	prevWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(prevWd) }()
+
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	perms := tools.LoadPermissions()
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, perms)
+
+	// shell_exec for `ls -la`. After "always", we expect a rule scoped to
+	// the command prefix (`ls *`) saved to .tanrenai/permissions.json.
+	resCh := make(chan agent.ApprovalAction, 1)
+	go func() {
+		resCh <- srv.requestApproval(context.Background(), api.ToolCall{
+			Function: api.ToolCallFunction{Name: "shell_exec", Arguments: `{"command":"ls -la"}`},
+		})
+	}()
+
+	id := waitForApprovalID(t, &buf, &bufMu)
+	srv.handleApprovalResponse(rpcApprovalResponseMsg{
+		Type: "approval_response", ID: id, Action: "always",
+	})
+
+	select {
+	case <-resCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("requestApproval did not return")
+	}
+
+	data, err := os.ReadFile(filepath.Join(".tanrenai", "permissions.json"))
+	if err != nil {
+		t.Fatalf("expected .tanrenai/permissions.json to exist: %v", err)
+	}
+	if !strings.Contains(string(data), "shell_exec") {
+		t.Errorf("permissions file missing shell_exec rule: %s", data)
+	}
+	if !strings.Contains(string(data), "ls *") {
+		t.Errorf("expected `ls *` prefix rule, got: %s", data)
+	}
+
+	// A second call with `ls -lh` should now be auto-allowed without
+	// emitting a new approval_required event.
+	bufMu.Lock()
+	buf.Reset()
+	bufMu.Unlock()
+	// Reload permissions so the in-memory state matches what was saved.
+	perms2 := tools.LoadPermissions()
+	srv2 := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, perms2)
+	action := srv2.requestApproval(context.Background(), api.ToolCall{
+		Function: api.ToolCallFunction{Name: "shell_exec", Arguments: `{"command":"ls -lh"}`},
+	})
+	if action != agent.ApprovalAllow {
+		t.Errorf("second `ls *` call should be auto-allowed, got %v", action)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no approval_required for already-allowed call, got: %s", buf.String())
 	}
 }
 

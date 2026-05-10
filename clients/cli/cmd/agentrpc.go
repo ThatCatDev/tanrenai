@@ -158,9 +158,10 @@ type rpcServer struct {
 	pendingApprove sync.Map // id → chan rpcApprovalResponseMsg
 	nextID         atomic.Uint64
 	interceptedSet map[string]bool
+	permissions    *tools.Permissions
 }
 
-func newRPCServer(out io.Writer, intercepted []string) *rpcServer {
+func newRPCServer(out io.Writer, intercepted []string, permissions *tools.Permissions) *rpcServer {
 	set := make(map[string]bool, len(intercepted))
 	for _, n := range intercepted {
 		set[n] = true
@@ -169,6 +170,7 @@ func newRPCServer(out io.Writer, intercepted []string) *rpcServer {
 	return &rpcServer{
 		enc:            json.NewEncoder(out),
 		interceptedSet: set,
+		permissions:    permissions,
 	}
 }
 
@@ -220,7 +222,14 @@ func (s *rpcServer) handleToolResult(msg rpcToolResultMsg) {
 }
 
 // requestApproval emits approval_required and blocks on approval_response.
+// Skips the prompt entirely when the tool call matches an existing
+// allow rule. On "always", persists a rule to .tanrenai/permissions.json
+// so the user isn't asked again.
 func (s *rpcServer) requestApproval(ctx context.Context, call api.ToolCall) agent.ApprovalAction {
+	if s.permissions != nil && s.permissions.IsAllowed(call.Function.Name, call.Function.Arguments) {
+		return agent.ApprovalAllow
+	}
+
 	id := fmt.Sprintf("appr_%d", s.nextID.Add(1))
 	ch := make(chan rpcApprovalResponseMsg, 1)
 	s.pendingApprove.Store(id, ch)
@@ -243,9 +252,50 @@ func (s *rpcServer) requestApproval(ctx context.Context, call api.ToolCall) agen
 		case "allow":
 			return agent.ApprovalAllow
 		case "always":
+			s.persistAlwaysAllow(call)
+
 			return agent.ApprovalAlwaysAllow
 		default:
 			return agent.ApprovalBlock
+		}
+	}
+}
+
+// persistAlwaysAllow writes a permission rule to .tanrenai/permissions.json
+// so the user isn't asked again for this tool / args combination. Mirrors
+// the TUI's logic: scope by argument value where it makes sense (path for
+// file tools, command prefix for shell_exec), blanket-allow for
+// read-only tools.
+func (s *rpcServer) persistAlwaysAllow(call api.ToolCall) {
+	if s.permissions == nil {
+		return
+	}
+	name := call.Function.Name
+	approvalKey := tools.ApprovalKey(name)
+	keyValue := tools.ExtractArg(call.Function.Arguments, approvalKey)
+
+	switch tools.ToolRisk(name) {
+	case tools.RiskReadOnly, tools.RiskNetwork:
+		// Blanket-allow for low/medium-risk tools.
+		_ = s.permissions.AllowTool(name)
+	case tools.RiskWrite:
+		// Scope to the file path being touched.
+		if keyValue != "" {
+			_ = s.permissions.AllowToolWithArgs(name, map[string][]string{
+				approvalKey: {keyValue},
+			})
+		} else {
+			_ = s.permissions.AllowTool(name)
+		}
+	case tools.RiskExecute:
+		// Scope to the command prefix (e.g. "git *", "npm *").
+		if keyValue != "" {
+			prefix := tools.CommandPrefix(keyValue)
+			_ = s.permissions.AllowToolWithArgs(name, map[string][]string{
+				approvalKey: {prefix + " *"},
+			})
+		} else {
+			_ = s.permissions.AllowTool(name)
 		}
 	}
 }
@@ -318,7 +368,10 @@ func runAgentRPC(ctx context.Context) error {
 		}
 	}
 
-	srv := newRPCServer(os.Stdout, init.InterceptedTools)
+	// Load permissions AFTER chdir so `.tanrenai/permissions.json` is read
+	// from the workspace folder, not from wherever the binary was launched.
+	permissions := tools.LoadPermissions()
+	srv := newRPCServer(os.Stdout, init.InterceptedTools, permissions)
 
 	// Build session deps via the same setup the TUI/pipe use. Route
 	// startup progress through IPC so the extension can render it during
