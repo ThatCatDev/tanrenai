@@ -47,6 +47,10 @@
       {
         "command": "tanrenai.reconnect",
         "title": "Tanrenai: Reconnect"
+      },
+      {
+        "command": "tanrenai.pickModel",
+        "title": "Tanrenai: Choose Model…"
       }
     ],
     "configuration": {

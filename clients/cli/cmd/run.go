@@ -28,20 +28,30 @@ import (
 // startupLog posts status lines to the TUI (or stdout if tui is nil).
 type startupLog struct {
 	tui *tuiApp
+	// emit, when set, replaces the default stdout/stderr behaviour. It's
+	// mutually exclusive with tui — used by agent-rpc to route progress
+	// through NDJSON instead of corrupting stdout.
+	emit func(level, msg string)
 }
 
 func (s *startupLog) Info(msg string) {
-	if s.tui != nil {
+	switch {
+	case s.tui != nil:
 		s.tui.appendLogLine("[gray::-]  " + tview.Escape(msg) + "[-:-:-]")
-	} else {
+	case s.emit != nil:
+		s.emit("info", msg)
+	default:
 		_, _ = fmt.Fprintf(os.Stdout, "%s\n", msg)
 	}
 }
 
 func (s *startupLog) Warn(msg string) {
-	if s.tui != nil {
+	switch {
+	case s.tui != nil:
 		s.tui.appendLogLine("[yellow::-]  " + tview.Escape(msg) + "[-:-:-]")
-	} else {
+	case s.emit != nil:
+		s.emit("warn", msg)
+	default:
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
 	}
 }

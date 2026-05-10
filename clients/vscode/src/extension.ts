@@ -14,6 +14,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('tanrenai.login', () => controller.login()),
     vscode.commands.registerCommand('tanrenai.logout', () => controller.logout()),
     vscode.commands.registerCommand('tanrenai.reconnect', () => controller.reconnect()),
+    vscode.commands.registerCommand('tanrenai.pickModel', () => controller.pickModel()),
     controller.watchSettings(),
   );
 

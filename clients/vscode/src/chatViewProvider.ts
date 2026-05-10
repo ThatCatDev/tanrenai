@@ -3,13 +3,15 @@ import * as vscode from 'vscode';
 export type ConnectionState =
   | { status: 'idle' }
   | { status: 'no_credentials' }
-  | { status: 'connecting' }
+  | { status: 'connecting'; progress?: string; warn?: boolean }
   | { status: 'connected'; model: string; toolCount: number }
   | { status: 'error'; message: string };
 
 export type WebviewInbound =
   | { type: 'send'; content: string }
   | { type: 'cancel' }
+  | { type: 'cancel_connect' }
+  | { type: 'pick_model' }
   | { type: 'login' }
   | { type: 'reconnect' };
 
@@ -26,6 +28,8 @@ export type WebviewOutbound =
 export interface ChatViewListener {
   onSend(content: string): void;
   onCancel(): void;
+  onCancelConnect(): void;
+  onPickModel(): void;
   onLogin(): void;
   onReconnect(): void;
 }
@@ -65,6 +69,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'cancel':
           this.listener?.onCancel();
+          break;
+        case 'cancel_connect':
+          this.listener?.onCancelConnect();
+          break;
+        case 'pick_model':
+          this.listener?.onPickModel();
           break;
         case 'login':
           this.listener?.onLogin();
@@ -262,8 +272,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       function showConnected(state) {
         connected = true;
         headerEl.hidden = false;
-        headerEl.innerHTML = '<span class="ok">●</span> ' + escape(state.model) +
+        headerEl.innerHTML =
+          '<span class="ok">●</span> ' +
+          '<a href="#" id="hdrModel" style="color:inherit;text-decoration:underline dotted;">' +
+          escape(state.model) + '</a>' +
           ' · ' + state.toolCount + ' tools';
+        document.getElementById('hdrModel').addEventListener('click', (e) => {
+          e.preventDefault();
+          vscode.postMessage({ type: 'pick_model' });
+        });
         messagesEl.hidden = false;
         inputRow.hidden = false;
         statusEl.innerHTML = '';
@@ -285,7 +302,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             break;
           case 'connecting':
             statusEl.className = 'status-panel';
-            statusEl.innerHTML = '<div class="label">Connecting…</div>';
+            const progress = state.progress
+              ? '<div class="label" style="margin-top:0.25rem; font-size:0.85em; opacity:0.8;' +
+                (state.warn ? ' color: var(--vscode-charts-yellow);' : '') +
+                '">' + escape(state.progress) + '</div>'
+              : '';
+            statusEl.innerHTML =
+              '<div class="label">Connecting…</div>' + progress +
+              '<div style="display:flex; gap:0.5rem; margin-top:0.75rem;">' +
+              '<button id="cancelConnect" class="secondary">Cancel</button>' +
+              '<button id="pickModel" class="secondary">Change Model…</button>' +
+              '</div>';
+            document.getElementById('cancelConnect').addEventListener('click', () => {
+              vscode.postMessage({ type: 'cancel_connect' });
+            });
+            document.getElementById('pickModel').addEventListener('click', () => {
+              vscode.postMessage({ type: 'pick_model' });
+            });
             break;
           case 'no_credentials':
             statusEl.className = 'status-panel';

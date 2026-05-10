@@ -71,6 +71,12 @@ type rpcReadyMsg struct {
 	Model           string    `json:"model"`
 }
 
+type rpcConnectingProgressMsg struct {
+	Type    string `json:"type"`
+	Level   string `json:"level"` // "info" | "warn"
+	Message string `json:"message"`
+}
+
 type rpcTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
@@ -295,7 +301,18 @@ func runAgentRPC(ctx context.Context) error {
 
 	srv := newRPCServer(os.Stdout, init.InterceptedTools)
 
-	// Build session deps via the same setup the TUI/pipe use.
+	// Build session deps via the same setup the TUI/pipe use. Route
+	// startup progress through IPC so the extension can render it during
+	// the "Connecting…" state — and so we don't corrupt stdout (reserved
+	// for NDJSON).
+	progressLog := &startupLog{emit: func(level, msg string) {
+		_ = srv.write(rpcConnectingProgressMsg{
+			Type:    "connecting_progress",
+			Level:   level,
+			Message: msg,
+		})
+	}}
+
 	p := runParams{
 		model:         init.Model,
 		systemPrompt:  init.SystemPrompt,
@@ -306,7 +323,7 @@ func runAgentRPC(ctx context.Context) error {
 		thinking:      true,
 		noScrolls:     !init.EnableScrolls,
 	}
-	deps, err := setupSession(ctx, p, &startupLog{tui: nil})
+	deps, err := setupSession(ctx, p, progressLog)
 	if err != nil {
 		srv.writeError(fmt.Sprintf("setup failed: %v", err), true)
 

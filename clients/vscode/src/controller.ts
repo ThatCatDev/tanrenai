@@ -5,6 +5,7 @@ import { ChatViewProvider, ChatViewListener } from './chatViewProvider';
 import { resolveCliPath } from './rpc/cliPath';
 import { RPCClient } from './rpc/client';
 import {
+  ConnectingProgressMsg,
   ContentDeltaMsg,
   ReasoningDeltaMsg,
   ToolCallMsg,
@@ -15,6 +16,9 @@ import {
 } from './rpc/messages';
 import { readSettings } from './settings';
 import { dispatchTool, interceptedToolNames } from './tools/registry';
+import { showModelPicker } from './ui/modelPicker';
+
+const DEFAULT_MODEL = 'Qwen3.6-35B-A3B-UD-Q4_K_M';
 
 const TANRENAI_WEB_URL = 'https://dev.tanrenai.com';
 const INTERCEPTED_TOOLS = interceptedToolNames;
@@ -67,6 +71,8 @@ export class Controller implements ChatViewListener {
       return;
     }
 
+    await this.maybeShowFirstRunModelPicker();
+
     const settings = readSettings();
     const serverUrl = settings.serverUrlOverride || creds.server_url;
 
@@ -99,6 +105,14 @@ export class Controller implements ChatViewListener {
       this.view.setState({ status: 'error', message: detail });
     });
 
+    rpc.on('connecting_progress', (m: ConnectingProgressMsg) => {
+      this.log(`progress: ${m.message}`);
+      this.view.setState({
+        status: 'connecting',
+        progress: m.message,
+        warn: m.level === 'warn',
+      });
+    });
     rpc.on('content_delta', (m: ContentDeltaMsg) => this.handleContentDelta(m.text));
     rpc.on('reasoning_delta', (m: ReasoningDeltaMsg) => this.handleReasoningDelta(m.text));
     rpc.on('tool_call', (m: ToolCallMsg) => this.handleToolCall(m, false));
@@ -197,6 +211,19 @@ export class Controller implements ChatViewListener {
     }
   }
 
+  /** Called from the "Cancel" button shown during long connecting waits. */
+  onCancelConnect(): void {
+    this.log('user cancelled connect');
+    void this.disconnect().then(() => {
+      this.view.setState({ status: 'idle' });
+    });
+  }
+
+  /** Called from the "Change Model…" link in the sidebar. */
+  onPickModel(): void {
+    void this.pickModel();
+  }
+
   onLogin(): void {
     void this.login();
   }
@@ -231,6 +258,57 @@ export class Controller implements ChatViewListener {
 
   async reconnect(): Promise<void> {
     await this.connect();
+  }
+
+  /**
+   * Show the model picker and persist the choice. Reconnects automatically
+   * if the extension is already connected so the change takes effect.
+   */
+  async pickModel(): Promise<void> {
+    const settings = readSettings();
+    const choice = await showModelPicker(settings.model);
+    if (!choice) {
+      return;
+    }
+    await vscode.workspace
+      .getConfiguration('tanrenai')
+      .update('model', choice, vscode.ConfigurationTarget.Global);
+    void vscode.window.showInformationMessage(`Tanrenai: model set to ${choice}.`);
+    if (this.rpc) {
+      await this.connect();
+    }
+  }
+
+  /**
+   * On first activation (after login), nudge the user to confirm or change
+   * the default model before we kick off a potentially-long auto-pull.
+   * Stored in globalState so we never ask twice.
+   */
+  private async maybeShowFirstRunModelPicker(): Promise<void> {
+    const KEY = 'tanrenai.firstRunModelPickerShown';
+    if (this.context.globalState.get<boolean>(KEY)) {
+      return;
+    }
+    const cfg = vscode.workspace.getConfiguration('tanrenai');
+    const inspected = cfg.inspect<string>('model');
+    const userOverridden =
+      (inspected?.globalValue !== undefined && inspected.globalValue !== '') ||
+      (inspected?.workspaceValue !== undefined && inspected.workspaceValue !== '') ||
+      (inspected?.workspaceFolderValue !== undefined && inspected.workspaceFolderValue !== '');
+    if (userOverridden) {
+      await this.context.globalState.update(KEY, true);
+
+      return;
+    }
+    const choice = await vscode.window.showInformationMessage(
+      `Tanrenai: about to load ${DEFAULT_MODEL}. Pick a different model first?`,
+      'Pick Model',
+      'Use Default',
+    );
+    await this.context.globalState.update(KEY, true);
+    if (choice === 'Pick Model') {
+      await this.pickModel();
+    }
   }
 
   /**

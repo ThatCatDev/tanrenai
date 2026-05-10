@@ -70,6 +70,12 @@ export interface ReadyMsg {
   model: string;
 }
 
+export interface ConnectingProgressMsg {
+  type: 'connecting_progress';
+  level: 'info' | 'warn';
+  message: string;
+}
+
 export interface ContentDeltaMsg {
   type: 'content_delta';
   text: string;
@@ -129,6 +135,7 @@ export interface ErrorMsg {
 
 export type InboundMsg =
   | ReadyMsg
+  | ConnectingProgressMsg
   | ContentDeltaMsg
   | ReasoningDeltaMsg
   | IterationStartMsg
