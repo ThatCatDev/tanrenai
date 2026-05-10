@@ -25,6 +25,11 @@ export class Controller implements ChatViewListener {
   private currentAssistantId?: string;
   private currentReasoningId?: string;
   private turnRunning = false;
+  // Reentry guard so rapid Reconnect clicks don't spawn duplicates.
+  private connecting = false;
+  // Set true during disconnect() so the subprocess exit handler knows the
+  // shutdown was intentional and shouldn't surface as an error.
+  private intentionalDisconnect = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -36,6 +41,21 @@ export class Controller implements ChatViewListener {
   }
 
   async connect(): Promise<void> {
+    if (this.connecting) {
+      this.log('connect() ignored — already connecting');
+
+      return;
+    }
+    this.connecting = true;
+
+    try {
+      await this.doConnect();
+    } finally {
+      this.connecting = false;
+    }
+  }
+
+  private async doConnect(): Promise<void> {
     await this.disconnect();
 
     this.view.setState({ status: 'connecting' });
@@ -65,13 +85,18 @@ export class Controller implements ChatViewListener {
     rpc.on('stderr', (chunk: string) => this.logChannel.append(chunk));
     rpc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
       this.log(`agent-rpc exited (code=${code}, signal=${signal})`);
-      if (this.rpc === rpc) {
-        this.rpc = undefined;
-        this.view.setState({
-          status: 'error',
-          message: 'CLI subprocess exited. Use Reconnect.',
-        });
+      if (this.rpc !== rpc) {
+        return; // not the active subprocess
       }
+      this.rpc = undefined;
+      if (this.intentionalDisconnect) {
+        return; // we asked it to stop
+      }
+      const tail = rpc.recentStderr();
+      const detail = tail
+        ? `CLI subprocess exited unexpectedly. Last log:\n${truncate(tail, 400)}`
+        : 'CLI subprocess exited unexpectedly. Use Reconnect.';
+      this.view.setState({ status: 'error', message: detail });
     });
 
     rpc.on('content_delta', (m: ContentDeltaMsg) => this.handleContentDelta(m.text));
@@ -106,7 +131,18 @@ export class Controller implements ChatViewListener {
       });
       this.log(`ready: model=${ready.model}, tools=${ready.tools.length}`);
     } catch (err) {
-      const message = (err as Error).message;
+      const code = (err as NodeJS.ErrnoException).code;
+      const tail = rpc.recentStderr();
+      let message: string;
+      if (code === 'ENOENT') {
+        message =
+          `Could not find the tanrenai CLI at "${cliPath}". ` +
+          'Run `make vscode-bundle` from the repo root, or set "tanrenai.cliPath" to your CLI binary.';
+      } else if (tail) {
+        message = `${(err as Error).message}\n${truncate(tail, 400)}`;
+      } else {
+        message = (err as Error).message;
+      }
       this.log(`startup failed: ${message}`);
       this.view.setState({ status: 'error', message });
       await rpc.dispose();
@@ -115,7 +151,12 @@ export class Controller implements ChatViewListener {
 
   async disconnect(): Promise<void> {
     if (this.rpc) {
-      await this.rpc.dispose();
+      this.intentionalDisconnect = true;
+      try {
+        await this.rpc.dispose();
+      } finally {
+        this.intentionalDisconnect = false;
+      }
       this.rpc = undefined;
     }
     this.turnRunning = false;
@@ -190,6 +231,34 @@ export class Controller implements ChatViewListener {
 
   async reconnect(): Promise<void> {
     await this.connect();
+  }
+
+  /**
+   * Watch the user's tanrenai.* settings and offer to reconnect when one of
+   * the load-bearing values changes — model/url/agentMode/cliPath only take
+   * effect at the next handshake.
+   */
+  watchSettings(): vscode.Disposable {
+    const reconnectKeys = ['tanrenai.model', 'tanrenai.serverUrl', 'tanrenai.agentMode', 'tanrenai.cliPath'];
+
+    return vscode.workspace.onDidChangeConfiguration(async (event) => {
+      const changed = reconnectKeys.find((k) => event.affectsConfiguration(k));
+      if (!changed) {
+        return;
+      }
+      // Quiet path: not connected yet → just absorb the change for next connect.
+      if (!this.rpc) {
+        return;
+      }
+      const choice = await vscode.window.showInformationMessage(
+        `Tanrenai: ${changed} changed. Reconnect to apply?`,
+        'Reconnect',
+        'Later',
+      );
+      if (choice === 'Reconnect') {
+        await this.connect();
+      }
+    });
   }
 
   // ── RPC event handlers ────────────────────────────────────────────

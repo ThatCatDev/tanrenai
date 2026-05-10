@@ -37,9 +37,18 @@ export class RPCClient extends EventEmitter {
   private proc?: ChildProcessWithoutNullStreams;
   private startupResolver?: (msg: ReadyMsg) => void;
   private startupRejecter?: (err: Error) => void;
+  // Ring buffer of recent stderr lines, surfaced in error messages so users
+  // see the CLI's actual complaint rather than just "subprocess exited".
+  private readonly stderrTail: string[] = [];
+  private static readonly STDERR_TAIL_LIMIT = 10;
 
   constructor(private readonly options: RPCClientOptions) {
     super();
+  }
+
+  /** Most recent stderr lines from the subprocess (newest last). */
+  recentStderr(): string {
+    return this.stderrTail.join('').trim();
   }
 
   /**
@@ -65,9 +74,15 @@ export class RPCClient extends EventEmitter {
       const rl = readline.createInterface({ input: this.proc.stdout });
       rl.on('line', (line) => this.handleLine(line));
 
-      // Stderr goes to the extension log channel (set up by the controller).
+      // Stderr goes to the extension log channel (set up by the controller),
+      // and we keep the tail for error surfacing.
       this.proc.stderr.on('data', (chunk: Buffer) => {
-        this.emit('stderr', chunk.toString('utf8'));
+        const text = chunk.toString('utf8');
+        this.stderrTail.push(text);
+        while (this.stderrTail.length > RPCClient.STDERR_TAIL_LIMIT) {
+          this.stderrTail.shift();
+        }
+        this.emit('stderr', text);
       });
 
       this.proc.on('exit', (code, signal) => {
