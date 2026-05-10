@@ -68,7 +68,11 @@
         },
         "tanrenai.mode": {
           "type": "string",
-          "enum": ["chat", "agent", "swarm"],
+          "enum": [
+            "chat",
+            "agent",
+            "swarm"
+          ],
           "default": "agent",
           "description": "Default mode: chat (no tools), agent (single agent with tools), swarm (multi-agent orchestrator)."
         },
@@ -91,6 +95,9 @@
     "package": "vsce package",
     "lint": "tsc --noEmit",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "preact": "^10.29.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
