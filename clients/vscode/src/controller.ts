@@ -380,6 +380,10 @@ export class Controller implements ChatViewListener {
     void this.login();
   }
 
+  onLogout(): void {
+    void this.logout();
+  }
+
   onReconnect(): void {
     void this.connect();
   }

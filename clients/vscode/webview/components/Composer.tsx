@@ -38,12 +38,14 @@ export function Composer({ turnRunning, mode }: Props) {
         }}
       />
       <div class="actions">
-        <button onClick={submit} disabled={turnRunning}>
-          Send
-        </button>
-        {turnRunning && (
+        <span class="hint">{turnRunning ? 'Streaming' : '⏎ to send · ⇧⏎ for newline'}</span>
+        {turnRunning ? (
           <button class="secondary" onClick={() => send({ type: 'cancel' })}>
             Cancel
+          </button>
+        ) : (
+          <button onClick={submit} disabled={!value.trim()}>
+            Send
           </button>
         )}
       </div>
@@ -52,7 +54,7 @@ export function Composer({ turnRunning, mode }: Props) {
 }
 
 function placeholderForMode(mode: Mode): string {
-  if (mode === 'swarm') return 'Ask Tanrenai (swarm)…';
+  if (mode === 'swarm') return 'Brief the swarm…';
   if (mode === 'agent') return 'Ask Tanrenai…';
 
   return 'Chat with Tanrenai (no tools)…';

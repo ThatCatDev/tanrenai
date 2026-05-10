@@ -10,27 +10,23 @@ interface Props {
 export function Header({ model, toolCount, mode }: Props) {
   return (
     <div class="header">
-      <span class="ok">●</span>
-      <span class="meta">
+      <span class="mark">Tanrenai</span>
+      <span class="meta" title={model}>
         <a
           href="#"
           onClick={(e) => {
             e.preventDefault();
             send({ type: 'pick_model' });
           }}
-          title="Change model"
         >
-          {model}
-        </a>{' '}
-        · {toolCount} tools
+          {shortenModel(model)}
+        </a>
+        <span class="sep">·</span>
+        {toolCount} tools
       </span>
       <ModePicker mode={mode} />
-      <button
-        class="icon-btn"
-        title="Clear chat"
-        onClick={() => send({ type: 'clear_chat' })}
-      >
-        ✕
+      <button class="icon-btn" title="Clear chat" onClick={() => send({ type: 'clear_chat' })}>
+        Clear
       </button>
     </div>
   );
@@ -57,4 +53,15 @@ function ModePicker({ mode }: { mode: Mode }) {
       ))}
     </div>
   );
+}
+
+// In a 250-px sidebar, "Qwen3.6-35B-A3B-UD-Q4_K_M" is ten times as long as
+// the visible area. Trim to a recognisable head — the tooltip carries the
+// full string for anyone who needs it.
+function shortenModel(model: string): string {
+  if (model.length <= 24) {
+    return model;
+  }
+
+  return model.slice(0, 22) + '…';
 }

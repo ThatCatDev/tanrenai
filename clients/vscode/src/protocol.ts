@@ -24,6 +24,7 @@ export type WebviewInbound =
   | { type: 'set_mode'; mode: Mode }
   | { type: 'approval_decision'; id: string; action: 'allow' | 'deny' | 'always' }
   | { type: 'login' }
+  | { type: 'logout' }
   | { type: 'reconnect' };
 
 export type WebviewOutbound =

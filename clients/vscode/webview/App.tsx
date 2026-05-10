@@ -1,6 +1,7 @@
 import { useEffect, useReducer } from 'preact/hooks';
 import { ActivityBar } from './components/Activity';
 import { Composer } from './components/Composer';
+import { Footer } from './components/Footer';
 import { Header } from './components/Header';
 import { MessageList } from './components/MessageList';
 import { StatusPanel } from './components/StatusPanel';
@@ -34,10 +35,13 @@ function init(seed: AppState): AppState {
 }
 
 function renderRoot(state: AppState) {
+  const signedIn = state.connection.status !== 'no_credentials';
+
   if (state.connection.status !== 'connected') {
     return (
       <div class="root">
         <StatusPanel connection={state.connection} />
+        <Footer signedIn={signedIn} mode={state.mode} />
       </div>
     );
   }
@@ -57,6 +61,7 @@ function renderRoot(state: AppState) {
         maxIterations={state.maxIterations}
       />
       <Composer turnRunning={state.turnRunning} mode={state.mode} />
+      <Footer signedIn={true} mode={state.mode} />
     </div>
   );
 }

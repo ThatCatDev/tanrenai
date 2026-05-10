@@ -7,6 +7,7 @@ export function StatusPanel({ connection }: { connection: ConnectionState }) {
     case 'idle':
       return (
         <div class="status-panel">
+          <div class="eyebrow">Tanrenai</div>
           <div class="label">Initialising…</div>
         </div>
       );
@@ -15,15 +16,21 @@ export function StatusPanel({ connection }: { connection: ConnectionState }) {
     case 'no_credentials':
       return (
         <div class="status-panel">
-          <div class="label">Not signed in.</div>
-          <button onClick={() => send({ type: 'login' })}>Sign in to Tanrenai</button>
+          <div class="eyebrow">Tanrenai</div>
+          <div class="label">Not signed in</div>
+          <div class="status-actions">
+            <button onClick={() => send({ type: 'login' })}>Sign in</button>
+          </div>
         </div>
       );
     case 'error':
       return (
         <div class="status-panel error">
-          <div class="label">Error: {connection.message}</div>
-          <button onClick={() => send({ type: 'reconnect' })}>Retry</button>
+          <div class="eyebrow">Error</div>
+          <div class="label">{connection.message}</div>
+          <div class="status-actions">
+            <button class="secondary" onClick={() => send({ type: 'reconnect' })}>Retry</button>
+          </div>
         </div>
       );
     case 'connected':
@@ -40,8 +47,10 @@ function Connecting({ progress }: { progress: { message: string; level: 'info' |
 
   return (
     <div class="status-panel">
+      <div class="eyebrow">Tanrenai</div>
       <div class="label">
-        <span class="spinner" /> Connecting…
+        <span class="spinner" />
+        Connecting
       </div>
       {progress.length > 0 && (
         <div class="progress-log" ref={logRef}>
@@ -53,12 +62,8 @@ function Connecting({ progress }: { progress: { message: string; level: 'info' |
         </div>
       )}
       <div class="status-actions">
-        <button class="secondary" onClick={() => send({ type: 'cancel_connect' })}>
-          Cancel
-        </button>
-        <button class="secondary" onClick={() => send({ type: 'pick_model' })}>
-          Change Model…
-        </button>
+        <button class="secondary" onClick={() => send({ type: 'cancel_connect' })}>Cancel</button>
+        <button class="secondary" onClick={() => send({ type: 'pick_model' })}>Change model</button>
       </div>
     </div>
   );

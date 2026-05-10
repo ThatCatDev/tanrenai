@@ -10,20 +10,18 @@ export function ActivityBar({ activity, iteration, maxIterations }: Props) {
   if (activity.kind === 'idle') {
     return null;
   }
-  const label = labelFor(activity);
-  const iter =
-    iteration > 0
-      ? maxIterations > 0
-        ? ` · iteration ${iteration}/${maxIterations}`
-        : ` · iteration ${iteration}`
-      : '';
 
   return (
     <div class="activity">
-      <span class="activity-dot" />
+      <span class="activity-dashes" aria-hidden="true" />
       <span class="activity-label">
-        {label}
-        {iter}
+        {labelFor(activity)}
+        {iteration > 0 && (
+          <span class="activity-iter">
+            {' · '}
+            {maxIterations > 0 ? `iter ${iteration}/${maxIterations}` : `iter ${iteration}`}
+          </span>
+        )}
       </span>
     </div>
   );
@@ -32,15 +30,15 @@ export function ActivityBar({ activity, iteration, maxIterations }: Props) {
 function labelFor(activity: Activity): string {
   switch (activity.kind) {
     case 'thinking':
-      return 'thinking…';
+      return 'thinking';
     case 'generating':
-      return 'generating…';
+      return 'generating';
     case 'preparing':
-      return `preparing ${activity.name}… (${formatChars(activity.chars)})`;
+      return `preparing ${activity.name} (${formatChars(activity.chars)})`;
     case 'tool':
-      return `running ${activity.name}…`;
+      return `running ${activity.name}`;
     case 'awaiting_approval':
-      return `awaiting your approval to run ${activity.name}`;
+      return `awaiting approval — ${activity.name}`;
     default:
       return '';
   }
@@ -48,8 +46,8 @@ function labelFor(activity: Activity): string {
 
 function formatChars(n: number): string {
   if (n >= 1000) {
-    return `${(n / 1000).toFixed(1)}k chars`;
+    return `${(n / 1000).toFixed(1)}k`;
   }
 
-  return `${n} chars`;
+  return `${n}`;
 }

@@ -68,7 +68,7 @@ describe('App E2E', () => {
       },
     });
     await flush();
-    expect(document.body.textContent).toContain('Connecting…');
+    expect(document.body.textContent).toContain('Connecting');
     expect(document.body.textContent).toContain('Allocating GPU');
     expect(document.body.textContent).toContain('Downloading model (40%)');
   });

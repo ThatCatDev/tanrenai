@@ -9,7 +9,7 @@ interface Props {
 
 export function MessageList({ entries, activity }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
-  // Auto-scroll to bottom on new entries / streaming.
+  // Auto-scroll on new entries / streaming.
   useEffect(() => {
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -29,12 +29,11 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
     case 'user':
       return (
         <div class="msg user">
-          <div class="role">user</div>
+          <div class="role">You</div>
           <div class="body">{entry.content}</div>
         </div>
       );
     case 'assistant': {
-      // Pulse the bubble whose channel matches the current activity.
       const reasoningStreaming = entry.open && activity.kind === 'thinking';
       const contentStreaming = entry.open && activity.kind === 'generating';
 
@@ -43,7 +42,7 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
           {entry.reasoning && (
             <div class={`msg reasoning${reasoningStreaming ? ' streaming' : ''}`}>
               <div class="role">
-                thinking
+                Thinking
                 {reasoningStreaming && <span class="pulse" />}
               </div>
               <div class="body">{entry.reasoning}</div>
@@ -51,8 +50,11 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
           )}
           {entry.content && (
             <div class={`msg assistant${contentStreaming ? ' streaming' : ''}`}>
-              <div class="body">{entry.content}</div>
-              {contentStreaming && <span class="caret" />}
+              <div class="role">Tanrenai</div>
+              <div class="body">
+                {entry.content}
+                {contentStreaming && <span class="caret" />}
+              </div>
             </div>
           )}
         </>
@@ -65,7 +67,8 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
     case 'error':
       return (
         <div class="msg reasoning" style="color: var(--vscode-charts-red);">
-          [error] {entry.text}
+          <div class="role">Error</div>
+          <div class="body">{entry.text}</div>
         </div>
       );
   }
@@ -80,41 +83,42 @@ function ApprovalCard({ entry }: { entry: Extract<Entry, { kind: 'approval' }> }
   return (
     <div class={`approval${entry.resolved ? ' resolved' : ''}`}>
       <div class="approval-head">
-        <span class="approval-icon">⚠</span>
+        <span class="bracket">〔</span>
+        <span>Approval</span>
         <span class="approval-title">
-          Tanrenai wants to run <code>{entry.name}</code>
+          run <code>{entry.name}</code>
         </span>
+        <span class="bracket" style="margin-left:auto">〕</span>
       </div>
       <div class="approval-args">{argPreview}</div>
-      {!entry.resolved && (
+      {!entry.resolved ? (
         <div class="approval-actions">
           <button onClick={() => decide('allow')}>Allow once</button>
-          <button class="secondary" onClick={() => decide('always')}>Always allow</button>
-          <button class="secondary" onClick={() => decide('deny')}>Deny</button>
+          <button onClick={() => decide('always')}>Always</button>
+          <button onClick={() => decide('deny')}>Deny</button>
         </div>
+      ) : (
+        <div class="approval-resolved-label">Resolved</div>
       )}
-      {entry.resolved && <div class="approval-resolved-label">Resolved</div>}
     </div>
   );
 }
 
 function ToolCard({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {
-  const failed = entry.result && !entry.result.ok;
+  const failed = !!(entry.result && !entry.result.ok);
   const running = !entry.result;
-  const argPreview = entry.args.length > 200 ? entry.args.slice(0, 200) + '…' : entry.args;
+  const argPreview = entry.args.length > 240 ? entry.args.slice(0, 240) + '…' : entry.args;
 
   return (
     <div class={`tool${failed ? ' error' : ''}${running ? ' running' : ''}`}>
       <div class="name">
         {running && <span class="tool-spinner" />}
-        {entry.name}
-        {entry.intercepted && <span class="tag"> (editor)</span>}
+        <code>{entry.name}</code>
+        {entry.intercepted && <span class="tag">editor</span>}
       </div>
       <div class="args">{argPreview}</div>
       <details>
-        <summary>
-          {entry.result ? (entry.result.ok ? 'Result' : 'Error') : 'Running…'}
-        </summary>
+        <summary>{entry.result ? (entry.result.ok ? 'Result' : 'Error') : 'Running…'}</summary>
         <div class="result">{entry.result?.content ?? 'running…'}</div>
       </details>
     </div>
