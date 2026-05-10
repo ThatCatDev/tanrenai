@@ -34,6 +34,9 @@ export class Controller implements ChatViewListener {
   // Set true during disconnect() so the subprocess exit handler knows the
   // shutdown was intentional and shouldn't surface as an error.
   private intentionalDisconnect = false;
+  // Accumulating chronological log surfaced in the connecting state — same
+  // shape as the TUI's startup log (Allocating GPU…, Downloading model…, etc.)
+  private progressLines: { message: string; level: 'info' | 'warn' }[] = [];
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -62,7 +65,8 @@ export class Controller implements ChatViewListener {
   private async doConnect(): Promise<void> {
     await this.disconnect();
 
-    this.view.setState({ status: 'connecting' });
+    this.progressLines = [];
+    this.view.setState({ status: 'connecting', progress: [] });
 
     const creds = await loadCredentials();
     if (!creds || !creds.access_token) {
@@ -74,6 +78,7 @@ export class Controller implements ChatViewListener {
     await this.maybeShowFirstRunModelPicker();
 
     const settings = readSettings();
+    this.appendProgress({ message: `Loading model ${settings.model}…`, level: 'info' });
     const serverUrl = settings.serverUrlOverride || creds.server_url;
 
     const cliPath = resolveCliPath(this.context.extensionUri.fsPath, settings.cliPathOverride);
@@ -106,12 +111,7 @@ export class Controller implements ChatViewListener {
     });
 
     rpc.on('connecting_progress', (m: ConnectingProgressMsg) => {
-      this.log(`progress: ${m.message}`);
-      this.view.setState({
-        status: 'connecting',
-        progress: m.message,
-        warn: m.level === 'warn',
-      });
+      this.appendProgress({ message: m.message, level: m.level });
     });
     rpc.on('content_delta', (m: ContentDeltaMsg) => this.handleContentDelta(m.text));
     rpc.on('reasoning_delta', (m: ReasoningDeltaMsg) => this.handleReasoningDelta(m.text));
@@ -176,6 +176,7 @@ export class Controller implements ChatViewListener {
     this.turnRunning = false;
     this.currentAssistantId = undefined;
     this.currentReasoningId = undefined;
+    this.progressLines = [];
   }
 
   // ── ChatViewListener ──────────────────────────────────────────────
@@ -462,6 +463,25 @@ export class Controller implements ChatViewListener {
 
   private log(line: string): void {
     this.logChannel.appendLine(`[tanrenai] ${line}`);
+  }
+
+  /**
+   * Append a line to the connecting-state progress log and re-render. Skips
+   * consecutive duplicates so the polling loop's repeated "Downloading
+   * model (40%)…" emits don't pile up. Caps the buffer so a runaway emitter
+   * can't grow it without bound.
+   */
+  private appendProgress(line: { message: string; level: 'info' | 'warn' }): void {
+    const last = this.progressLines[this.progressLines.length - 1];
+    if (last && last.message === line.message && last.level === line.level) {
+      return;
+    }
+    this.progressLines.push(line);
+    if (this.progressLines.length > 200) {
+      this.progressLines.splice(0, this.progressLines.length - 200);
+    }
+    this.log(`progress${line.level === 'warn' ? ' (warn)' : ''}: ${line.message}`);
+    this.view.setState({ status: 'connecting', progress: [...this.progressLines] });
   }
 }
 

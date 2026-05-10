@@ -1,9 +1,14 @@
 import * as vscode from 'vscode';
 
+export interface ProgressLine {
+  message: string;
+  level: 'info' | 'warn';
+}
+
 export type ConnectionState =
   | { status: 'idle' }
   | { status: 'no_credentials' }
-  | { status: 'connecting'; progress?: string; warn?: boolean }
+  | { status: 'connecting'; progress: ProgressLine[] }
   | { status: 'connected'; model: string; toolCount: number }
   | { status: 'error'; message: string };
 
@@ -232,6 +237,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       .status-panel .label { opacity: 0.7; }
       .status-panel.error .label { color: var(--vscode-charts-red); }
+      .progress-log {
+        margin-top: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        max-height: 240px;
+        width: 100%;
+        max-width: 28rem;
+        overflow-y: auto;
+        background: var(--vscode-textCodeBlock-background);
+        border-radius: 4px;
+        font-family: var(--vscode-editor-font-family);
+        font-size: 0.8em;
+        text-align: left;
+        line-height: 1.45;
+        box-sizing: border-box;
+      }
+      .progress-log .line { white-space: pre-wrap; opacity: 0.85; }
+      .progress-log .line.warn { color: var(--vscode-charts-yellow); }
+      .progress-log .line.info { opacity: 0.85; }
+      .spinner {
+        display: inline-block;
+        width: 0.6em;
+        height: 0.6em;
+        margin-right: 0.4em;
+        border: 2px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        vertical-align: middle;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
@@ -302,17 +337,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             break;
           case 'connecting':
             statusEl.className = 'status-panel';
-            const progress = state.progress
-              ? '<div class="label" style="margin-top:0.25rem; font-size:0.85em; opacity:0.8;' +
-                (state.warn ? ' color: var(--vscode-charts-yellow);' : '') +
-                '">' + escape(state.progress) + '</div>'
+            const lines = (state.progress || [])
+              .map(p => '<div class="line ' + (p.level === 'warn' ? 'warn' : 'info') + '">' +
+                escape(p.message) + '</div>')
+              .join('');
+            const log = lines
+              ? '<div class="progress-log" id="progressLog">' + lines + '</div>'
               : '';
             statusEl.innerHTML =
-              '<div class="label">Connecting…</div>' + progress +
+              '<div class="label"><span class="spinner"></span>Connecting…</div>' +
+              log +
               '<div style="display:flex; gap:0.5rem; margin-top:0.75rem;">' +
               '<button id="cancelConnect" class="secondary">Cancel</button>' +
               '<button id="pickModel" class="secondary">Change Model…</button>' +
               '</div>';
+            const logEl = document.getElementById('progressLog');
+            if (logEl) logEl.scrollTop = logEl.scrollHeight;
             document.getElementById('cancelConnect').addEventListener('click', () => {
               vscode.postMessage({ type: 'cancel_connect' });
             });
