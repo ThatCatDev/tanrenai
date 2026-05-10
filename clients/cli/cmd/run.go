@@ -968,7 +968,63 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 		return client.StreamCompletion(ctx, req)
 	}
 
+	// In remote mode, wrap stream/complete so a transient provisioning
+	// error (GPU paused, model unloaded) waits for the platform to bring
+	// the GPU back and then retries — the conversation in deps.mgr is
+	// untouched, so the model gets the full prior context on retry.
+	if mode == sessionModeRemote {
+		deps.streamFn = withStreamGPURetry(deps.streamFn, client, model, log)
+		deps.completeFn = withCompleteGPURetry(deps.completeFn, client, model, log)
+	}
+
 	return deps, nil
+}
+
+// withStreamGPURetry wraps a StreamingCompletionFunc so that if the call
+// fails before streaming begins with an error indicating the platform is
+// provisioning / waking the GPU, it waits for the model to load and
+// retries. Once a stream has started successfully, errors mid-stream are
+// passed through to the caller — those are handled by the agent loop's
+// own retry-with-backoff.
+func withStreamGPURetry(
+	inner agent.StreamingCompletionFunc,
+	client *apiclient.Client,
+	model string,
+	log *startupLog,
+) agent.StreamingCompletionFunc {
+	return func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
+		ch, err := inner(ctx, req)
+		if err == nil || !isProvisioningInProgress(err) {
+			return ch, err
+		}
+		log.Info("GPU is sleeping — waking it up...")
+		if _, lerr := loadModelWithProgress(ctx, client, sessionModeRemote, model, log); lerr != nil {
+			return nil, fmt.Errorf("backend did not come back: %w", lerr)
+		}
+
+		return inner(ctx, req)
+	}
+}
+
+// withCompleteGPURetry is the non-streaming equivalent.
+func withCompleteGPURetry(
+	inner agent.CompletionFunc,
+	client *apiclient.Client,
+	model string,
+	log *startupLog,
+) agent.CompletionFunc {
+	return func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
+		resp, err := inner(ctx, req)
+		if err == nil || !isProvisioningInProgress(err) {
+			return resp, err
+		}
+		log.Info("GPU is sleeping — waking it up...")
+		if _, lerr := loadModelWithProgress(ctx, client, sessionModeRemote, model, log); lerr != nil {
+			return nil, fmt.Errorf("backend did not come back: %w", lerr)
+		}
+
+		return inner(ctx, req)
+	}
 }
 
 // assignToTUI copies sessionDeps fields onto a tuiApp.

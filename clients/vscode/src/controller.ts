@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { loadCredentials, deleteCredentials } from './auth/credentials';
+import { loadCredentials, deleteCredentials, saveCredentials } from './auth/credentials';
 import { runLoginFlow } from './auth/login';
 import { ChatViewProvider, ChatViewListener } from './chatViewProvider';
 import { resolveCliPath } from './rpc/cliPath';
@@ -452,7 +452,18 @@ export class Controller implements ChatViewListener {
 
   async logout(): Promise<void> {
     await this.disconnect();
-    await deleteCredentials();
+    // Preserve server_url across logout so a subsequent sign-in knows
+    // where the platform lives. Otherwise we'd fall back to the web URL
+    // as the API URL (wrong — that's the frontend, behind Cloudflare).
+    const existing = await loadCredentials();
+    if (existing?.server_url) {
+      await saveCredentials({
+        server_url: existing.server_url,
+        access_token: '',
+      });
+    } else {
+      await deleteCredentials();
+    }
     this.view.setState({ status: 'no_credentials' });
     void vscode.window.showInformationMessage('Tanrenai: logged out.');
   }
