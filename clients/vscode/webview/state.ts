@@ -59,6 +59,8 @@ export interface AppState {
   streamingTools: StreamingTool[];
   /** Attachments queued to send with the next user message. */
   pendingAttachments: SelectionAttachment[];
+  /** Live preview of the active editor's selection (null = no selection). */
+  availableSelection: SelectionAttachment | null;
 }
 
 export const initialState: AppState = {
@@ -70,6 +72,7 @@ export const initialState: AppState = {
   maxIterations: 0,
   streamingTools: [],
   pendingAttachments: [],
+  availableSelection: null,
 };
 
 export type Activity =
@@ -298,6 +301,8 @@ export function reduce(state: AppState, msg: Action): AppState {
         ...state,
         pendingAttachments: [...state.pendingAttachments, msg.selection],
       };
+    case 'available_selection':
+      return { ...state, availableSelection: msg.selection };
     case 'attach_remove':
       return {
         ...state,

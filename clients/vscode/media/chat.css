@@ -21,6 +21,10 @@ html,
 body {
   height: 100%;
   margin: 0;
+  /* Important — prevents the whole document from scrolling, which would
+   * take the header with it. The inner .messages container is the only
+   * scrollable thing. */
+  overflow: hidden;
 }
 body {
   font-family: var(--tn-body);
@@ -31,10 +35,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+#root {
+  height: 100%;
+}
+
 .root {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Defensive: never let the root expand past the viewport. */
+  max-height: 100%;
+  overflow: hidden;
 }
 
 /* ── eyebrow / metadata typography ─────────────────────────── */
@@ -611,6 +622,50 @@ body {
 .attach-btn {
   font-size: 9.5px !important;
   padding: 0.25rem 0.55rem !important;
+}
+
+.selection-hint {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+  padding: 0.32rem 0.55rem;
+  background: transparent;
+  border: 1px dashed var(--tn-rule-strong);
+  color: var(--tn-soft);
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+.selection-hint:hover {
+  border-color: var(--tn-accent);
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--tn-accent) 8%, transparent);
+}
+.selection-hint-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--tn-accent);
+  flex: 0 0 auto;
+  animation: tn-pulse 1.6s ease-in-out infinite;
+}
+.selection-hint-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selection-hint-action {
+  flex: 0 0 auto;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tn-accent);
 }
 
 /* ── composer: integrated into the bottom rule ─────────────── */

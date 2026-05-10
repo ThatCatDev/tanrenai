@@ -27,6 +27,7 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.commands.executeCommand('tanrenai.chat.focus');
     }),
     controller.watchSettings(),
+    controller.watchEditorSelection(),
   );
 
   // Auto-connect on activation if credentials exist.

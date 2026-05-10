@@ -58,4 +58,7 @@ export type WebviewOutbound =
   | { type: 'approval_resolved'; id: string }
   | { type: 'clear_chat' }
   | { type: 'mode'; mode: Mode }
-  | { type: 'attach_selection'; selection: SelectionAttachment };
+  | { type: 'attach_selection'; selection: SelectionAttachment }
+  /** Live preview of the active editor's selection (or null when there is none).
+   *  Webview renders a faint hint above the composer; user clicks to attach. */
+  | { type: 'available_selection'; selection: SelectionAttachment | null };

@@ -7,11 +7,27 @@ interface Props {
   turnRunning: boolean;
   mode: Mode;
   attachments: SelectionAttachment[];
+  availableSelection: SelectionAttachment | null;
   dispatch: (a: Action) => void;
 }
 
-export function Composer({ turnRunning, mode, attachments, dispatch }: Props) {
+export function Composer({ turnRunning, mode, attachments, availableSelection, dispatch }: Props) {
   const [value, setValue] = useState('');
+
+  // Suppress the live indicator when this exact selection is already
+  // attached — avoids showing "Selection available" alongside an
+  // identical chip.
+  const liveSelection =
+    availableSelection &&
+    !attachments.some(
+      (a) => a.path === availableSelection.path && a.text === availableSelection.text,
+    )
+      ? availableSelection
+      : null;
+  const liveLines =
+    liveSelection
+      ? Math.max(1, liveSelection.endLine - liveSelection.startLine + 1)
+      : 0;
 
   const submit = () => {
     const text = value.trim();
@@ -29,6 +45,19 @@ export function Composer({ turnRunning, mode, attachments, dispatch }: Props) {
 
   return (
     <div class="input-row">
+      {liveSelection && (
+        <button
+          class="selection-hint"
+          title={`Add ${liveSelection.label} to chat`}
+          onClick={() => send({ type: 'attach_request' })}
+        >
+          <span class="selection-hint-dot" aria-hidden="true" />
+          <span class="selection-hint-label">
+            {liveLines} line{liveLines === 1 ? '' : 's'} selected · {liveSelection.label}
+          </span>
+          <span class="selection-hint-action">+ Add</span>
+        </button>
+      )}
       {attachments.length > 0 && (
         <div class="attachments">
           {attachments.map((a, i) => (

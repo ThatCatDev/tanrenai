@@ -64,6 +64,7 @@ function renderRoot(state: AppState, dispatch: (a: Action) => void) {
         turnRunning={state.turnRunning}
         mode={state.mode}
         attachments={state.pendingAttachments}
+        availableSelection={state.availableSelection}
         dispatch={dispatch}
       />
       <Footer signedIn={true} mode={state.mode} />

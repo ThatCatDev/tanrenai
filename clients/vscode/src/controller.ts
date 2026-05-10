@@ -236,32 +236,33 @@ export class Controller implements ChatViewListener {
    * no selection) and forward it to the webview as an attachment proposal.
    */
   onAttachRequest(): void {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
+    const sel = captureActiveSelection({ acceptCursorLine: true });
+    if (!sel) {
       void vscode.window.showInformationMessage('Tanrenai: open a file and select some code first.');
 
       return;
     }
-    const sel = editor.selection;
-    const range = sel.isEmpty
-      ? editor.document.lineAt(sel.active.line).range
-      : new vscode.Range(sel.start, sel.end);
-    const text = editor.document.getText(range);
-    const path = vscode.workspace.asRelativePath(editor.document.uri, false);
-    const startLine = range.start.line + 1;
-    const endLine = range.end.line + 1;
-    const label = startLine === endLine ? `${path}:${startLine}` : `${path}:${startLine}-${endLine}`;
-    this.view.send({
-      type: 'attach_selection',
-      selection: {
-        label,
-        path,
-        languageId: editor.document.languageId,
-        startLine,
-        endLine,
-        text,
-      },
-    });
+    this.view.send({ type: 'attach_selection', selection: sel });
+  }
+
+  /**
+   * Watches editor selection changes and pushes the current selection to the
+   * webview as a live preview. The webview renders a hint above the composer
+   * so the user knows their highlight is "seen" — clicking attaches it.
+   */
+  watchEditorSelection(): vscode.Disposable {
+    const push = () => {
+      const sel = captureActiveSelection({ acceptCursorLine: false });
+      this.view.send({ type: 'available_selection', selection: sel });
+    };
+    const disposables: vscode.Disposable[] = [
+      vscode.window.onDidChangeTextEditorSelection(() => push()),
+      vscode.window.onDidChangeActiveTextEditor(() => push()),
+    ];
+    // Push the current state immediately too — covers the first mount.
+    push();
+
+    return vscode.Disposable.from(...disposables);
   }
 
   onSend(content: string, attachments?: import('./protocol').SelectionAttachment[]): void {
@@ -835,6 +836,38 @@ export class Controller implements ChatViewListener {
     this.log(`progress${line.level === 'warn' ? ' (warn)' : ''}: ${line.message}`);
     this.view.setState({ status: 'connecting', progress: [...this.progressLines] });
   }
+}
+
+/**
+ * Read the active editor's selection. With `acceptCursorLine`, an empty
+ * selection (just a cursor position) returns the current line; otherwise
+ * it returns null. Returns null when no editor is active.
+ */
+function captureActiveSelection(opts: { acceptCursorLine: boolean }):
+  | import('./protocol').SelectionAttachment
+  | null {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return null;
+  const sel = editor.selection;
+  if (sel.isEmpty && !opts.acceptCursorLine) return null;
+  const range = sel.isEmpty
+    ? editor.document.lineAt(sel.active.line).range
+    : new vscode.Range(sel.start, sel.end);
+  const text = editor.document.getText(range);
+  if (!text.trim()) return null;
+  const path = vscode.workspace.asRelativePath(editor.document.uri, false);
+  const startLine = range.start.line + 1;
+  const endLine = range.end.line + 1;
+  const label = startLine === endLine ? `${path}:${startLine}` : `${path}:${startLine}-${endLine}`;
+
+  return {
+    label,
+    path,
+    languageId: editor.document.languageId,
+    startLine,
+    endLine,
+    text,
+  };
 }
 
 /**
