@@ -44,6 +44,17 @@ func (r *Registry) Get(name string) Tool {
 	return r.tools[name]
 }
 
+// Replace swaps the tool registered under `name`. Returns false if the name
+// isn't already registered (so callers don't accidentally Replace a typo).
+func (r *Registry) Replace(name string, t Tool) bool {
+	if _, exists := r.tools[name]; !exists {
+		return false
+	}
+	r.tools[name] = t
+
+	return true
+}
+
 // APITools returns the tools in OpenAI API format for inclusion in requests.
 func (r *Registry) APITools() []api.Tool {
 	out := make([]api.Tool, 0, len(r.order))
