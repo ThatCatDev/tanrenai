@@ -29,6 +29,7 @@ export type WebviewOutbound =
   | { type: 'state'; state: ConnectionState }
   | { type: 'turn_start' }
   | { type: 'turn_end'; ok: boolean; reason?: string }
+  | { type: 'iteration_start'; iteration: number; maxIterations: number }
   | { type: 'message_start'; role: 'user' | 'assistant' | 'tool'; id: string; meta?: string }
   | { type: 'message_delta'; id: string; text: string; channel?: 'content' | 'reasoning' }
   | { type: 'message_end'; id: string }

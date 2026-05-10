@@ -1,10 +1,11 @@
 import { useEffect, useReducer } from 'preact/hooks';
+import { ActivityBar } from './components/Activity';
 import { Composer } from './components/Composer';
 import { Header } from './components/Header';
 import { MessageList } from './components/MessageList';
 import { StatusPanel } from './components/StatusPanel';
 import { getPersistedShell, onMessage, setPersistedShell } from './host';
-import { initialState, reduce, type AppState } from './state';
+import { deriveActivity, initialState, reduce, type AppState } from './state';
 
 export function App() {
   const [state, dispatch] = useReducer(reduce, initialState, init);
@@ -40,6 +41,7 @@ function renderRoot(state: AppState) {
       </div>
     );
   }
+  const activity = deriveActivity(state);
 
   return (
     <div class="root">
@@ -48,7 +50,12 @@ function renderRoot(state: AppState) {
         toolCount={state.connection.toolCount}
         mode={state.mode}
       />
-      <MessageList entries={state.entries} />
+      <MessageList entries={state.entries} activity={activity} />
+      <ActivityBar
+        activity={activity}
+        iteration={state.iteration}
+        maxIterations={state.maxIterations}
+      />
       <Composer turnRunning={state.turnRunning} mode={state.mode} />
     </div>
   );

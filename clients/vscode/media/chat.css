@@ -116,6 +116,59 @@ body {
   opacity: 0.6;
   text-transform: uppercase;
   margin-bottom: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.pulse {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: var(--vscode-charts-blue);
+  animation: pulse-fade 1.2s ease-in-out infinite;
+}
+@keyframes pulse-fade {
+  0%, 100% { opacity: 0.3; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+.caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 2px;
+  background: currentColor;
+  vertical-align: -2px;
+  animation: caret-blink 1s steps(2, start) infinite;
+  opacity: 0.7;
+}
+@keyframes caret-blink {
+  to { visibility: hidden; }
+}
+
+/* ── activity bar (live status: thinking / generating / running) ── */
+
+.activity {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  opacity: 0.85;
+  border-top: 1px solid var(--vscode-panel-border, transparent);
+  background: var(--vscode-sideBar-background);
+}
+.activity-dot {
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: var(--vscode-charts-blue);
+  animation: pulse-fade 1.2s ease-in-out infinite;
+}
+.activity-label {
+  font-family: var(--vscode-editor-font-family);
 }
 
 .tool {
@@ -128,6 +181,25 @@ body {
 }
 .tool.error {
   border-left-color: var(--vscode-charts-red);
+}
+.tool.running {
+  border-left-color: var(--vscode-charts-yellow);
+  animation: tool-pulse 1.4s ease-in-out infinite;
+}
+@keyframes tool-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
+}
+.tool-spinner {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  margin-right: 0.4em;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: spin 0.9s linear infinite;
 }
 .tool .name {
   font-weight: 600;

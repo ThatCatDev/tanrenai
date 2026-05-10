@@ -39,6 +39,8 @@ export interface AppState {
   mode: Mode;
   entries: Entry[];
   turnRunning: boolean;
+  iteration: number; // 0 when no turn or pre-iteration
+  maxIterations: number;
 }
 
 export const initialState: AppState = {
@@ -46,7 +48,40 @@ export const initialState: AppState = {
   mode: 'agent',
   entries: [],
   turnRunning: false,
+  iteration: 0,
+  maxIterations: 0,
 };
+
+export type Activity =
+  | { kind: 'idle' }
+  | { kind: 'thinking' }
+  | { kind: 'generating' }
+  | { kind: 'tool'; name: string };
+
+/** Derive what the agent is currently doing from observable state. */
+export function deriveActivity(state: AppState): Activity {
+  if (!state.turnRunning) {
+    return { kind: 'idle' };
+  }
+  // Walk entries from newest backwards.
+  for (let i = state.entries.length - 1; i >= 0; i--) {
+    const e = state.entries[i];
+    if (e.kind === 'tool' && !e.result) {
+      return { kind: 'tool', name: e.name };
+    }
+    if (e.kind === 'assistant' && e.open) {
+      // Reasoning got more text and content is empty → still thinking.
+      // Content has any chars → generating.
+      if (e.content.length > 0) {
+        return { kind: 'generating' };
+      }
+
+      return { kind: 'thinking' };
+    }
+  }
+
+  return { kind: 'thinking' };
+}
 
 /**
  * Apply a single inbound message. Returns the next state. Pure — caller
@@ -59,7 +94,7 @@ export function reduce(state: AppState, msg: WebviewOutbound): AppState {
     case 'mode':
       return { ...state, mode: msg.mode };
     case 'turn_start':
-      return { ...state, turnRunning: true };
+      return { ...state, turnRunning: true, iteration: 0, maxIterations: 0 };
     case 'turn_end': {
       const entries = msg.ok || !msg.reason
         ? closeOpenAssistants(state.entries)
@@ -68,8 +103,10 @@ export function reduce(state: AppState, msg: WebviewOutbound): AppState {
             { kind: 'error' as const, id: `e_${Date.now()}`, text: msg.reason },
           ];
 
-      return { ...state, turnRunning: false, entries };
+      return { ...state, turnRunning: false, entries, iteration: 0, maxIterations: 0 };
     }
+    case 'iteration_start':
+      return { ...state, iteration: msg.iteration, maxIterations: msg.maxIterations };
     case 'message_start': {
       if (msg.role === 'user') {
         return appendOrUpdate(state, {
