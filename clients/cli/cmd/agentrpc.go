@@ -317,6 +317,16 @@ func runAgentRPC(ctx context.Context) error {
 		}
 	}
 
+	// Ensure the project-local `.tanrenai/` exists in the workspace.
+	// It's the home for swarm's architect.md, project-scoped scrolls, and
+	// .tanrenai/permissions.json — all created on demand inside it.
+	// Pre-creating saves the agent from racing on first write.
+	if err := os.MkdirAll(".tanrenai", 0o755); err != nil {
+		// Non-fatal: report and continue. The user might be in a
+		// read-only workspace and we still want chat to work.
+		slog.Warn("agent-rpc: could not create .tanrenai directory", "error", err)
+	}
+
 	srv := newRPCServer(os.Stdout, init.InterceptedTools)
 
 	// Build session deps via the same setup the TUI/pipe use. Route
