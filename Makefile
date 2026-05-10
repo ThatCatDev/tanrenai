@@ -1,4 +1,4 @@
-.PHONY: build install uninstall clean test
+.PHONY: build install uninstall clean test vscode-bundle vscode-package
 
 PREFIX ?= $(HOME)/.local
 
@@ -46,7 +46,51 @@ test:
 	cd server && go test ./...
 	cd infra && go test ./...
 
+# ── VS Code extension bundling ────────────────────────────────────────────
+#
+# Cross-compile the CLI for every platform the VS Code extension needs to
+# support, dropping the binaries into clients/vscode/dist/bin/<plat>-<arch>/
+# where the extension's resolveCliPath() expects to find them.
+#
+# Directory names match Node's `process.platform`/`process.arch`:
+#   linux/amd64    → dist/bin/linux-x64/tanrenai
+#   linux/arm64    → dist/bin/linux-arm64/tanrenai
+#   darwin/amd64   → dist/bin/darwin-x64/tanrenai
+#   darwin/arm64   → dist/bin/darwin-arm64/tanrenai
+#   windows/amd64  → dist/bin/win32-x64/tanrenai.exe
+
+VSCODE_BIN := clients/vscode/dist/bin
+
+# Each target is "node-platform/node-arch=go-os/go-arch[/extension]".
+VSCODE_TARGETS := \
+	linux-x64=linux/amd64 \
+	linux-arm64=linux/arm64 \
+	darwin-x64=darwin/amd64 \
+	darwin-arm64=darwin/arm64 \
+	win32-x64=windows/amd64/.exe
+
+vscode-bundle:
+	@for spec in $(VSCODE_TARGETS); do \
+		dir=$${spec%%=*}; \
+		rest=$${spec#*=}; \
+		goos=$${rest%%/*}; rest2=$${rest#*/}; \
+		goarch=$${rest2%%/*}; \
+		ext=""; case "$$rest2" in */.exe) ext=".exe";; esac; \
+		out=$(VSCODE_BIN)/$$dir; \
+		mkdir -p "$$out"; \
+		echo "  → $$goos/$$goarch  $$out/tanrenai$$ext"; \
+		(cd clients/cli && CGO_ENABLED=0 GOOS=$$goos GOARCH=$$goarch \
+			go build -trimpath -ldflags="-s -w" -o ../../$$out/tanrenai$$ext .) \
+			|| exit 1; \
+	done
+	@echo "Bundled CLI binaries into $(VSCODE_BIN)/"
+
+# Build a publishable .vsix that includes the bundled CLI binaries.
+vscode-package: vscode-bundle
+	cd clients/vscode && npm install --no-audit --no-fund && npm run build && npx vsce package
+
 # ── Clean ────────────────────────────────────────────────────────────────
 
 clean:
 	rm -f clients/cli/tanrenai gpu/tanrenai-gpu server/tanrenai-server infra/tanrenai-infra
+	rm -rf $(VSCODE_BIN)
