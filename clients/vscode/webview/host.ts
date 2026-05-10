@@ -16,17 +16,38 @@ export function send(msg: WebviewInbound): void {
   api.postMessage(msg);
 }
 
-export function onMessage(handler: (msg: WebviewOutbound) => void): () => void {
-  const listener = (event: MessageEvent): void => {
-    const msg = event.data as WebviewOutbound;
-    if (!msg || typeof msg.type !== 'string') {
-      return;
-    }
-    handler(msg);
-  };
-  window.addEventListener('message', listener);
+// Register the message listener at module load — BEFORE Preact mounts —
+// so messages the host posts while the bundle is still booting (state,
+// transcript replay, mode) are not lost. They're buffered until a real
+// handler attaches via onMessage(); then drained in order.
+let activeHandler: ((msg: WebviewOutbound) => void) | undefined;
+let buffered: WebviewOutbound[] = [];
 
-  return () => window.removeEventListener('message', listener);
+window.addEventListener('message', (event: MessageEvent) => {
+  const msg = event.data as WebviewOutbound;
+  if (!msg || typeof msg.type !== 'string') {
+    return;
+  }
+  if (activeHandler) {
+    activeHandler(msg);
+  } else {
+    buffered.push(msg);
+  }
+});
+
+export function onMessage(handler: (msg: WebviewOutbound) => void): () => void {
+  activeHandler = handler;
+  // Flush anything that arrived while the App was mounting.
+  for (const msg of buffered) {
+    handler(msg);
+  }
+  buffered = [];
+
+  return () => {
+    if (activeHandler === handler) {
+      activeHandler = undefined;
+    }
+  };
 }
 
 /**

@@ -12,6 +12,11 @@ import {
 export interface RPCClientOptions {
   cliPath: string;
   args?: string[];
+  /**
+   * Subcommand name passed as the first arg. Defaults to "agent-rpc"; tests
+   * use empty string to spawn fake processes without a subcommand prefix.
+   */
+  subcommand?: string;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }
@@ -64,7 +69,10 @@ export class RPCClient extends EventEmitter {
       this.startupResolver = resolve;
       this.startupRejecter = reject;
 
-      const args = ['agent-rpc', ...(this.options.args ?? [])];
+      const subcommand = this.options.subcommand ?? 'agent-rpc';
+      const args = subcommand
+        ? [subcommand, ...(this.options.args ?? [])]
+        : (this.options.args ?? []);
       this.proc = spawn(this.options.cliPath, args, {
         env: this.options.env ?? process.env,
         cwd: this.options.cwd,
