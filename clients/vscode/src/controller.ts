@@ -441,11 +441,18 @@ export class Controller implements ChatViewListener {
     const serverUrl = settings.serverUrlOverride || existingCreds?.server_url || TANRENAI_WEB_URL;
 
     try {
-      await runLoginFlow({ webUrl: TANRENAI_WEB_URL, serverUrl });
+      this.log(`login: webUrl=${TANRENAI_WEB_URL}, serverUrl=${serverUrl}`);
+      await runLoginFlow({
+        webUrl: TANRENAI_WEB_URL,
+        serverUrl,
+        log: (msg) => this.log(`login: ${msg}`),
+      });
+      this.log('login: success');
       void vscode.window.showInformationMessage('Tanrenai: signed in.');
       await this.connect();
     } catch (err) {
       const message = (err as Error).message;
+      this.log(`login: failed — ${message}`);
       void vscode.window.showErrorMessage(`Tanrenai login failed: ${message}`);
     }
   }

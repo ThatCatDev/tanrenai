@@ -12,6 +12,8 @@ export interface LoginOptions {
   webUrl: string;
   /** Backend URL the credentials will record. */
   serverUrl: string;
+  /** Optional logger so the controller can surface what's happening. */
+  log?: (msg: string) => void;
 }
 
 /**
@@ -27,13 +29,16 @@ export async function runLoginFlow(opts: LoginOptions): Promise<Credentials> {
   const loginUrl =
     opts.webUrl.replace(/\/$/, '') +
     `/cli-login?callback=${encodeURIComponent(callbackUrl)}`;
+  const log = opts.log ?? (() => {});
 
   return new Promise<Credentials>((resolve, reject) => {
     let timeoutHandle: NodeJS.Timeout | undefined;
 
     const server = http.createServer((req, res) => {
+      log(`callback hit: ${req.method} ${req.url}`);
       const url = new URL(req.url ?? '/', `http://localhost:${CALLBACK_PORT}`);
       if (url.pathname !== '/callback') {
+        log(`  → 404 (wrong path: ${url.pathname})`);
         res.statusCode = 404;
         res.end('Not found');
 
@@ -43,6 +48,7 @@ export async function runLoginFlow(opts: LoginOptions): Promise<Credentials> {
       const errParam = url.searchParams.get('error');
       if (errParam) {
         const desc = url.searchParams.get('error_description') ?? '';
+        log(`  → error from web: ${errParam} ${desc}`);
         res.statusCode = 400;
         res.end(`Login failed: ${errParam} ${desc}`);
         cleanup();
@@ -52,11 +58,29 @@ export async function runLoginFlow(opts: LoginOptions): Promise<Credentials> {
       }
 
       const accessToken = url.searchParams.get('access_token');
+      log(`  → params: ${[...url.searchParams.keys()].join(',') || '(none)'}`);
       if (!accessToken) {
-        res.statusCode = 400;
-        res.end('Missing access_token');
-        cleanup();
-        reject(new Error('Login callback missing access_token'));
+        // OAuth "implicit" flows put the token in a URL fragment, which the
+        // browser doesn't send to the server. Serve a tiny page that
+        // re-submits with the fragment turned into a query string. The
+        // second hit lands here with proper params and resolves the flow.
+        log('  → no access_token in query — serving fragment-rescue page');
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(`<!doctype html><meta charset=utf-8><title>Tanrenai</title>
+<body style="font-family:system-ui;padding:3rem;background:#0f1419;color:#e6e6e6">
+<h2>Finishing sign-in…</h2>
+<p id=msg>If this doesn't auto-redirect, paste the callback URL into the
+terminal where you ran <code>tanrenai login</code>.</p>
+<script>
+  if (window.location.hash && window.location.hash.length > 1) {
+    var qs = window.location.hash.replace(/^#/, '?');
+    window.location.replace(window.location.pathname + qs);
+  } else {
+    document.getElementById('msg').textContent =
+      'No access_token in the URL. The web app did not include sign-in tokens — please retry.';
+  }
+</script></body>`);
 
         return;
       }
@@ -103,13 +127,16 @@ export async function runLoginFlow(opts: LoginOptions): Promise<Credentials> {
     });
 
     server.listen(CALLBACK_PORT, '127.0.0.1', () => {
+      log(`listening on 127.0.0.1:${CALLBACK_PORT}, waiting for callback`);
+      log(`opening browser → ${loginUrl}`);
       timeoutHandle = setTimeout(() => {
+        log('timed out after 5 min — the web app likely did not redirect');
         cleanup();
         reject(new Error('Login timed out — no callback received in 5 minutes'));
       }, LOGIN_TIMEOUT_MS);
 
       vscode.env.openExternal(vscode.Uri.parse(loginUrl)).then(undefined, () => {
-        // Browser failed to open — surface the URL for manual copy.
+        log('vscode.env.openExternal failed — falling back to manual notification');
         void vscode.window.showInformationMessage(
           `Open this URL to sign in: ${loginUrl}`,
         );
