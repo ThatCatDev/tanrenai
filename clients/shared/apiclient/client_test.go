@@ -647,7 +647,7 @@ func TestPullModel(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL)
-	ch, err := c.PullModel(context.Background(), "http://example.com/model.gguf")
+	ch, err := c.PullModel(context.Background(), "http://example.com/model.gguf", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -682,7 +682,7 @@ func TestPullModelError(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL)
-	_, err := c.PullModel(context.Background(), "http://example.com/model.gguf")
+	_, err := c.PullModel(context.Background(), "http://example.com/model.gguf", "")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -701,7 +701,7 @@ func TestPullModelInvalidJSON(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL)
-	ch, err := c.PullModel(context.Background(), "http://example.com/model.gguf")
+	ch, err := c.PullModel(context.Background(), "http://example.com/model.gguf", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

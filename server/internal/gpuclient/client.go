@@ -193,8 +193,12 @@ func (c *Client) ListModels(ctx context.Context) (*api.ModelListResponse, error)
 
 // PullModelStream sends a pull request to the GPU server and returns the raw
 // SSE response body. The caller is responsible for closing it.
-func (c *Client) PullModelStream(ctx context.Context, url string) (io.ReadCloser, error) {
-	body, _ := json.Marshal(map[string]string{"url": url})
+//
+// When `name` is non-empty, it is forwarded as the `name` field on the pull
+// request so the GPU saves the downloaded file under that basename rather
+// than the source URL's filename. Empty name preserves the previous default.
+func (c *Client) PullModelStream(ctx context.Context, url, name string) (io.ReadCloser, error) {
+	body, _ := json.Marshal(map[string]string{"url": url, "name": name})
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/pull", bytes.NewReader(body))
 	if err != nil {
 		return nil, err

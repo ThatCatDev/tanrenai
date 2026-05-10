@@ -52,7 +52,7 @@ func isModelURI(s string) bool {
 func pullModelForRemote(ctx context.Context, client *apiclient.Client, uri string, log *startupLog) (string, error) {
 	log.Info("Pulling model from " + uri + "...")
 
-	ch, err := client.PullModel(ctx, uri)
+	ch, err := client.PullModel(ctx, uri, "")
 	if err != nil {
 		return "", err
 	}

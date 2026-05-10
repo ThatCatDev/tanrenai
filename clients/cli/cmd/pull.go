@@ -40,7 +40,8 @@ Supports:
 
 		client := newAuthedClient(activeURL, authToken)
 
-		ch, err := client.PullModel(context.Background(), modelURL)
+		saveAs, _ := cmd.Flags().GetString("name")
+		ch, err := client.PullModel(context.Background(), modelURL, saveAs)
 		if err != nil {
 			return fmt.Errorf("failed to pull model: %w", err)
 		}
@@ -98,5 +99,6 @@ func formatBytes(b int64) string {
 }
 
 func init() {
+	pullCmd.Flags().String("name", "", "save the GGUF on the GPU under this basename instead of the source URL's filename (preserves shard suffixes)")
 	rootCmd.AddCommand(pullCmd)
 }
