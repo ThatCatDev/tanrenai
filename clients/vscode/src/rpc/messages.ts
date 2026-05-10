@@ -23,6 +23,12 @@ export interface InitMsg {
 export interface UserMessageMsg {
   type: 'user_message';
   content: string;
+  /** Optional per-turn mode override; empty/undefined = use init's mode. */
+  mode?: 'chat' | 'agent' | 'swarm';
+}
+
+export interface ClearHistoryMsg {
+  type: 'clear_history';
 }
 
 export interface ToolResultMsg {
@@ -53,7 +59,8 @@ export type OutboundMsg =
   | ToolResultMsg
   | ApprovalResponseMsg
   | CancelMsg
-  | ShutdownMsg;
+  | ShutdownMsg
+  | ClearHistoryMsg;
 
 // ── Inbound (CLI → extension) ─────────────────────────────────────────
 
@@ -74,6 +81,10 @@ export interface ConnectingProgressMsg {
   type: 'connecting_progress';
   level: 'info' | 'warn';
   message: string;
+}
+
+export interface HistoryClearedMsg {
+  type: 'history_cleared';
 }
 
 export interface ContentDeltaMsg {
@@ -136,6 +147,7 @@ export interface ErrorMsg {
 export type InboundMsg =
   | ReadyMsg
   | ConnectingProgressMsg
+  | HistoryClearedMsg
   | ContentDeltaMsg
   | ReasoningDeltaMsg
   | IterationStartMsg

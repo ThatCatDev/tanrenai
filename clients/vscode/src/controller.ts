@@ -20,6 +20,25 @@ import { showModelPicker } from './ui/modelPicker';
 
 const DEFAULT_MODEL = 'Qwen3.6-35B-A3B-UD-Q4_K_M';
 
+type Mode = 'chat' | 'agent' | 'swarm';
+
+type TranscriptEntry =
+  | { kind: 'user'; id: string; content: string }
+  | {
+      kind: 'assistant';
+      id: string;
+      content: string;
+      reasoning: string;
+    }
+  | {
+      kind: 'tool';
+      id: string;
+      name: string;
+      args: string;
+      intercepted: boolean;
+      result?: { ok: boolean; content?: string };
+    };
+
 const TANRENAI_WEB_URL = 'https://dev.tanrenai.com';
 const INTERCEPTED_TOOLS = interceptedToolNames;
 
@@ -37,6 +56,14 @@ export class Controller implements ChatViewListener {
   // Accumulating chronological log surfaced in the connecting state — same
   // shape as the TUI's startup log (Allocating GPU…, Downloading model…, etc.)
   private progressLines: { message: string; level: 'info' | 'warn' }[] = [];
+  // Source of truth for the rendered chat. The webview's DOM is disposed
+  // when the sidebar view is hidden, so we replay this on every remount.
+  private transcript: TranscriptEntry[] = [];
+  // Current open assistant entry receiving deltas (one per channel).
+  private openContentId?: string;
+  private openReasoningId?: string;
+  // Mode to send with each user_message. Persisted to settings on change.
+  private mode: Mode = 'chat';
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -78,6 +105,8 @@ export class Controller implements ChatViewListener {
     await this.maybeShowFirstRunModelPicker();
 
     const settings = readSettings();
+    this.mode = settings.mode;
+    this.view.send({ type: 'mode', mode: this.mode });
     this.appendProgress({ message: `Loading model ${settings.model}…`, level: 'info' });
     const serverUrl = settings.serverUrlOverride || creds.server_url;
 
@@ -113,6 +142,9 @@ export class Controller implements ChatViewListener {
     rpc.on('connecting_progress', (m: ConnectingProgressMsg) => {
       this.appendProgress({ message: m.message, level: m.level });
     });
+    rpc.on('history_cleared', () => {
+      this.log('history cleared');
+    });
     rpc.on('content_delta', (m: ContentDeltaMsg) => this.handleContentDelta(m.text));
     rpc.on('reasoning_delta', (m: ReasoningDeltaMsg) => this.handleReasoningDelta(m.text));
     rpc.on('tool_call', (m: ToolCallMsg) => this.handleToolCall(m, false));
@@ -133,7 +165,8 @@ export class Controller implements ChatViewListener {
     try {
       const ready = await rpc.start({
         model: settings.model,
-        agentMode: settings.agentMode,
+        agentMode: this.mode !== 'chat',
+        swarmMode: this.mode === 'swarm',
         interceptedTools: INTERCEPTED_TOOLS,
         workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
       });
@@ -176,7 +209,10 @@ export class Controller implements ChatViewListener {
     this.turnRunning = false;
     this.currentAssistantId = undefined;
     this.currentReasoningId = undefined;
+    this.openContentId = undefined;
+    this.openReasoningId = undefined;
     this.progressLines = [];
+    this.transcript = [];
   }
 
   // ── ChatViewListener ──────────────────────────────────────────────
@@ -193,12 +229,109 @@ export class Controller implements ChatViewListener {
     this.turnRunning = true;
     this.currentAssistantId = undefined;
     this.currentReasoningId = undefined;
+    this.openContentId = undefined;
+    this.openReasoningId = undefined;
+
+    // Record + render the user's turn.
+    const userId = `u_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    this.transcript.push({ kind: 'user', id: userId, content });
+    this.view.send({ type: 'message_start', role: 'user', id: userId });
+    this.view.send({ type: 'message_delta', id: userId, text: content });
+    this.view.send({ type: 'message_end', id: userId });
     this.view.send({ type: 'turn_start' });
+
     try {
-      this.rpc.send({ type: 'user_message', content });
+      this.rpc.send({ type: 'user_message', content, mode: this.mode });
     } catch (err) {
       this.turnRunning = false;
       this.view.send({ type: 'turn_end', ok: false, reason: (err as Error).message });
+    }
+  }
+
+  onSetMode(mode: Mode): void {
+    if (this.mode === mode) {
+      return;
+    }
+    this.mode = mode;
+    void vscode.workspace
+      .getConfiguration('tanrenai')
+      .update('mode', mode, vscode.ConfigurationTarget.Global);
+    this.view.send({ type: 'mode', mode });
+    this.log(`mode → ${mode}`);
+  }
+
+  onClearChat(): void {
+    this.transcript = [];
+    this.openContentId = undefined;
+    this.openReasoningId = undefined;
+    this.view.send({ type: 'clear_chat' });
+    if (this.rpc) {
+      try {
+        this.rpc.send({ type: 'clear_history' });
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  onMounted(): void {
+    // The webview was just resolved (initial mount or remount after being
+    // hidden). Replay the transcript so chat history isn't lost.
+    this.view.send({ type: 'mode', mode: this.mode });
+    for (const entry of this.transcript) {
+      this.replayEntry(entry);
+    }
+    if (this.turnRunning) {
+      this.view.send({ type: 'turn_start' });
+    }
+  }
+
+  private replayEntry(entry: TranscriptEntry): void {
+    switch (entry.kind) {
+      case 'user':
+        this.view.send({ type: 'message_start', role: 'user', id: entry.id });
+        this.view.send({ type: 'message_delta', id: entry.id, text: entry.content });
+        this.view.send({ type: 'message_end', id: entry.id });
+        break;
+      case 'assistant':
+        if (entry.reasoning) {
+          this.view.send({
+            type: 'message_start',
+            role: 'assistant',
+            id: entry.id + '_r',
+            meta: 'thinking',
+          });
+          this.view.send({
+            type: 'message_delta',
+            id: entry.id + '_r',
+            text: entry.reasoning,
+            channel: 'reasoning',
+          });
+          this.view.send({ type: 'message_end', id: entry.id + '_r' });
+        }
+        if (entry.content) {
+          this.view.send({ type: 'message_start', role: 'assistant', id: entry.id });
+          this.view.send({ type: 'message_delta', id: entry.id, text: entry.content });
+          this.view.send({ type: 'message_end', id: entry.id });
+        }
+        break;
+      case 'tool':
+        this.view.send({
+          type: 'tool_call',
+          id: entry.id,
+          name: entry.name,
+          arguments: entry.args,
+          intercepted: entry.intercepted,
+        });
+        if (entry.result) {
+          this.view.send({
+            type: 'tool_result',
+            id: entry.id,
+            ok: entry.result.ok,
+            content: entry.result.content,
+          });
+        }
+        break;
     }
   }
 
@@ -318,14 +451,20 @@ export class Controller implements ChatViewListener {
    * effect at the next handshake.
    */
   watchSettings(): vscode.Disposable {
-    const reconnectKeys = ['tanrenai.model', 'tanrenai.serverUrl', 'tanrenai.agentMode', 'tanrenai.cliPath'];
+    const reconnectKeys = ['tanrenai.model', 'tanrenai.serverUrl', 'tanrenai.cliPath'];
+    const modeKey = 'tanrenai.mode';
 
     return vscode.workspace.onDidChangeConfiguration(async (event) => {
+      // Mode changes are cheap (per-turn override) — absorb without prompting.
+      if (event.affectsConfiguration(modeKey)) {
+        const settings = readSettings();
+        this.mode = settings.mode;
+        this.view.send({ type: 'mode', mode: this.mode });
+      }
       const changed = reconnectKeys.find((k) => event.affectsConfiguration(k));
       if (!changed) {
         return;
       }
-      // Quiet path: not connected yet → just absorb the change for next connect.
       if (!this.rpc) {
         return;
       }
@@ -345,14 +484,29 @@ export class Controller implements ChatViewListener {
   private handleContentDelta(text: string): void {
     if (!this.currentAssistantId) {
       this.currentAssistantId = `a_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      this.openContentId = this.currentAssistantId;
+      this.transcript.push({
+        kind: 'assistant',
+        id: this.currentAssistantId,
+        content: '',
+        reasoning: '',
+      });
       this.view.send({ type: 'message_start', role: 'assistant', id: this.currentAssistantId });
     }
+    this.appendToOpenAssistant('content', text);
     this.view.send({ type: 'message_delta', id: this.currentAssistantId, text, channel: 'content' });
   }
 
   private handleReasoningDelta(text: string): void {
     if (!this.currentReasoningId) {
       this.currentReasoningId = `r_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      this.openReasoningId = this.currentReasoningId;
+      this.transcript.push({
+        kind: 'assistant',
+        id: this.currentReasoningId,
+        content: '',
+        reasoning: '',
+      });
       this.view.send({
         type: 'message_start',
         role: 'assistant',
@@ -360,6 +514,7 @@ export class Controller implements ChatViewListener {
         meta: 'thinking',
       });
     }
+    this.appendToOpenAssistant('reasoning', text);
     this.view.send({
       type: 'message_delta',
       id: this.currentReasoningId,
@@ -368,15 +523,34 @@ export class Controller implements ChatViewListener {
     });
   }
 
+  private appendToOpenAssistant(channel: 'content' | 'reasoning', text: string): void {
+    const id = channel === 'content' ? this.openContentId : this.openReasoningId;
+    if (!id) {
+      return;
+    }
+    for (let i = this.transcript.length - 1; i >= 0; i--) {
+      const e = this.transcript[i];
+      if (e.kind === 'assistant' && e.id === id) {
+        if (channel === 'content') {
+          e.content += text;
+        } else {
+          e.reasoning += text;
+        }
+
+        return;
+      }
+    }
+  }
+
   private handleToolCall(m: { id: string; name: string; arguments: string }, intercepted: boolean): void {
-    if (this.currentAssistantId) {
-      this.view.send({ type: 'message_end', id: this.currentAssistantId });
-      this.currentAssistantId = undefined;
-    }
-    if (this.currentReasoningId) {
-      this.view.send({ type: 'message_end', id: this.currentReasoningId });
-      this.currentReasoningId = undefined;
-    }
+    this.closeOpenAssistantBubbles();
+    this.transcript.push({
+      kind: 'tool',
+      id: m.id,
+      name: m.name,
+      args: m.arguments,
+      intercepted,
+    });
     this.view.send({
       type: 'tool_call',
       id: m.id,
@@ -397,6 +571,7 @@ export class Controller implements ChatViewListener {
   }): Promise<void> {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
     const result = await dispatchTool(m.name, m.arguments, workspaceRoot);
+    this.recordToolResult(m.id, result.ok, result.ok ? result.content : result.error);
     this.view.send({
       type: 'tool_result',
       id: m.id,
@@ -413,6 +588,7 @@ export class Controller implements ChatViewListener {
   }
 
   private handleToolResult(m: ToolResultLocalMsg): void {
+    this.recordToolResult(m.id, m.ok, m.ok ? m.content : m.error);
     this.view.send({
       type: 'tool_result',
       id: m.id,
@@ -421,15 +597,32 @@ export class Controller implements ChatViewListener {
     });
   }
 
-  private handleIterationStart(): void {
+  private recordToolResult(id: string, ok: boolean, content?: string): void {
+    for (let i = this.transcript.length - 1; i >= 0; i--) {
+      const e = this.transcript[i];
+      if (e.kind === 'tool' && e.id === id) {
+        e.result = { ok, content };
+
+        return;
+      }
+    }
+  }
+
+  private closeOpenAssistantBubbles(): void {
     if (this.currentAssistantId) {
       this.view.send({ type: 'message_end', id: this.currentAssistantId });
       this.currentAssistantId = undefined;
+      this.openContentId = undefined;
     }
     if (this.currentReasoningId) {
       this.view.send({ type: 'message_end', id: this.currentReasoningId });
       this.currentReasoningId = undefined;
+      this.openReasoningId = undefined;
     }
+  }
+
+  private handleIterationStart(): void {
+    this.closeOpenAssistantBubbles();
   }
 
   private handleApprovalRequired(m: { id: string; name: string; arguments: string }): void {
@@ -449,14 +642,7 @@ export class Controller implements ChatViewListener {
   }
 
   private handleTurnDone(m: TurnDoneMsg): void {
-    if (this.currentAssistantId) {
-      this.view.send({ type: 'message_end', id: this.currentAssistantId });
-      this.currentAssistantId = undefined;
-    }
-    if (this.currentReasoningId) {
-      this.view.send({ type: 'message_end', id: this.currentReasoningId });
-      this.currentReasoningId = undefined;
-    }
+    this.closeOpenAssistantBubbles();
     this.turnRunning = false;
     this.view.send({ type: 'turn_end', ok: m.ok, reason: m.reason });
   }

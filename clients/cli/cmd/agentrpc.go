@@ -46,6 +46,13 @@ type rpcInitMsg struct {
 type rpcUserMessageMsg struct {
 	Type    string `json:"type"`
 	Content string `json:"content"`
+	// Optional per-turn mode override: "chat" | "agent" | "swarm".
+	// Empty string = use whatever mode `init` configured.
+	Mode string `json:"mode,omitempty"`
+}
+
+type rpcClearHistoryMsg struct {
+	Type string `json:"type"`
 }
 
 type rpcToolResultMsg struct {
@@ -75,6 +82,10 @@ type rpcConnectingProgressMsg struct {
 	Type    string `json:"type"`
 	Level   string `json:"level"` // "info" | "warn"
 	Message string `json:"message"`
+}
+
+type rpcHistoryClearedMsg struct {
+	Type string `json:"type"`
 }
 
 type rpcTool struct {
@@ -388,6 +399,10 @@ func runAgentRPC(ctx context.Context) error {
 
 				continue
 			}
+			// Apply per-turn mode override, if any. The dispatcher reads
+			// deps.agentMode/swarmMode at the top of runRPCTurn so flipping
+			// these here takes effect immediately.
+			applyTurnMode(deps, msg.Mode)
 			turnCtx, cancel := context.WithCancel(ctx)
 			turn.cancel = cancel
 			turn.running.Store(true)
@@ -396,6 +411,12 @@ func runAgentRPC(ctx context.Context) error {
 				defer cancel()
 				runRPCTurn(turnCtx, deps, srv, input)
 			}(msg.Content)
+
+		case "clear_history":
+			if deps.mgr != nil {
+				deps.mgr.Clear()
+			}
+			_ = srv.write(rpcHistoryClearedMsg{Type: "history_cleared"})
 
 		case "tool_result":
 			var msg rpcToolResultMsg
@@ -430,6 +451,24 @@ func runAgentRPC(ctx context.Context) error {
 		default:
 			srv.writeError(fmt.Sprintf("unknown message type %q", env.Type), false)
 		}
+	}
+}
+
+// applyTurnMode mutates deps.agentMode/swarmMode based on the optional
+// per-turn override carried in user_message. Empty mode = no change.
+func applyTurnMode(deps *sessionDeps, mode string) {
+	switch mode {
+	case "":
+		return
+	case "chat":
+		deps.agentMode = false
+		deps.swarmMode = false
+	case "agent":
+		deps.agentMode = true
+		deps.swarmMode = false
+	case "swarm":
+		deps.agentMode = true
+		deps.swarmMode = true
 	}
 }
 

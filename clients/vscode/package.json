@@ -66,10 +66,16 @@
           "default": "Qwen3.6-35B-A3B-UD-Q4_K_M",
           "description": "Default model to load when starting a session."
         },
+        "tanrenai.mode": {
+          "type": "string",
+          "enum": ["chat", "agent", "swarm"],
+          "default": "agent",
+          "description": "Default mode: chat (no tools), agent (single agent with tools), swarm (multi-agent orchestrator)."
+        },
         "tanrenai.agentMode": {
           "type": "boolean",
           "default": true,
-          "description": "Enable agent mode (tool calling) by default."
+          "description": "Legacy: enable agent mode. Use `tanrenai.mode` instead."
         },
         "tanrenai.cliPath": {
           "type": "string",

@@ -17,6 +17,8 @@ export type WebviewInbound =
   | { type: 'cancel' }
   | { type: 'cancel_connect' }
   | { type: 'pick_model' }
+  | { type: 'clear_chat' }
+  | { type: 'set_mode'; mode: 'chat' | 'agent' | 'swarm' }
   | { type: 'login' }
   | { type: 'reconnect' };
 
@@ -28,15 +30,21 @@ export type WebviewOutbound =
   | { type: 'message_delta'; id: string; text: string; channel?: 'content' | 'reasoning' }
   | { type: 'message_end'; id: string }
   | { type: 'tool_call'; id: string; name: string; arguments: string; intercepted: boolean }
-  | { type: 'tool_result'; id: string; ok: boolean; content?: string };
+  | { type: 'tool_result'; id: string; ok: boolean; content?: string }
+  | { type: 'clear_chat' }
+  | { type: 'mode'; mode: 'chat' | 'agent' | 'swarm' };
 
 export interface ChatViewListener {
   onSend(content: string): void;
   onCancel(): void;
   onCancelConnect(): void;
   onPickModel(): void;
+  onClearChat(): void;
+  onSetMode(mode: 'chat' | 'agent' | 'swarm'): void;
   onLogin(): void;
   onReconnect(): void;
+  /** Called after the webview has finished mounting (or remounting). */
+  onMounted(): void;
 }
 
 /**
@@ -81,6 +89,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'pick_model':
           this.listener?.onPickModel();
           break;
+        case 'clear_chat':
+          this.listener?.onClearChat();
+          break;
+        case 'set_mode':
+          this.listener?.onSetMode(msg.mode);
+          break;
         case 'login':
           this.listener?.onLogin();
           break;
@@ -90,12 +104,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
     });
 
-    // Flush buffered messages.
+    // Push the connection state immediately, then flush any buffered messages
+    // (typically empty), then notify the controller so it can replay the
+    // transcript — the webview was likely just remounted after being hidden.
     this.post({ type: 'state', state: this.state });
     for (const msg of this.pending) {
       this.post(msg);
     }
     this.pending = [];
+    this.listener?.onMounted();
   }
 
   setState(state: ConnectionState): void {
@@ -141,14 +158,51 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         flex-direction: column;
       }
       .header {
-        padding: 0.5rem 0.75rem;
+        padding: 0.4rem 0.5rem;
         font-size: 0.75rem;
-        opacity: 0.7;
+        opacity: 0.85;
         border-bottom: 1px solid var(--vscode-panel-border, transparent);
         flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
       }
+      .header .meta { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .header .ok { color: var(--vscode-charts-green); }
       .header .err { color: var(--vscode-charts-red); }
+      .modes {
+        display: flex;
+        gap: 1px;
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+        padding: 1px;
+        flex: 0 0 auto;
+      }
+      .modes button {
+        background: transparent;
+        color: var(--vscode-foreground);
+        border: none;
+        padding: 0.2rem 0.5rem;
+        font-size: 0.7rem;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .modes button.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .modes button:not(.active):hover { background: var(--vscode-list-hoverBackground); }
+      .icon-btn {
+        background: transparent;
+        color: var(--vscode-foreground);
+        border: none;
+        padding: 0.25rem 0.4rem;
+        font-size: 0.85rem;
+        border-radius: 3px;
+        cursor: pointer;
+        opacity: 0.7;
+      }
+      .icon-btn:hover { background: var(--vscode-list-hoverBackground); opacity: 1; }
       .messages {
         flex: 1 1 auto;
         overflow-y: auto;
@@ -308,19 +362,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         connected = true;
         headerEl.hidden = false;
         headerEl.innerHTML =
-          '<span class="ok">●</span> ' +
-          '<a href="#" id="hdrModel" style="color:inherit;text-decoration:underline dotted;">' +
-          escape(state.model) + '</a>' +
-          ' · ' + state.toolCount + ' tools';
+          '<span class="ok">●</span>' +
+          '<span class="meta"><a href="#" id="hdrModel" style="color:inherit;text-decoration:underline dotted;">' +
+          escape(state.model) + '</a> · ' + state.toolCount + ' tools</span>' +
+          '<div class="modes" role="tablist">' +
+          '<button data-mode="chat" id="m_chat" title="Chat — no tools">Chat</button>' +
+          '<button data-mode="agent" id="m_agent" title="Agent — single agent with tools">Agent</button>' +
+          '<button data-mode="swarm" id="m_swarm" title="Swarm — multi-agent orchestrator">Swarm</button>' +
+          '</div>' +
+          '<button class="icon-btn" id="hdrClear" title="Clear chat">✕</button>';
         document.getElementById('hdrModel').addEventListener('click', (e) => {
           e.preventDefault();
           vscode.postMessage({ type: 'pick_model' });
         });
+        document.getElementById('hdrClear').addEventListener('click', () => {
+          vscode.postMessage({ type: 'clear_chat' });
+        });
+        ['chat','agent','swarm'].forEach((m) => {
+          document.getElementById('m_' + m).addEventListener('click', () => {
+            vscode.postMessage({ type: 'set_mode', mode: m });
+          });
+        });
+        applyModeActive();
         messagesEl.hidden = false;
         inputRow.hidden = false;
         statusEl.innerHTML = '';
         statusEl.className = 'status-panel';
         statusEl.style.display = 'none';
+      }
+
+      let currentMode = 'agent';
+      function applyModeActive() {
+        ['chat','agent','swarm'].forEach((m) => {
+          const el = document.getElementById('m_' + m);
+          if (el) el.classList.toggle('active', m === currentMode);
+        });
       }
 
       function showStatus(state) {
@@ -450,13 +526,74 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       function send() {
         const text = inputEl.value.trim();
-        if (!text || turnRunning || !connected) return;
+        if (!text || !connected) return;
+
+        // Slash-command shortcuts. These don't go to the model — they map
+        // to the same UI actions as the buttons in the header.
+        if (text.startsWith('/')) {
+          const handled = handleSlashCommand(text);
+          if (handled) {
+            inputEl.value = '';
+
+            return;
+          }
+        }
+        if (turnRunning) return;
+
         inputEl.value = '';
-        const userId = 'u_' + Date.now();
-        startMessage(userId, 'user');
-        appendDelta(userId, text);
-        endMessage(userId);
         vscode.postMessage({ type: 'send', content: text });
+      }
+
+      function handleSlashCommand(text) {
+        const parts = text.trim().split(/\s+/);
+        const cmd = parts[0].toLowerCase();
+        switch (cmd) {
+          case '/clear':
+            vscode.postMessage({ type: 'clear_chat' });
+
+            return true;
+          case '/chat':
+            vscode.postMessage({ type: 'set_mode', mode: 'chat' });
+
+            return true;
+          case '/agent':
+            vscode.postMessage({ type: 'set_mode', mode: 'agent' });
+
+            return true;
+          case '/swarm':
+            if (parts[1] === 'off') {
+              vscode.postMessage({ type: 'set_mode', mode: 'agent' });
+            } else {
+              vscode.postMessage({ type: 'set_mode', mode: 'swarm' });
+            }
+
+            return true;
+          case '/model':
+            vscode.postMessage({ type: 'pick_model' });
+
+            return true;
+          case '/help':
+            renderHelp();
+
+            return true;
+          default:
+            return false;
+        }
+      }
+
+      function renderHelp() {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg reasoning';
+        wrap.textContent =
+          'Slash commands:\n' +
+          '  /clear              Clear chat\n' +
+          '  /chat               Switch to plain chat\n' +
+          '  /agent              Switch to agent mode\n' +
+          '  /swarm [off]        Toggle swarm mode\n' +
+          '  /model              Choose model\n' +
+          '  /help               Show this list';
+        messagesEl.appendChild(wrap);
+        scrollToBottom();
       }
 
       sendBtn.addEventListener('click', send);
@@ -506,6 +643,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             break;
           case 'tool_result':
             renderToolResult(msg.id, msg.ok, msg.content);
+            break;
+          case 'mode':
+            currentMode = msg.mode;
+            applyModeActive();
+            break;
+          case 'clear_chat':
+            messagesEl.innerHTML = '';
+            messageNodes.clear();
             break;
         }
       });
