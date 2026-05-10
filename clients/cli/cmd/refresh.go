@@ -66,6 +66,9 @@ func refreshCredentials(creds *Credentials) (*Credentials, error) {
 		return creds, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Non-default UA so Cloudflare et al. don't reject the request as a
+	// bot before it reaches the platform.
+	req.Header.Set("User-Agent", "tanrenai-cli/0.1")
 
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
