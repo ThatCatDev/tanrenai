@@ -1,0 +1,93 @@
+{
+  "name": "tanrenai",
+  "displayName": "Tanrenai",
+  "description": "Agentic coding assistant — runs the Tanrenai agent inside VS Code",
+  "version": "0.1.0",
+  "publisher": "ThatCatDev",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:tanrenai.chat"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tanrenai",
+          "title": "Tanrenai",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "tanrenai": [
+        {
+          "type": "webview",
+          "id": "tanrenai.chat",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "tanrenai.login",
+        "title": "Tanrenai: Login"
+      },
+      {
+        "command": "tanrenai.logout",
+        "title": "Tanrenai: Logout"
+      },
+      {
+        "command": "tanrenai.reconnect",
+        "title": "Tanrenai: Reconnect"
+      }
+    ],
+    "configuration": {
+      "title": "Tanrenai",
+      "properties": {
+        "tanrenai.serverUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Backend server URL. Empty = use the URL from credentials.json."
+        },
+        "tanrenai.model": {
+          "type": "string",
+          "default": "Qwen3.6-35B-A3B-UD-Q4_K_M",
+          "description": "Default model to load when starting a session."
+        },
+        "tanrenai.agentMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable agent mode (tool calling) by default."
+        },
+        "tanrenai.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Override path to the tanrenai CLI binary. Empty = use the bundled binary or `tanrenai` from PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "package": "vsce package",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.2.0"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+out/
+dist/extension.js
+dist/extension.js.map
+dist/bin/
+*.vsix
+.vscode-test/
+
+# The repo-level .gitignore excludes `.vscode/` everywhere; we want to
+# share the extension dev-host launch config, but nothing else.
+!.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+
