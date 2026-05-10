@@ -48,7 +48,12 @@ type TranscriptEntry =
       resolved: boolean;
     };
 
+// Web frontend — handles the OAuth flow.
 const TANRENAI_WEB_URL = 'https://dev.tanrenai.com';
+// Backend API — handles model loading, completions, memory, etc. Separate
+// host from the web frontend (the SvelteKit app at TANRENAI_WEB_URL
+// serves /cli-login but not /api/*).
+const TANRENAI_API_URL = 'https://api.dev.tanrenai.com';
 const INTERCEPTED_TOOLS = interceptedToolNames;
 
 export class Controller implements ChatViewListener {
@@ -122,7 +127,15 @@ export class Controller implements ChatViewListener {
     this.mode = settings.mode;
     this.view.send({ type: 'mode', mode: this.mode });
     this.appendProgress({ message: `Loading model ${settings.model}…`, level: 'info' });
-    const serverUrl = settings.serverUrlOverride || creds.server_url;
+    // If the stored server_url is the web frontend (the SvelteKit app that
+    // serves /cli-login but not /api/*), fall back to the API host. This
+    // self-heals credentials written by older versions of the extension
+    // that didn't distinguish the two.
+    let serverUrl = settings.serverUrlOverride || creds.server_url;
+    if (!settings.serverUrlOverride && isLikelyWebFrontend(serverUrl)) {
+      this.log(`server_url ${serverUrl} looks like the web frontend — using ${TANRENAI_API_URL} instead`);
+      serverUrl = TANRENAI_API_URL;
+    }
 
     const cliPath = resolveCliPath(this.context.extensionUri.fsPath, settings.cliPathOverride);
     this.log(`spawning ${cliPath} agent-rpc`);
@@ -486,38 +499,15 @@ export class Controller implements ChatViewListener {
       return existing.server_url;
     }
 
-    const entered = await vscode.window.showInputBox({
-      title: 'Tanrenai: backend server URL',
-      prompt:
-        'The URL of your tanrenai-server (NOT the web frontend). ' +
-        'For a vast.ai deployment this is the Headscale/Tailscale tunnel IP, e.g. http://100.64.10.5:8080',
-      placeHolder: 'http://100.64.10.5:8080',
-      ignoreFocusOut: true,
-      validateInput: (v) => {
-        const t = v.trim();
-        if (!t) return 'Required';
-        try {
-          new URL(t);
-        } catch {
-          return 'Must be a valid URL (with http:// or https://)';
-        }
-        if (isLikelyWebFrontend(t)) {
-          return 'That looks like the web frontend URL — set this to the backend (tanrenai-server) URL instead.';
-        }
-
-        return undefined;
-      },
-    });
-    if (!entered) {
-      return undefined;
-    }
-    const url = entered.trim();
+    // Default: the platform's hosted API. Matches what the terminal CLI's
+    // `tanrenai login --platform-url https://api.dev.tanrenai.com` uses.
+    // Persist it so future activations don't re-prompt.
     await vscode.workspace
       .getConfiguration('tanrenai')
-      .update('serverUrl', url, vscode.ConfigurationTarget.Global);
-    this.log(`login: saved tanrenai.serverUrl = ${url}`);
+      .update('serverUrl', TANRENAI_API_URL, vscode.ConfigurationTarget.Global);
+    this.log(`login: defaulted tanrenai.serverUrl = ${TANRENAI_API_URL}`);
 
-    return url;
+    return TANRENAI_API_URL;
   }
 
   async logout(): Promise<void> {
