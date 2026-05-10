@@ -559,6 +559,14 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 func (t *tuiApp) startSwarmAgentTurn(input string) {
 	t.mgr.Append(api.Message{Role: "user", Content: input})
 
+	t.app.QueueUpdateDraw(func() {
+		t.swarmRunning = true
+		t.swarmPlan = nil
+		t.swarmDepth = 0
+		t.setSwarmPanelVisible(true)
+		t.refreshSwarmPanel()
+	})
+
 	if t.scrollsEnabled {
 		matched := scrolls.Match(t.allScrolls, input, 3)
 		if len(matched) > 0 {
@@ -746,6 +754,10 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 				}
 				t.addLine("")
 				t.refreshChatView()
+
+				t.swarmPlan = plan
+				t.swarmDepth = depth
+				t.refreshSwarmPanel()
 			})
 		},
 		OnWorkerStart: func(depth, stepIdx int, step *agent.PlanStep) {
@@ -759,6 +771,7 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 					t.statusText = fmt.Sprintf("Sub-worker %d", step.Index)
 				}
 				t.updateStatusBar()
+				t.refreshSwarmPanel()
 			})
 		},
 		OnWorkerDone: func(depth, stepIdx int, step *agent.PlanStep) {
@@ -771,6 +784,7 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 				}
 				t.addLine(fmt.Sprintf("  %s%s Worker %d: %s", tree, icon, step.Index, step.Status.String()))
 				t.refreshChatView()
+				t.refreshSwarmPanel()
 			})
 		},
 		OnVerifyStart: func() {
@@ -792,6 +806,10 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 	t.mu.Unlock()
 
 	t.app.QueueUpdateDraw(func() {
+		t.swarmRunning = false
+		t.swarmPlan = nil
+		t.swarmDepth = 0
+		t.setSwarmPanelVisible(false)
 		t.handleTurnDone(result, windowedMsgs, err)
 	})
 }
