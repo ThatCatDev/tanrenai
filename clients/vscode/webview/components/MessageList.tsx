@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { send } from '../host';
 import type { Activity, Entry } from '../state';
 
@@ -7,19 +7,90 @@ interface Props {
   activity: Activity;
 }
 
+// Scroll is "pinned to bottom" when the user is within this many pixels of
+// the bottom. Streaming content auto-scrolls only while pinned.
+const PIN_THRESHOLD = 80;
+
 export function MessageList({ entries, activity }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
-  // Auto-scroll on new entries / streaming.
+  const [pinned, setPinned] = useState(true);
+  // Track the last-known content height to detect "new content arrived
+  // while unpinned" — that's when we surface the Jump-to-latest button.
+  const lastHeightRef = useRef(0);
+  const [unreadGrowth, setUnreadGrowth] = useState(false);
+
+  const scrollToBottom = useCallback((smooth = false) => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  }, []);
+
+  // The id of the latest user message. When this changes, the user just
+  // submitted — force a scroll to bottom regardless of pinned state.
+  const lastUserId = (() => {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].kind === 'user') return entries[i].id;
+    }
+
+    return undefined;
+  })();
+
+  // 1. On user submit — pin and scroll.
+  useEffect(() => {
+    if (lastUserId) {
+      setPinned(true);
+      setUnreadGrowth(false);
+      scrollToBottom();
+    }
+  }, [lastUserId, scrollToBottom]);
+
+  // 2. On any content change — auto-scroll only while pinned. If unpinned,
+  //    flag that there's unread growth so the badge appears.
   useEffect(() => {
     const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const grew = el.scrollHeight > lastHeightRef.current;
+    lastHeightRef.current = el.scrollHeight;
+    if (pinned) {
+      scrollToBottom();
+      if (unreadGrowth) setUnreadGrowth(false);
+    } else if (grew) {
+      setUnreadGrowth(true);
+    }
   });
 
+  const onScroll = () => {
+    const el = ref.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nowPinned = distance < PIN_THRESHOLD;
+    if (nowPinned !== pinned) {
+      setPinned(nowPinned);
+    }
+    if (nowPinned && unreadGrowth) {
+      setUnreadGrowth(false);
+    }
+  };
+
   return (
-    <div class="messages" ref={ref}>
-      {entries.map((e) => (
-        <EntryView key={e.id} entry={e} activity={activity} />
-      ))}
+    <div class="messages-wrap">
+      <div class="messages" ref={ref} onScroll={onScroll}>
+        {entries.map((e) => (
+          <EntryView key={e.id} entry={e} activity={activity} />
+        ))}
+      </div>
+      {!pinned && unreadGrowth && (
+        <button
+          class="jump-to-latest"
+          onClick={() => {
+            setPinned(true);
+            setUnreadGrowth(false);
+            scrollToBottom(true);
+          }}
+        >
+          ↓ New messages
+        </button>
+      )}
     </div>
   );
 }
