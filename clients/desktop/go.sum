@@ -6,6 +6,8 @@ github.com/ThatCatDev/tanrenai-gpu v1.0.0 h1:8rjuv3R0QloyUcRc/3A52A3DVykqzVJpzhl
 github.com/ThatCatDev/tanrenai-gpu v1.0.0/go.mod h1:IZomtPO0SWLVuqgFWZQUg8hq0N78eOfjxKZZCPtU1lA=
 github.com/ThatCatDev/tanrenai-gpu v1.0.3-0.20260510001216-fa05af40c92e h1:usm2tlyQVpH91uYUDn8beWUC84v83TD5O6nqOAJGI4U=
 github.com/ThatCatDev/tanrenai-gpu v1.0.3-0.20260510001216-fa05af40c92e/go.mod h1:IZomtPO0SWLVuqgFWZQUg8hq0N78eOfjxKZZCPtU1lA=
+github.com/ThatCatDev/tanrenai-gpu v1.1.0 h1:CrfOuTjw9aQr6bdDYCmDYLAtd2Tipj0EbAR1NpU/KcE=
+github.com/ThatCatDev/tanrenai-gpu v1.1.0/go.mod h1:IZomtPO0SWLVuqgFWZQUg8hq0N78eOfjxKZZCPtU1lA=
 github.com/andybalholm/cascadia v1.3.3 h1:AG2YHrzJIm4BZ19iwJ/DAua6Btl3IwJX+VI4kktS1LM=
 github.com/andybalholm/cascadia v1.3.3/go.mod h1:xNd9bqTn98Ln4DwST8/nG+H0yuB8Hmgu1YHNnWw0GeA=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=

@@ -3,7 +3,7 @@ module github.com/ThatCatDev/tanrenai/desktop
 go 1.25.0
 
 require (
-	github.com/ThatCatDev/tanrenai-gpu v1.0.3-0.20260510001216-fa05af40c92e
+	github.com/ThatCatDev/tanrenai-gpu v1.1.0
 	github.com/ThatCatDev/tanrenai/server v0.0.0
 	github.com/ThatCatDev/tanrenai/shared v0.0.0
 	github.com/diamondburned/gotk4-adwaita/pkg v0.0.0-20250703085740-f81761ef0e0d
