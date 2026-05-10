@@ -16,7 +16,9 @@ export type ConnectionState =
   | { status: 'error'; message: string };
 
 export type WebviewInbound =
-  | { type: 'send'; content: string }
+  | { type: 'send'; content: string; attachments?: SelectionAttachment[] }
+  | { type: 'attach_request' }
+  | { type: 'attach_clear' }
   | { type: 'cancel' }
   | { type: 'cancel_connect' }
   | { type: 'pick_model' }
@@ -26,6 +28,20 @@ export type WebviewInbound =
   | { type: 'login' }
   | { type: 'logout' }
   | { type: 'reconnect' };
+
+export interface SelectionAttachment {
+  /** Display label, e.g. "src/foo.ts:12-34". */
+  label: string;
+  /** Workspace-relative or absolute path. */
+  path: string;
+  /** Detected language id (e.g. "typescript"). */
+  languageId: string;
+  /** 1-indexed line range. */
+  startLine: number;
+  endLine: number;
+  /** The selected text. */
+  text: string;
+}
 
 export type WebviewOutbound =
   | { type: 'state'; state: ConnectionState }
@@ -41,4 +57,5 @@ export type WebviewOutbound =
   | { type: 'approval_required'; id: string; name: string; arguments: string }
   | { type: 'approval_resolved'; id: string }
   | { type: 'clear_chat' }
-  | { type: 'mode'; mode: Mode };
+  | { type: 'mode'; mode: Mode }
+  | { type: 'attach_selection'; selection: SelectionAttachment };

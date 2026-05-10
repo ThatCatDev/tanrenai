@@ -12,6 +12,26 @@ export interface ToolResult {
 export interface ToolContext {
   /** Workspace root from init.workspaceRoot — used to resolve relative paths. */
   workspaceRoot: string;
+  /**
+   * Show the user a diff of a proposed file edit and wait for their
+   * decision. Returns true to apply, false to reject. Tools that mutate
+   * the workspace should always go through this — gives the user a
+   * chance to inspect the change before it lands.
+   */
+  approveEdit(opts: ApproveEditOpts): Promise<boolean>;
+}
+
+export interface ApproveEditOpts {
+  /** Display name (relative path) for the file being edited. */
+  label: string;
+  /** Real file URI on disk. */
+  uri: import('vscode').Uri;
+  /** Proposed full-file content after the edit. */
+  proposed: string;
+  /** Original content (omit when creating a new file). */
+  original?: string;
+  /** A short description, e.g. "Replace 12 chars" or "Create new file". */
+  summary: string;
 }
 
 export type ToolImpl = (rawArgs: string, ctx: ToolContext) => Promise<ToolResult>;

@@ -1,16 +1,23 @@
 import * as vscode from 'vscode';
-import type { ConnectionState, Mode, WebviewInbound, WebviewOutbound } from './protocol';
+import type {
+  ConnectionState,
+  Mode,
+  SelectionAttachment,
+  WebviewInbound,
+  WebviewOutbound,
+} from './protocol';
 
-export type { ConnectionState, Mode, WebviewInbound, WebviewOutbound };
+export type { ConnectionState, Mode, SelectionAttachment, WebviewInbound, WebviewOutbound };
 
 export interface ChatViewListener {
-  onSend(content: string): void;
+  onSend(content: string, attachments?: SelectionAttachment[]): void;
   onCancel(): void;
   onCancelConnect(): void;
   onPickModel(): void;
   onClearChat(): void;
   onSetMode(mode: Mode): void;
   onApprovalDecision(id: string, action: 'allow' | 'deny' | 'always'): void;
+  onAttachRequest(): void;
   onLogin(): void;
   onLogout(): void;
   onReconnect(): void;
@@ -52,7 +59,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     view.webview.onDidReceiveMessage((msg: WebviewInbound) => {
       switch (msg.type) {
         case 'send':
-          this.listener?.onSend(msg.content);
+          this.listener?.onSend(msg.content, msg.attachments);
+          break;
+        case 'attach_request':
+          this.listener?.onAttachRequest();
+          break;
+        case 'attach_clear':
+          // No-op on host; webview handles its own state. Kept for symmetry.
           break;
         case 'cancel':
           this.listener?.onCancel();

@@ -13,8 +13,8 @@ const SNIPPET_BYTES = 500;
 /**
  * patch_file shim — find-and-replace edit. old_string must match exactly
  * once. Mirrors the Go tool's error messages so the model gets the same
- * hints when matching fails. Applies via WorkspaceEdit so VS Code shows
- * the change inline and undo restores the prior state.
+ * hints when matching fails. Goes through approveEdit so the user sees
+ * the change in VS Code's diff editor before it lands.
  */
 export const patchFile: ToolImpl = async (raw, ctx) => {
   const parsed = parseArgs<PatchFileArgs>(raw);
@@ -59,6 +59,20 @@ export const patchFile: ToolImpl = async (raw, ctx) => {
     );
   }
 
+  const proposed = text.replace(oldString, newString);
+  const summary = `Replace ${oldString.length} chars with ${newString.length} chars`;
+
+  const approved = await ctx.approveEdit({
+    label: rawPath,
+    uri,
+    proposed,
+    original: text,
+    summary,
+  });
+  if (!approved) {
+    return err(`User rejected the proposed edit to ${rawPath}`);
+  }
+
   const startOffset = text.indexOf(oldString);
   const range = new vscode.Range(
     doc.positionAt(startOffset),
@@ -79,9 +93,7 @@ export const patchFile: ToolImpl = async (raw, ctx) => {
     // best-effort
   }
 
-  return ok(
-    `Replaced ${oldString.length} chars with ${newString.length} chars in ${rawPath}`,
-  );
+  return ok(summary);
 };
 
 function countOccurrences(haystack: string, needle: string): number {

@@ -51,6 +51,27 @@
       {
         "command": "tanrenai.pickModel",
         "title": "Tanrenai: Choose Model…"
+      },
+      {
+        "command": "tanrenai.addSelection",
+        "title": "Tanrenai: Add Selection to Chat"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "tanrenai.addSelection",
+          "when": "editorHasSelection",
+          "group": "tanrenai"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "tanrenai.addSelection",
+        "key": "ctrl+l",
+        "mac": "cmd+l",
+        "when": "editorTextFocus && editorHasSelection"
       }
     ],
     "configuration": {

@@ -1,6 +1,6 @@
 // State model the App reduces from inbound messages.
 
-import type { ConnectionState, Mode, WebviewOutbound } from '../src/protocol';
+import type { ConnectionState, Mode, SelectionAttachment, WebviewOutbound } from '../src/protocol';
 
 export interface AssistantMsg {
   kind: 'assistant';
@@ -57,6 +57,8 @@ export interface AppState {
   iteration: number; // 0 when no turn or pre-iteration
   maxIterations: number;
   streamingTools: StreamingTool[];
+  /** Attachments queued to send with the next user message. */
+  pendingAttachments: SelectionAttachment[];
 }
 
 export const initialState: AppState = {
@@ -67,6 +69,7 @@ export const initialState: AppState = {
   iteration: 0,
   maxIterations: 0,
   streamingTools: [],
+  pendingAttachments: [],
 };
 
 export type Activity =
@@ -122,10 +125,20 @@ export function deriveActivity(state: AppState): Activity {
 }
 
 /**
- * Apply a single inbound message. Returns the next state. Pure — caller
+ * Internal actions dispatched by the webview itself (not the host) — for
+ * UI-only state transitions like removing an attachment chip.
+ */
+export type InternalAction =
+  | { type: 'attach_remove'; index: number }
+  | { type: 'attach_clear_pending' };
+
+export type Action = WebviewOutbound | InternalAction;
+
+/**
+ * Apply a single inbound action. Returns the next state. Pure — caller
  * sets it onto a useState/signal.
  */
-export function reduce(state: AppState, msg: WebviewOutbound): AppState {
+export function reduce(state: AppState, msg: Action): AppState {
   switch (msg.type) {
     case 'state':
       return { ...state, connection: msg.state };
@@ -271,6 +284,27 @@ export function reduce(state: AppState, msg: WebviewOutbound): AppState {
     }
     case 'clear_chat':
       return { ...state, entries: [], streamingTools: [] };
+    case 'attach_selection':
+      // Don't add an exact duplicate of an existing pending attachment.
+      if (
+        state.pendingAttachments.some(
+          (a) => a.path === msg.selection.path && a.text === msg.selection.text,
+        )
+      ) {
+        return state;
+      }
+
+      return {
+        ...state,
+        pendingAttachments: [...state.pendingAttachments, msg.selection],
+      };
+    case 'attach_remove':
+      return {
+        ...state,
+        pendingAttachments: state.pendingAttachments.filter((_, i) => i !== msg.index),
+      };
+    case 'attach_clear_pending':
+      return { ...state, pendingAttachments: [] };
     default:
       return state;
   }

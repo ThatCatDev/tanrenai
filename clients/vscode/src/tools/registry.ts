@@ -1,7 +1,7 @@
 import { fileRead } from './fileRead';
 import { fileWrite } from './fileWrite';
 import { patchFile } from './patchFile';
-import { ToolImpl, ToolResult } from './types';
+import { ApproveEditOpts, ToolImpl, ToolResult } from './types';
 
 const REGISTRY: Record<string, ToolImpl> = {
   file_read: fileRead,
@@ -16,13 +16,14 @@ export async function dispatchTool(
   name: string,
   rawArgs: string,
   workspaceRoot: string,
+  approveEdit: (opts: ApproveEditOpts) => Promise<boolean>,
 ): Promise<ToolResult> {
   const impl = REGISTRY[name];
   if (!impl) {
     return { ok: false, error: `tool ${name} is not implemented in the extension` };
   }
   try {
-    return await impl(rawArgs, { workspaceRoot });
+    return await impl(rawArgs, { workspaceRoot, approveEdit });
   } catch (e) {
     return { ok: false, error: `tool ${name} threw: ${(e as Error).message}` };
   }

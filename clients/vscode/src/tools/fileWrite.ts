@@ -9,7 +9,9 @@ interface FileWriteArgs {
 
 /**
  * file_write shim — replaces the file's full contents (or creates it).
- * Uses WorkspaceEdit so VS Code's undo stack restores the prior state.
+ * Now goes through approveEdit first: opens VS Code's diff editor and
+ * waits for the user's decision before applying. WorkspaceEdit so undo
+ * still restores the prior state.
  */
 export const fileWrite: ToolImpl = async (raw, ctx) => {
   const parsed = parseArgs<FileWriteArgs>(raw);
@@ -25,15 +27,33 @@ export const fileWrite: ToolImpl = async (raw, ctx) => {
   }
 
   const uri = resolvePath(rawPath, ctx.workspaceRoot);
-  const edit = new vscode.WorkspaceEdit();
 
   let exists = true;
+  let original: string | undefined;
   try {
     await vscode.workspace.fs.stat(uri);
+    const doc = await vscode.workspace.openTextDocument(uri);
+    original = doc.getText();
   } catch {
     exists = false;
   }
 
+  const summary = exists
+    ? `Replace ${rawPath} (${content.length} chars)`
+    : `Create ${rawPath} (${content.length} chars)`;
+
+  const approved = await ctx.approveEdit({
+    label: rawPath,
+    uri,
+    proposed: content,
+    original,
+    summary,
+  });
+  if (!approved) {
+    return err(`User rejected the proposed edit to ${rawPath}`);
+  }
+
+  const edit = new vscode.WorkspaceEdit();
   if (!exists) {
     edit.createFile(uri, { ignoreIfExists: false });
     edit.insert(uri, new vscode.Position(0, 0), content);
@@ -51,8 +71,7 @@ export const fileWrite: ToolImpl = async (raw, ctx) => {
     return err('VS Code declined to apply the edit (file may be read-only or in conflict)');
   }
 
-  // Save so the change persists if the editor isn't open. Best-effort —
-  // a save failure usually means the file is dirty in another way.
+  // Save so the change persists if the editor isn't open. Best-effort.
   try {
     const doc = await vscode.workspace.openTextDocument(uri);
     if (doc.isDirty) {
@@ -62,9 +81,5 @@ export const fileWrite: ToolImpl = async (raw, ctx) => {
     // ignore — write was applied; saving is opportunistic
   }
 
-  return ok(
-    exists
-      ? `Replaced ${rawPath} (${content.length} chars)`
-      : `Created ${rawPath} (${content.length} chars)`,
-  );
+  return ok(exists ? `Replaced ${rawPath}` : `Created ${rawPath}`);
 };

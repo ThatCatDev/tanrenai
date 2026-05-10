@@ -1,18 +1,21 @@
 import { useState } from 'preact/hooks';
-import type { Mode } from '../../src/protocol';
+import type { Mode, SelectionAttachment } from '../../src/protocol';
 import { send } from '../host';
+import type { Action } from '../state';
 
 interface Props {
   turnRunning: boolean;
   mode: Mode;
+  attachments: SelectionAttachment[];
+  dispatch: (a: Action) => void;
 }
 
-export function Composer({ turnRunning, mode }: Props) {
+export function Composer({ turnRunning, mode, attachments, dispatch }: Props) {
   const [value, setValue] = useState('');
 
   const submit = () => {
     const text = value.trim();
-    if (!text) return;
+    if (!text && attachments.length === 0) return;
     if (text.startsWith('/') && handleSlashCommand(text)) {
       setValue('');
 
@@ -20,11 +23,32 @@ export function Composer({ turnRunning, mode }: Props) {
     }
     if (turnRunning) return;
     setValue('');
-    send({ type: 'send', content: text });
+    send({ type: 'send', content: text, attachments });
+    dispatch({ type: 'attach_clear_pending' });
   };
 
   return (
     <div class="input-row">
+      {attachments.length > 0 && (
+        <div class="attachments">
+          {attachments.map((a, i) => (
+            <span key={`${a.path}-${a.startLine}-${i}`} class="chip" title={a.text}>
+              <span class="chip-label">
+                <span class="chip-glyph">⟦</span>
+                {a.label}
+                <span class="chip-glyph">⟧</span>
+              </span>
+              <button
+                class="chip-x"
+                title="Remove"
+                onClick={() => dispatch({ type: 'attach_remove', index: i })}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <textarea
         rows={2}
         placeholder={placeholderForMode(mode)}
@@ -38,13 +62,20 @@ export function Composer({ turnRunning, mode }: Props) {
         }}
       />
       <div class="actions">
+        <button
+          class="secondary attach-btn"
+          title="Attach editor selection"
+          onClick={() => send({ type: 'attach_request' })}
+        >
+          + Attach
+        </button>
         <span class="hint">{turnRunning ? 'Streaming' : '⏎ to send · ⇧⏎ for newline'}</span>
         {turnRunning ? (
           <button class="secondary" onClick={() => send({ type: 'cancel' })}>
             Cancel
           </button>
         ) : (
-          <button onClick={submit} disabled={!value.trim()}>
+          <button onClick={submit} disabled={!value.trim() && attachments.length === 0}>
             Send
           </button>
         )}

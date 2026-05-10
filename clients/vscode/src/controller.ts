@@ -14,8 +14,10 @@ import {
   TurnDoneMsg,
   ErrorMsg,
 } from './rpc/messages';
+import { ProposedContentProvider } from './diff/proposedProvider';
 import { readSettings } from './settings';
 import { dispatchTool, interceptedToolNames } from './tools/registry';
+import { ApproveEditOpts } from './tools/types';
 import { showModelPicker } from './ui/modelPicker';
 
 const DEFAULT_MODEL = 'Qwen3.6-35B-A3B-UD-Q4_K_M';
@@ -71,10 +73,15 @@ export class Controller implements ChatViewListener {
   private openReasoningId?: string;
   // Mode to send with each user_message. Persisted to settings on change.
   private mode: Mode = 'chat';
+  // Pending edit approvals — resolved when the user clicks Allow/Deny on
+  // the inline approval card for a proposed file change.
+  private pendingEditApprovals = new Map<string, () => void>();
+  private pendingEditDenials = new Map<string, () => void>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly view: ChatViewProvider,
+    private readonly proposed: ProposedContentProvider,
   ) {
     this.logChannel = vscode.window.createOutputChannel('Tanrenai');
     context.subscriptions.push(this.logChannel);
@@ -224,7 +231,40 @@ export class Controller implements ChatViewListener {
 
   // ── ChatViewListener ──────────────────────────────────────────────
 
-  onSend(content: string): void {
+  /**
+   * Capture the active editor's selection (or the active line if there's
+   * no selection) and forward it to the webview as an attachment proposal.
+   */
+  onAttachRequest(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      void vscode.window.showInformationMessage('Tanrenai: open a file and select some code first.');
+
+      return;
+    }
+    const sel = editor.selection;
+    const range = sel.isEmpty
+      ? editor.document.lineAt(sel.active.line).range
+      : new vscode.Range(sel.start, sel.end);
+    const text = editor.document.getText(range);
+    const path = vscode.workspace.asRelativePath(editor.document.uri, false);
+    const startLine = range.start.line + 1;
+    const endLine = range.end.line + 1;
+    const label = startLine === endLine ? `${path}:${startLine}` : `${path}:${startLine}-${endLine}`;
+    this.view.send({
+      type: 'attach_selection',
+      selection: {
+        label,
+        path,
+        languageId: editor.document.languageId,
+        startLine,
+        endLine,
+        text,
+      },
+    });
+  }
+
+  onSend(content: string, attachments?: import('./protocol').SelectionAttachment[]): void {
     if (!this.rpc) {
       this.view.send({ type: 'turn_end', ok: false, reason: 'not connected' });
 
@@ -239,16 +279,20 @@ export class Controller implements ChatViewListener {
     this.openContentId = undefined;
     this.openReasoningId = undefined;
 
+    // Fold any attached selections into the user content as fenced blocks
+    // before either the model or the transcript see it.
+    const fullContent = composeWithAttachments(content, attachments);
+
     // Record + render the user's turn.
     const userId = `u_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    this.transcript.push({ kind: 'user', id: userId, content });
+    this.transcript.push({ kind: 'user', id: userId, content: fullContent });
     this.view.send({ type: 'message_start', role: 'user', id: userId });
-    this.view.send({ type: 'message_delta', id: userId, text: content });
+    this.view.send({ type: 'message_delta', id: userId, text: fullContent });
     this.view.send({ type: 'message_end', id: userId });
     this.view.send({ type: 'turn_start' });
 
     try {
-      this.rpc.send({ type: 'user_message', content, mode: this.mode });
+      this.rpc.send({ type: 'user_message', content: fullContent, mode: this.mode });
     } catch (err) {
       this.turnRunning = false;
       this.view.send({ type: 'turn_end', ok: false, reason: (err as Error).message });
@@ -592,7 +636,12 @@ export class Controller implements ChatViewListener {
     arguments: string;
   }): Promise<void> {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-    const result = await dispatchTool(m.name, m.arguments, workspaceRoot);
+    const result = await dispatchTool(
+      m.name,
+      m.arguments,
+      workspaceRoot,
+      (opts) => this.approveEdit(opts),
+    );
     this.recordToolResult(m.id, result.ok, result.ok ? result.content : result.error);
     this.view.send({
       type: 'tool_result',
@@ -606,6 +655,66 @@ export class Controller implements ChatViewListener {
       ok: result.ok,
       content: result.content,
       error: result.error,
+    });
+  }
+
+  /**
+   * Show the agent's proposed edit in VS Code's native diff editor and
+   * post an inline approval card. Resolves with the user's decision.
+   * Each pending approval gets a unique virtual URI so concurrent edits
+   * don't clobber each other.
+   */
+  private async approveEdit(opts: ApproveEditOpts): Promise<boolean> {
+    const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const previewUri = this.proposed.uriFor(opts.uri, id);
+    this.proposed.set(previewUri, opts.proposed);
+
+    try {
+      if (opts.original !== undefined) {
+        await vscode.commands.executeCommand(
+          'vscode.diff',
+          opts.uri,
+          previewUri,
+          `Tanrenai · ${opts.label}`,
+          { preserveFocus: true, preview: true } as vscode.TextDocumentShowOptions,
+        );
+      } else {
+        // New file — no left-hand diff base; just show the proposed content.
+        await vscode.commands.executeCommand('vscode.open', previewUri, {
+          preserveFocus: true,
+          preview: true,
+        } as vscode.TextDocumentShowOptions);
+      }
+    } catch (err) {
+      this.log(`approveEdit: failed to open preview: ${(err as Error).message}`);
+    }
+
+    // Inline approval card in the chat.
+    this.closeOpenAssistantBubbles();
+    const previewArgs = JSON.stringify({ path: opts.label, summary: opts.summary });
+    this.transcript.push({
+      kind: 'approval',
+      id,
+      name: 'apply_edit',
+      args: previewArgs,
+      resolved: false,
+    });
+    this.view.send({
+      type: 'approval_required',
+      id,
+      name: 'apply_edit',
+      arguments: previewArgs,
+    });
+
+    return new Promise<boolean>((resolve) => {
+      this.pendingEditApprovals.set(id, () => {
+        this.proposed.clear(previewUri);
+        resolve(true);
+      });
+      this.pendingEditDenials.set(id, () => {
+        this.proposed.clear(previewUri);
+        resolve(false);
+      });
     });
   }
 
@@ -668,7 +777,6 @@ export class Controller implements ChatViewListener {
 
   /** Called from the inline Allow/Always/Deny buttons. */
   onApprovalDecision(id: string, action: 'allow' | 'deny' | 'always'): void {
-    this.rpc?.send({ type: 'approval_response', id, action });
     // Mark the entry resolved so the buttons disappear.
     for (const entry of this.transcript) {
       if (entry.kind === 'approval' && entry.id === id) {
@@ -677,6 +785,26 @@ export class Controller implements ChatViewListener {
       }
     }
     this.view.send({ type: 'approval_resolved', id });
+
+    // Edit approvals are resolved locally in the extension (TS shim is
+    // awaiting the promise). CLI-driven approvals (shell_exec, etc.) are
+    // forwarded to the agent-rpc subprocess.
+    const allow = action !== 'deny';
+    const editAllow = this.pendingEditApprovals.get(id);
+    const editDeny = this.pendingEditDenials.get(id);
+    if (editAllow || editDeny) {
+      this.pendingEditApprovals.delete(id);
+      this.pendingEditDenials.delete(id);
+      if (allow) {
+        editAllow?.();
+      } else {
+        editDeny?.();
+      }
+
+      return;
+    }
+
+    this.rpc?.send({ type: 'approval_response', id, action });
   }
 
   private handleTurnDone(m: TurnDoneMsg): void {
@@ -707,6 +835,30 @@ export class Controller implements ChatViewListener {
     this.log(`progress${line.level === 'warn' ? ' (warn)' : ''}: ${line.message}`);
     this.view.setState({ status: 'connecting', progress: [...this.progressLines] });
   }
+}
+
+/**
+ * Prepend each selection attachment to the user's typed content as a fenced
+ * code block with a path/range header. The fenced language tag uses the
+ * editor's languageId so the model gets a syntax hint.
+ */
+function composeWithAttachments(
+  content: string,
+  attachments?: import('./protocol').SelectionAttachment[],
+): string {
+  if (!attachments || attachments.length === 0) {
+    return content;
+  }
+  const blocks = attachments.map((a) => {
+    const fence = '```' + (a.languageId || '');
+
+    return `From \`${a.label}\`:\n${fence}\n${a.text}\n\`\`\``;
+  });
+  if (!content.trim()) {
+    return blocks.join('\n\n');
+  }
+
+  return `${blocks.join('\n\n')}\n\n${content}`;
 }
 
 function truncate(s: string, n: number): string {

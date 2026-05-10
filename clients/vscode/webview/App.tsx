@@ -6,7 +6,7 @@ import { Header } from './components/Header';
 import { MessageList } from './components/MessageList';
 import { StatusPanel } from './components/StatusPanel';
 import { getPersistedShell, onMessage, setPersistedShell } from './host';
-import { deriveActivity, initialState, reduce, type AppState } from './state';
+import { deriveActivity, initialState, reduce, type Action, type AppState } from './state';
 
 export function App() {
   const [state, dispatch] = useReducer(reduce, initialState, init);
@@ -22,7 +22,7 @@ export function App() {
     setPersistedShell({ connection: state.connection, mode: state.mode });
   }, [state.connection, state.mode]);
 
-  return renderRoot(state);
+  return renderRoot(state, dispatch);
 }
 
 function init(seed: AppState): AppState {
@@ -34,7 +34,7 @@ function init(seed: AppState): AppState {
   return { ...seed, connection: persisted.connection, mode: persisted.mode };
 }
 
-function renderRoot(state: AppState) {
+function renderRoot(state: AppState, dispatch: (a: Action) => void) {
   const signedIn = state.connection.status !== 'no_credentials';
 
   if (state.connection.status !== 'connected') {
@@ -60,7 +60,12 @@ function renderRoot(state: AppState) {
         iteration={state.iteration}
         maxIterations={state.maxIterations}
       />
-      <Composer turnRunning={state.turnRunning} mode={state.mode} />
+      <Composer
+        turnRunning={state.turnRunning}
+        mode={state.mode}
+        attachments={state.pendingAttachments}
+        dispatch={dispatch}
+      />
       <Footer signedIn={true} mode={state.mode} />
     </div>
   );
