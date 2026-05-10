@@ -27,7 +27,10 @@ export type WebviewInbound =
   | { type: 'approval_decision'; id: string; action: 'allow' | 'deny' | 'always' }
   | { type: 'login' }
   | { type: 'logout' }
-  | { type: 'reconnect' };
+  | { type: 'reconnect' }
+  | { type: 'stop_gpu' }
+  | { type: 'destroy_gpu' }
+  | { type: 'show_gpu_status' };
 
 export interface SelectionAttachment {
   /** Display label, e.g. "src/foo.ts:12-34". */

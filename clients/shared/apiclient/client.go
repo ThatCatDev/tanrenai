@@ -521,6 +521,13 @@ func (c *Client) InstanceStop(ctx context.Context) error {
 	return c.postJSON(ctx, "/api/instance/stop", nil, nil)
 }
 
+// InstanceDestroy tears down the GPU instance entirely (vast.ai instance
+// is deleted, not just paused). Use this when runaway spawning is
+// observed — paused instances may still incur cost.
+func (c *Client) InstanceDestroy(ctx context.Context) error {
+	return c.postJSON(ctx, "/api/instance/destroy", nil, nil)
+}
+
 // --- Internal helpers ---
 
 func (c *Client) postJSON(ctx context.Context, path string, body []byte, result any) error {

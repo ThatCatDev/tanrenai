@@ -15,6 +15,7 @@ import {
   ErrorMsg,
 } from './rpc/messages';
 import { ProposedContentProvider } from './diff/proposedProvider';
+import * as platform from './platform';
 import { readSettings } from './settings';
 import { dispatchTool, interceptedToolNames } from './tools/registry';
 import { ApproveEditOpts } from './tools/types';
@@ -450,6 +451,56 @@ export class Controller implements ChatViewListener {
 
   onReconnect(): void {
     void this.connect();
+  }
+
+  async onStopGpu(): Promise<void> {
+    const choice = await vscode.window.showWarningMessage(
+      'Stop the GPU instance? This pauses it (vast.ai may still bill while paused).',
+      { modal: true },
+      'Stop',
+    );
+    if (choice !== 'Stop') {
+      return;
+    }
+    await this.disconnect();
+    try {
+      await platform.instanceStop();
+      void vscode.window.showInformationMessage('Tanrenai: GPU stopped.');
+    } catch (err) {
+      const message = (err as Error).message;
+      void vscode.window.showErrorMessage(`Tanrenai: stop failed — ${message}`);
+    }
+  }
+
+  async onDestroyGpu(): Promise<void> {
+    const choice = await vscode.window.showWarningMessage(
+      'Destroy the GPU instance? This deletes it on vast.ai. ' +
+        'Use this if instances are being spawned repeatedly without being torn down.',
+      { modal: true, detail: 'Cannot be undone. Models will need to re-pull on the next session.' },
+      'Destroy',
+    );
+    if (choice !== 'Destroy') {
+      return;
+    }
+    await this.disconnect();
+    try {
+      await platform.instanceDestroy();
+      void vscode.window.showInformationMessage('Tanrenai: GPU destroyed.');
+    } catch (err) {
+      const message = (err as Error).message;
+      void vscode.window.showErrorMessage(`Tanrenai: destroy failed — ${message}`);
+    }
+  }
+
+  async onShowGpuStatus(): Promise<void> {
+    try {
+      const status = await platform.instanceStatus();
+      this.logChannel.show(true);
+      this.log(`GPU status: ${JSON.stringify(status, null, 2)}`);
+    } catch (err) {
+      const message = (err as Error).message;
+      void vscode.window.showErrorMessage(`Tanrenai: status failed — ${message}`);
+    }
   }
 
   // ── Command handlers ──────────────────────────────────────────────

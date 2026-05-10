@@ -908,6 +908,12 @@ button.secondary:hover {
   background: var(--tn-rule);
   margin: 0.25rem 0;
 }
+.footer-menu-panel button.menu-danger {
+  color: var(--tn-err);
+}
+.footer-menu-panel button.menu-danger:hover {
+  background: color-mix(in srgb, var(--tn-err) 12%, transparent);
+}
 
 /* ── narrow-sidebar adjustments ──────────────────────────── */
 

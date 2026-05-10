@@ -21,6 +21,9 @@ export interface ChatViewListener {
   onLogin(): void;
   onLogout(): void;
   onReconnect(): void;
+  onStopGpu(): void;
+  onDestroyGpu(): void;
+  onShowGpuStatus(): void;
   /** Called after the webview has finished mounting (or remounting). */
   onMounted(): void;
 }
@@ -93,6 +96,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'reconnect':
           this.listener?.onReconnect();
+          break;
+        case 'stop_gpu':
+          this.listener?.onStopGpu();
+          break;
+        case 'destroy_gpu':
+          this.listener?.onDestroyGpu();
+          break;
+        case 'show_gpu_status':
+          this.listener?.onShowGpuStatus();
           break;
       }
     });

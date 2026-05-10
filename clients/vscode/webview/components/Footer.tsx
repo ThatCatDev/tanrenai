@@ -57,6 +57,20 @@ export function Footer({ signedIn, mode }: Props) {
               Clear chat
             </button>
             <div class="footer-menu-divider" />
+            <button role="menuitem" onClick={() => fire(() => send({ type: 'show_gpu_status' }))}>
+              GPU status
+            </button>
+            <button role="menuitem" onClick={() => fire(() => send({ type: 'stop_gpu' }))}>
+              Stop GPU
+            </button>
+            <button
+              role="menuitem"
+              class="menu-danger"
+              onClick={() => fire(() => send({ type: 'destroy_gpu' }))}
+            >
+              Destroy GPU…
+            </button>
+            <div class="footer-menu-divider" />
             {signedIn ? (
               <button role="menuitem" onClick={() => fire(() => send({ type: 'logout' }))}>
                 Sign out
