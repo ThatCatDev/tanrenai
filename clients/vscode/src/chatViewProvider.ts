@@ -10,6 +10,7 @@ export interface ChatViewListener {
   onPickModel(): void;
   onClearChat(): void;
   onSetMode(mode: Mode): void;
+  onApprovalDecision(id: string, action: 'allow' | 'deny' | 'always'): void;
   onLogin(): void;
   onReconnect(): void;
   /** Called after the webview has finished mounting (or remounting). */
@@ -66,6 +67,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'set_mode':
           this.listener?.onSetMode(msg.mode);
+          break;
+        case 'approval_decision':
+          this.listener?.onApprovalDecision(msg.id, msg.action);
           break;
         case 'login':
           this.listener?.onLogin();

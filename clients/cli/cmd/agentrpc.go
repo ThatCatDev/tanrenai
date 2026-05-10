@@ -84,6 +84,13 @@ type rpcConnectingProgressMsg struct {
 	Message string `json:"message"`
 }
 
+type rpcToolCallStreamingMsg struct {
+	Type      string `json:"type"`
+	Index     int    `json:"index"`
+	Name      string `json:"name"`
+	ArgsDelta string `json:"argsDelta"`
+}
+
 type rpcHistoryClearedMsg struct {
 	Type string `json:"type"`
 }
@@ -648,6 +655,14 @@ func buildRPCAgentConfig(deps *sessionDeps, srv *rpcServer) agent.PlanAgentConfi
 			OnReasoningDelta: func(delta string) {
 				_ = srv.write(rpcContentDeltaMsg{Type: "reasoning_delta", Text: delta})
 			},
+			OnToolCallDelta: func(idx int, name, argsDelta string) {
+				_ = srv.write(rpcToolCallStreamingMsg{
+					Type:      "tool_call_streaming",
+					Index:     idx,
+					Name:      name,
+					ArgsDelta: argsDelta,
+				})
+			},
 		},
 	}
 }
@@ -712,6 +727,14 @@ func buildRPCSwarmConfig(deps *sessionDeps, srv *rpcServer) agent.SwarmConfig {
 			},
 			OnReasoningDelta: func(delta string) {
 				_ = srv.write(rpcContentDeltaMsg{Type: "reasoning_delta", Text: delta})
+			},
+			OnToolCallDelta: func(idx int, name, argsDelta string) {
+				_ = srv.write(rpcToolCallStreamingMsg{
+					Type:      "tool_call_streaming",
+					Index:     idx,
+					Name:      name,
+					ArgsDelta: argsDelta,
+				})
 			},
 		},
 		WorkerTools:   workerTools,

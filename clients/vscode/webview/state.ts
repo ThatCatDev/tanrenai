@@ -26,13 +26,28 @@ export interface ToolMsg {
   result?: { ok: boolean; content?: string };
 }
 
+export interface ApprovalMsg {
+  kind: 'approval';
+  id: string;
+  name: string;
+  args: string;
+  resolved: boolean;
+}
+
 export interface ErrorMsg {
   kind: 'error';
   id: string;
   text: string;
 }
 
-export type Entry = AssistantMsg | UserMsg | ToolMsg | ErrorMsg;
+export type Entry = AssistantMsg | UserMsg | ToolMsg | ApprovalMsg | ErrorMsg;
+
+/** A tool call still being streamed by the model — not yet finalised. */
+export interface StreamingTool {
+  index: number;
+  name: string;
+  argsLength: number;
+}
 
 export interface AppState {
   connection: ConnectionState;
@@ -41,6 +56,7 @@ export interface AppState {
   turnRunning: boolean;
   iteration: number; // 0 when no turn or pre-iteration
   maxIterations: number;
+  streamingTools: StreamingTool[];
 }
 
 export const initialState: AppState = {
@@ -50,32 +66,54 @@ export const initialState: AppState = {
   turnRunning: false,
   iteration: 0,
   maxIterations: 0,
+  streamingTools: [],
 };
 
 export type Activity =
   | { kind: 'idle' }
   | { kind: 'thinking' }
   | { kind: 'generating' }
-  | { kind: 'tool'; name: string };
+  | { kind: 'preparing'; name: string; chars: number }
+  | { kind: 'tool'; name: string }
+  | { kind: 'awaiting_approval'; name: string };
 
 /** Derive what the agent is currently doing from observable state. */
 export function deriveActivity(state: AppState): Activity {
   if (!state.turnRunning) {
     return { kind: 'idle' };
   }
-  // Walk entries from newest backwards.
+  // Pending approval is the most blocking — surface first.
+  for (let i = state.entries.length - 1; i >= 0; i--) {
+    const e = state.entries[i];
+    if (e.kind === 'approval' && !e.resolved) {
+      return { kind: 'awaiting_approval', name: e.name };
+    }
+  }
+  // Tool currently executing.
   for (let i = state.entries.length - 1; i >= 0; i--) {
     const e = state.entries[i];
     if (e.kind === 'tool' && !e.result) {
       return { kind: 'tool', name: e.name };
     }
     if (e.kind === 'assistant' && e.open) {
-      // Reasoning got more text and content is empty → still thinking.
-      // Content has any chars → generating.
       if (e.content.length > 0) {
         return { kind: 'generating' };
       }
 
+      break;
+    }
+  }
+  // If the model is mid-tool-call streaming, surface that — was the
+  // dead-air case before this hook existed.
+  if (state.streamingTools.length > 0) {
+    const last = state.streamingTools[state.streamingTools.length - 1];
+
+    return { kind: 'preparing', name: last.name || '…', chars: last.argsLength };
+  }
+  // Otherwise: still in an open assistant bubble (reasoning) or pre-iteration.
+  for (let i = state.entries.length - 1; i >= 0; i--) {
+    const e = state.entries[i];
+    if (e.kind === 'assistant' && e.open) {
       return { kind: 'thinking' };
     }
   }
@@ -94,7 +132,13 @@ export function reduce(state: AppState, msg: WebviewOutbound): AppState {
     case 'mode':
       return { ...state, mode: msg.mode };
     case 'turn_start':
-      return { ...state, turnRunning: true, iteration: 0, maxIterations: 0 };
+      return {
+        ...state,
+        turnRunning: true,
+        iteration: 0,
+        maxIterations: 0,
+        streamingTools: [],
+      };
     case 'turn_end': {
       const entries = msg.ok || !msg.reason
         ? closeOpenAssistants(state.entries)
@@ -103,10 +147,22 @@ export function reduce(state: AppState, msg: WebviewOutbound): AppState {
             { kind: 'error' as const, id: `e_${Date.now()}`, text: msg.reason },
           ];
 
-      return { ...state, turnRunning: false, entries, iteration: 0, maxIterations: 0 };
+      return {
+        ...state,
+        turnRunning: false,
+        entries,
+        iteration: 0,
+        maxIterations: 0,
+        streamingTools: [],
+      };
     }
     case 'iteration_start':
-      return { ...state, iteration: msg.iteration, maxIterations: msg.maxIterations };
+      return {
+        ...state,
+        iteration: msg.iteration,
+        maxIterations: msg.maxIterations,
+        streamingTools: [],
+      };
     case 'message_start': {
       if (msg.role === 'user') {
         return appendOrUpdate(state, {
@@ -163,13 +219,32 @@ export function reduce(state: AppState, msg: WebviewOutbound): AppState {
       return { ...state, entries };
     }
     case 'tool_call':
-      return appendOrUpdate(state, {
-        kind: 'tool',
-        id: msg.id,
-        name: msg.name,
-        args: msg.arguments,
-        intercepted: msg.intercepted,
-      });
+      // Tool call finalised — clear any matching streaming tool.
+      return appendOrUpdate(
+        { ...state, streamingTools: state.streamingTools.filter((t) => t.name !== msg.name) },
+        {
+          kind: 'tool',
+          id: msg.id,
+          name: msg.name,
+          args: msg.arguments,
+          intercepted: msg.intercepted,
+        },
+      );
+    case 'tool_call_streaming': {
+      // Track in-progress tool args by index. Update name once known,
+      // accumulate args length so the activity bar can show "preparing
+      // file_write (1.2k chars)…".
+      const existing = state.streamingTools.find((t) => t.index === msg.index);
+      const next: StreamingTool[] = existing
+        ? state.streamingTools.map((t) =>
+            t.index === msg.index
+              ? { ...t, name: msg.name || t.name, argsLength: t.argsLength + msg.argsDelta.length }
+              : t,
+          )
+        : [...state.streamingTools, { index: msg.index, name: msg.name, argsLength: msg.argsDelta.length }];
+
+      return { ...state, streamingTools: next };
+    }
     case 'tool_result': {
       const entries = state.entries.map((e) =>
         e.id === msg.id && e.kind === 'tool'
@@ -179,8 +254,23 @@ export function reduce(state: AppState, msg: WebviewOutbound): AppState {
 
       return { ...state, entries };
     }
+    case 'approval_required':
+      return appendOrUpdate(state, {
+        kind: 'approval',
+        id: msg.id,
+        name: msg.name,
+        args: msg.arguments,
+        resolved: false,
+      });
+    case 'approval_resolved': {
+      const entries = state.entries.map((e) =>
+        e.kind === 'approval' && e.id === msg.id ? { ...e, resolved: true } : e,
+      );
+
+      return { ...state, entries };
+    }
     case 'clear_chat':
-      return { ...state, entries: [] };
+      return { ...state, entries: [], streamingTools: [] };
     default:
       return state;
   }

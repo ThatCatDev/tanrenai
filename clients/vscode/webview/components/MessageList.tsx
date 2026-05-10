@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { send } from '../host';
 import type { Activity, Entry } from '../state';
 
 interface Props {
@@ -59,6 +60,8 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
     }
     case 'tool':
       return <ToolCard entry={entry} />;
+    case 'approval':
+      return <ApprovalCard entry={entry} />;
     case 'error':
       return (
         <div class="msg reasoning" style="color: var(--vscode-charts-red);">
@@ -66,6 +69,33 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
         </div>
       );
   }
+}
+
+function ApprovalCard({ entry }: { entry: Extract<Entry, { kind: 'approval' }> }) {
+  const argPreview = entry.args.length > 240 ? entry.args.slice(0, 240) + '…' : entry.args;
+  const decide = (action: 'allow' | 'deny' | 'always') => {
+    send({ type: 'approval_decision', id: entry.id, action });
+  };
+
+  return (
+    <div class={`approval${entry.resolved ? ' resolved' : ''}`}>
+      <div class="approval-head">
+        <span class="approval-icon">⚠</span>
+        <span class="approval-title">
+          Tanrenai wants to run <code>{entry.name}</code>
+        </span>
+      </div>
+      <div class="approval-args">{argPreview}</div>
+      {!entry.resolved && (
+        <div class="approval-actions">
+          <button onClick={() => decide('allow')}>Allow once</button>
+          <button class="secondary" onClick={() => decide('always')}>Always allow</button>
+          <button class="secondary" onClick={() => decide('deny')}>Deny</button>
+        </div>
+      )}
+      {entry.resolved && <div class="approval-resolved-label">Resolved</div>}
+    </div>
+  );
 }
 
 function ToolCard({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {

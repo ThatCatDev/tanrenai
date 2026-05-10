@@ -190,6 +190,58 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.65; }
 }
+/* ── inline approval prompt ─────────────────────────────────── */
+
+.approval {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--vscode-charts-yellow);
+  border-radius: 4px;
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+}
+.approval.resolved {
+  border-color: var(--vscode-panel-border, currentColor);
+  opacity: 0.6;
+}
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85em;
+  margin-bottom: 0.3rem;
+}
+.approval-icon {
+  color: var(--vscode-charts-yellow);
+}
+.approval-title code {
+  background: var(--vscode-textCodeBlock-background);
+  padding: 1px 0.35em;
+  border-radius: 3px;
+}
+.approval-args {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.8em;
+  word-break: break-all;
+  opacity: 0.8;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow-y: auto;
+  margin-bottom: 0.5rem;
+}
+.approval-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.approval-actions button {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.8em;
+}
+.approval-resolved-label {
+  font-size: 0.75em;
+  opacity: 0.7;
+}
+
 .tool-spinner {
   display: inline-block;
   width: 0.55em;

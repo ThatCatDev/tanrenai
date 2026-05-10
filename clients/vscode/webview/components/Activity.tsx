@@ -35,9 +35,21 @@ function labelFor(activity: Activity): string {
       return 'thinking…';
     case 'generating':
       return 'generating…';
+    case 'preparing':
+      return `preparing ${activity.name}… (${formatChars(activity.chars)})`;
     case 'tool':
       return `running ${activity.name}…`;
+    case 'awaiting_approval':
+      return `awaiting your approval to run ${activity.name}`;
     default:
       return '';
   }
+}
+
+function formatChars(n: number): string {
+  if (n >= 1000) {
+    return `${(n / 1000).toFixed(1)}k chars`;
+  }
+
+  return `${n} chars`;
 }

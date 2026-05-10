@@ -37,6 +37,13 @@ type TranscriptEntry =
       args: string;
       intercepted: boolean;
       result?: { ok: boolean; content?: string };
+    }
+  | {
+      kind: 'approval';
+      id: string;
+      name: string;
+      args: string;
+      resolved: boolean;
     };
 
 const TANRENAI_WEB_URL = 'https://dev.tanrenai.com';
@@ -330,6 +337,17 @@ export class Controller implements ChatViewListener {
             ok: entry.result.ok,
             content: entry.result.content,
           });
+        }
+        break;
+      case 'approval':
+        this.view.send({
+          type: 'approval_required',
+          id: entry.id,
+          name: entry.name,
+          arguments: entry.args,
+        });
+        if (entry.resolved) {
+          this.view.send({ type: 'approval_resolved', id: entry.id });
         }
         break;
     }
@@ -626,19 +644,35 @@ export class Controller implements ChatViewListener {
   }
 
   private handleApprovalRequired(m: { id: string; name: string; arguments: string }): void {
-    void vscode.window
-      .showWarningMessage(
-        `Tanrenai wants to run ${m.name}: ${truncate(m.arguments, 200)}`,
-        { modal: true },
-        'Allow once',
-        'Always allow',
-        'Deny',
-      )
-      .then((choice) => {
-        const action =
-          choice === 'Always allow' ? 'always' : choice === 'Allow once' ? 'allow' : 'deny';
-        this.rpc?.send({ type: 'approval_response', id: m.id, action });
-      });
+    // Surface inline in the chat instead of a VS Code modal — less jarring,
+    // and the user can see the request alongside the conversation context.
+    this.closeOpenAssistantBubbles();
+    this.transcript.push({
+      kind: 'approval',
+      id: m.id,
+      name: m.name,
+      args: m.arguments,
+      resolved: false,
+    });
+    this.view.send({
+      type: 'approval_required',
+      id: m.id,
+      name: m.name,
+      arguments: m.arguments,
+    });
+  }
+
+  /** Called from the inline Allow/Always/Deny buttons. */
+  onApprovalDecision(id: string, action: 'allow' | 'deny' | 'always'): void {
+    this.rpc?.send({ type: 'approval_response', id, action });
+    // Mark the entry resolved so the buttons disappear.
+    for (const entry of this.transcript) {
+      if (entry.kind === 'approval' && entry.id === id) {
+        entry.resolved = true;
+        break;
+      }
+    }
+    this.view.send({ type: 'approval_resolved', id });
   }
 
   private handleTurnDone(m: TurnDoneMsg): void {

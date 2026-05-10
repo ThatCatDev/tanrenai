@@ -22,6 +22,7 @@ export type WebviewInbound =
   | { type: 'pick_model' }
   | { type: 'clear_chat' }
   | { type: 'set_mode'; mode: Mode }
+  | { type: 'approval_decision'; id: string; action: 'allow' | 'deny' | 'always' }
   | { type: 'login' }
   | { type: 'reconnect' };
 
@@ -34,6 +35,9 @@ export type WebviewOutbound =
   | { type: 'message_delta'; id: string; text: string; channel?: 'content' | 'reasoning' }
   | { type: 'message_end'; id: string }
   | { type: 'tool_call'; id: string; name: string; arguments: string; intercepted: boolean }
+  | { type: 'tool_call_streaming'; index: number; name: string; argsDelta: string }
   | { type: 'tool_result'; id: string; ok: boolean; content?: string }
+  | { type: 'approval_required'; id: string; name: string; arguments: string }
+  | { type: 'approval_resolved'; id: string }
   | { type: 'clear_chat' }
   | { type: 'mode'; mode: Mode };
