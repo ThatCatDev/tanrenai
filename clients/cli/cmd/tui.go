@@ -36,6 +36,7 @@ var slashCommands = []struct {
 	{"/memory clear", "Clear all memories"},
 	{"/scrolls", "List loaded scrolls"},
 	{"/scrolls show ", "Show a scroll's content"},
+	{"/swarm", "Toggle multi-agent swarm mode"},
 	{"/help", "Show help"},
 	{"/quit", "Exit"},
 	{"/exit", "Exit"},
@@ -74,6 +75,12 @@ type tuiApp struct {
 	inputArea  *tview.TextArea
 	statusBar  *tview.TextView
 	statusText string
+
+	// Swarm progress panel (above status bar; hidden when not in a swarm turn)
+	swarmPanel   *tview.TextView
+	swarmPlan    *agent.Plan
+	swarmDepth   int
+	swarmRunning bool
 
 	mu            sync.Mutex
 	lines         []string
@@ -153,6 +160,13 @@ func newTuiApp(modelName string) *tuiApp {
 		SetChangedFunc(func() { t.app.Draw() })
 	t.chatView.SetBorder(false)
 
+	// Swarm progress panel (hidden by default; shown during swarm turns)
+	t.swarmPanel = tview.NewTextView().
+		SetDynamicColors(true).
+		SetScrollable(false).
+		SetWrap(false)
+	t.swarmPanel.SetBorder(false)
+
 	// Status bar (fixed 1-row panel above input)
 	t.statusBar = tview.NewTextView().
 		SetDynamicColors(true).
@@ -177,6 +191,7 @@ func newTuiApp(modelName string) *tuiApp {
 
 	t.rootFlex = tview.NewFlex().SetDirection(tview.FlexRow)
 	t.rootFlex.AddItem(t.chatArea, 0, 1, false)
+	t.rootFlex.AddItem(t.swarmPanel, 0, 0, false) // hidden until swarm turn starts
 	t.rootFlex.AddItem(t.statusBar, 1, 0, false)
 	t.rootFlex.AddItem(newHDivider(), 1, 0, false)
 	t.rootFlex.AddItem(t.inputArea, 3, 0, true)

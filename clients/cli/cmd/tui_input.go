@@ -509,6 +509,15 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 
 		return true
 
+	case input == "/swarm" || input == "/swarm status":
+		return t.handleSwarmStatus()
+
+	case input == "/swarm on":
+		return t.handleSwarmToggle(true)
+
+	case input == "/swarm off":
+		return t.handleSwarmToggle(false)
+
 	case input == "/help":
 		t.addLine("[gray::-]  Commands:[-:-:-]")
 		t.addLine("[gray::-]    /clear              Clear conversation history[-:-:-]")
@@ -523,6 +532,7 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 		t.addLine("[gray::-]    /memory clear       Clear all memories[-:-:-]")
 		t.addLine("[gray::-]    /scrolls            List loaded scrolls[-:-:-]")
 		t.addLine("[gray::-]    /scrolls show <n>   Show a scroll's content[-:-:-]")
+		t.addLine("[gray::-]    /swarm [on|off]     Toggle multi-agent swarm mode[-:-:-]")
 		t.addLine("[gray::-]    /quit, /exit        Exit[-:-:-]")
 		t.addLine("")
 
@@ -542,6 +552,47 @@ func (t *tuiApp) handleSlashCommand(input string) bool {
 	}
 
 	return false
+}
+
+// handleSwarmStatus prints the current swarm/agent state.
+func (t *tuiApp) handleSwarmStatus() bool {
+	state := "off"
+	if t.swarmMode {
+		state = "on"
+	}
+	t.addLine(fmt.Sprintf("[gray::-]  swarm mode: %s (swarm implies agent mode)[-:-:-]", state))
+	t.addLine("")
+
+	return true
+}
+
+// handleSwarmToggle flips swarmMode at runtime. Refused mid-turn since the
+// dispatcher reads t.swarmMode at the start of each turn — toggling now would
+// only affect the next turn anyway, but we want a clean confirmation.
+func (t *tuiApp) handleSwarmToggle(on bool) bool {
+	if t.processing {
+		t.addLine("[gray::-]  Cannot toggle /swarm during a turn. Wait for it to finish.[-:-:-]")
+		t.addLine("")
+
+		return true
+	}
+
+	if on {
+		alreadyAgent := t.agentMode
+		t.swarmMode = true
+		t.agentMode = true
+		if alreadyAgent {
+			t.addLine("[gray::-]  swarm mode: on[-:-:-]")
+		} else {
+			t.addLine("[gray::-]  swarm mode: on (agent mode also enabled)[-:-:-]")
+		}
+	} else {
+		t.swarmMode = false
+		t.addLine("[gray::-]  swarm mode: off[-:-:-]")
+	}
+	t.addLine("")
+
+	return true
 }
 
 // ── Autocomplete ────────────────────────────────────────────────────────

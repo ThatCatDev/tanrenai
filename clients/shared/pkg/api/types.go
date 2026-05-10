@@ -246,8 +246,17 @@ type DownloadStatus struct {
 // Model pull types
 
 // PullRequest is the request body for POST /api/pull.
+//
+// `Name`, when set, is the destination basename the GPU should save the
+// downloaded GGUF under (without `.gguf`). For sharded models the
+// `-NNNNN-of-MMMMM.gguf` suffix from the source URL is preserved so each
+// shard still lands in its own file. When empty, the GPU saves under the
+// source URL's filename. Letting callers pin the on-disk name means a
+// user-typed model identifier flows through pull → load → /v1/models
+// unchanged, with no normalization layer.
 type PullRequest struct {
-	URL string `json:"url"`
+	URL  string `json:"url"`
+	Name string `json:"name,omitempty"`
 }
 
 // PullEvent is a streaming SSE event during a model download.

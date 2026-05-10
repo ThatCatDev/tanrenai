@@ -386,8 +386,12 @@ type PullModelEvent struct {
 
 // PullModel starts downloading a model by URL and streams progress events.
 // The returned channel is closed when the download completes, errors, or ctx is cancelled.
-func (c *Client) PullModel(ctx context.Context, url string) (<-chan PullModelEvent, error) {
-	req := api.PullRequest{URL: url}
+//
+// `name`, when non-empty, asks the GPU to save the downloaded file under that
+// basename (preserving any `-NNNNN-of-MMMMM.gguf` shard suffix from the source
+// URL). Empty `name` falls back to the source URL's filename.
+func (c *Client) PullModel(ctx context.Context, url, name string) (<-chan PullModelEvent, error) {
+	req := api.PullRequest{URL: url, Name: name}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)

@@ -178,7 +178,8 @@ func (h *ProxyHandler) PullModel(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
 
 	var req struct {
-		URL string `json:"url"`
+		URL  string `json:"url"`
+		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -186,7 +187,7 @@ func (h *ProxyHandler) PullModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := h.GPUClient.PullModelStream(r.Context(), req.URL)
+	body, err := h.GPUClient.PullModelStream(r.Context(), req.URL, req.Name)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gpu_error", err.Error())
 

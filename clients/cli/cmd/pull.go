@@ -7,20 +7,45 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/ThatCatDev/tanrenai/shared/pkg/models"
 )
 
 var pullCmd = &cobra.Command{
 	Use:   "pull <model>",
-	Short: "Download a GGUF model (supports hf://owner/repo/quant or direct URL)",
+	Short: "Download a GGUF model (bare name, hf:// URI, or direct URL)",
 	Long: `Download a GGUF model via the backend.
 
 Supports:
-  hf://unsloth/Qwen3.5-27B-GGUF                  auto-pick best quant
-  hf://unsloth/Qwen3.5-122B-A10B-GGUF/UD-Q4_K_XL  specific quant (incl. split files)
-  https://huggingface.co/.../model.gguf             direct URL`,
+  Qwen3.6-35B-A3B-Q4_K_M                            bare unsloth name (auto-resolves)
+  hf://unsloth/Qwen3.5-27B-GGUF                     auto-pick best quant
+  hf://unsloth/Qwen3.5-122B-A10B-GGUF/UD-Q4_K_XL    specific quant (incl. split files)
+  https://huggingface.co/.../model.gguf             direct URL
+
+When given a bare name, the file is saved on disk under that exact name —
+so a subsequent ` + "`" + `tanrenai run <bare-name>` + "`" + ` finds it on the first try, even
+when the source repo only ships a differently-named variant (e.g. unsloth's
+UD- dynamic quants). Override the on-disk basename with --name.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		modelURL := args[0]
+		arg := args[0]
+		saveAs, _ := cmd.Flags().GetString("name")
+
+		// Bare-name path: resolve to an hf:// URI and pin the on-disk
+		// basename to the user-typed identifier so /api/load with the
+		// same name finds it. Explicit --name overrides the auto-derived
+		// one for users who want to rename on download.
+		modelURL := arg
+		if !models.IsURI(arg) {
+			resolved := models.ResolveBareNameToURI(arg)
+			if resolved == "" {
+				return fmt.Errorf("could not resolve %q — pass an hf:// URI, a direct URL, or a bare name with a recognizable quant suffix (e.g. -Q4_K_M, -UD-Q4_K_XL, -BF16)", arg)
+			}
+			modelURL = resolved
+			if saveAs == "" {
+				saveAs = arg
+			}
+		}
 
 		activeURL := serverURL
 		local, _ := cmd.Flags().GetBool("local")
@@ -40,7 +65,7 @@ Supports:
 
 		client := newAuthedClient(activeURL, authToken)
 
-		ch, err := client.PullModel(context.Background(), modelURL)
+		ch, err := client.PullModel(context.Background(), modelURL, saveAs)
 		if err != nil {
 			return fmt.Errorf("failed to pull model: %w", err)
 		}
@@ -98,5 +123,6 @@ func formatBytes(b int64) string {
 }
 
 func init() {
+	pullCmd.Flags().String("name", "", "save the GGUF on the GPU under this basename instead of the source URL's filename (preserves shard suffixes)")
 	rootCmd.AddCommand(pullCmd)
 }

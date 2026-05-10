@@ -3,6 +3,7 @@ package gpuclient
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -425,11 +426,40 @@ func TestPullModelStream(t *testing.T) {
 		w.Write([]byte("data: {\"status\":\"downloading\"}\n\n"))
 	}))
 
-	body, err := client.PullModelStream(context.Background(), "http://example.com/model.gguf")
+	body, err := client.PullModelStream(context.Background(), "http://example.com/model.gguf", "")
 	if err != nil {
 		t.Fatalf("PullModelStream: %v", err)
 	}
 	defer body.Close()
+}
+
+func TestPullModelStream_ForwardsName(t *testing.T) {
+	gotBody := make(chan []byte, 1)
+	client, _ := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody <- b
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: {\"status\":\"downloading\"}\n\n"))
+	}))
+
+	body, err := client.PullModelStream(context.Background(), "http://example.com/x.gguf", "Qwen3.6-35B-A3B-Q4_K_M")
+	if err != nil {
+		t.Fatalf("PullModelStream: %v", err)
+	}
+	defer body.Close()
+
+	b := <-gotBody
+	var got struct {
+		URL  string `json:"url"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal request body: %v", err)
+	}
+	if got.Name != "Qwen3.6-35B-A3B-Q4_K_M" {
+		t.Errorf("Name = %q, want Qwen3.6-35B-A3B-Q4_K_M", got.Name)
+	}
 }
 
 func TestPullModelStream500(t *testing.T) {
@@ -437,7 +467,7 @@ func TestPullModelStream500(t *testing.T) {
 		http.Error(w, "pull error", http.StatusInternalServerError)
 	}))
 
-	_, err := client.PullModelStream(context.Background(), "http://example.com/model.gguf")
+	_, err := client.PullModelStream(context.Background(), "http://example.com/model.gguf", "")
 	if err == nil {
 		t.Fatal("expected error for 500, got nil")
 	}

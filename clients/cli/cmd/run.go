@@ -680,6 +680,7 @@ func handleHelpCommand(w io.Writer) bool {
 	_, _ = fmt.Fprintln(w, "  /memory clear                 - Clear all memories")
 	_, _ = fmt.Fprintln(w, "  /scrolls                      - List loaded scrolls")
 	_, _ = fmt.Fprintln(w, "  /scrolls show <name>          - Show a scroll's content")
+	_, _ = fmt.Fprintln(w, "  /swarm [on|off]               - Toggle multi-agent swarm mode")
 	_, _ = fmt.Fprintln(w, "  /quit, /exit                  - Exit")
 
 	return true

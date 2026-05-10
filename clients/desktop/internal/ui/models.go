@@ -47,7 +47,7 @@ func (a *App) startDownload(url string) {
 		a.showDownloadProgress()
 	})
 
-	events, err := a.client.PullModel(ctx, url)
+	events, err := a.client.PullModel(ctx, url, "")
 	if err != nil {
 		cancel()
 		glib.IdleAdd(func() {
