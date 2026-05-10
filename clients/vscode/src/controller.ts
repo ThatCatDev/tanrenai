@@ -199,6 +199,12 @@ export class Controller implements ChatViewListener {
         message =
           `Could not find the tanrenai CLI at "${cliPath}". ` +
           'Run `make vscode-bundle` from the repo root, or set "tanrenai.cliPath" to your CLI binary.';
+      } else if (looksLikeHtmlResponseError(tail) || looksLikeHtmlResponseError((err as Error).message)) {
+        message =
+          `The backend at ${serverUrl} responded with an HTML page instead of API data.\n\n` +
+          `That usually means tanrenai.serverUrl is pointing at the web frontend, not your ` +
+          `tanrenai-server. Update it in VS Code settings to your backend URL ` +
+          `(e.g. http://100.64.x.x:8080 for a vast.ai + tailnet setup).`;
       } else if (tail) {
         message = `${(err as Error).message}\n${truncate(tail, 400)}`;
       } else {
@@ -436,9 +442,10 @@ export class Controller implements ChatViewListener {
   // ── Command handlers ──────────────────────────────────────────────
 
   async login(): Promise<void> {
-    const settings = readSettings();
-    const existingCreds = await loadCredentials();
-    const serverUrl = settings.serverUrlOverride || existingCreds?.server_url || TANRENAI_WEB_URL;
+    const serverUrl = await this.resolveBackendUrl();
+    if (!serverUrl) {
+      return; // user cancelled the prompt
+    }
 
     try {
       this.log(`login: webUrl=${TANRENAI_WEB_URL}, serverUrl=${serverUrl}`);
@@ -455,6 +462,62 @@ export class Controller implements ChatViewListener {
       this.log(`login: failed — ${message}`);
       void vscode.window.showErrorMessage(`Tanrenai login failed: ${message}`);
     }
+  }
+
+  /**
+   * Figure out which URL to use for backend API calls. Priority:
+   *   1. `tanrenai.serverUrl` setting
+   *   2. existing creds' server_url, IF it isn't the web frontend URL
+   *      (which would point at the SvelteKit 404 page for /api/* routes)
+   *   3. prompt the user, validate, persist to global settings
+   *
+   * Returns undefined if the user cancels the prompt.
+   */
+  private async resolveBackendUrl(): Promise<string | undefined> {
+    const settings = readSettings();
+    if (settings.serverUrlOverride) {
+      return settings.serverUrlOverride;
+    }
+    const existing = await loadCredentials();
+    if (
+      existing?.server_url &&
+      !isLikelyWebFrontend(existing.server_url)
+    ) {
+      return existing.server_url;
+    }
+
+    const entered = await vscode.window.showInputBox({
+      title: 'Tanrenai: backend server URL',
+      prompt:
+        'The URL of your tanrenai-server (NOT the web frontend). ' +
+        'For a vast.ai deployment this is the Headscale/Tailscale tunnel IP, e.g. http://100.64.10.5:8080',
+      placeHolder: 'http://100.64.10.5:8080',
+      ignoreFocusOut: true,
+      validateInput: (v) => {
+        const t = v.trim();
+        if (!t) return 'Required';
+        try {
+          new URL(t);
+        } catch {
+          return 'Must be a valid URL (with http:// or https://)';
+        }
+        if (isLikelyWebFrontend(t)) {
+          return 'That looks like the web frontend URL — set this to the backend (tanrenai-server) URL instead.';
+        }
+
+        return undefined;
+      },
+    });
+    if (!entered) {
+      return undefined;
+    }
+    const url = entered.trim();
+    await vscode.workspace
+      .getConfiguration('tanrenai')
+      .update('serverUrl', url, vscode.ConfigurationTarget.Global);
+    this.log(`login: saved tanrenai.serverUrl = ${url}`);
+
+    return url;
   }
 
   async logout(): Promise<void> {
@@ -914,4 +977,31 @@ function composeWithAttachments(
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+/**
+ * Heuristic: is this URL the Tanrenai web frontend rather than the API
+ * backend? Web frontend lives at tanrenai.com / *.tanrenai.com and serves
+ * the SvelteKit app — its /api/* routes 404 from the CLI's perspective.
+ * The real backend is wherever the user runs `tanrenai-server`.
+ */
+function isLikelyWebFrontend(url: string): boolean {
+  try {
+    const host = new URL(url).host.toLowerCase();
+
+    return host === 'tanrenai.com' || host.endsWith('.tanrenai.com');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detect responses that look like an HTML page (web frontend) instead of
+ * the JSON the API should return. Triggers a clearer error message.
+ */
+function looksLikeHtmlResponseError(s: string | undefined): boolean {
+  if (!s) return false;
+  const lower = s.toLowerCase();
+
+  return lower.includes('<!doctype html') || lower.includes('<html');
 }
