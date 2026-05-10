@@ -14,11 +14,10 @@ import {
   ErrorMsg,
 } from './rpc/messages';
 import { readSettings } from './settings';
+import { dispatchTool, interceptedToolNames } from './tools/registry';
 
 const TANRENAI_WEB_URL = 'https://dev.tanrenai.com';
-// Tools the extension intercepts. Real implementations land in the next
-// commit; this commit stubs the result so the agent doesn't hang.
-const INTERCEPTED_TOOLS = ['file_read', 'file_write', 'patch_file'];
+const INTERCEPTED_TOOLS = interceptedToolNames;
 
 export class Controller implements ChatViewListener {
   private rpc?: RPCClient;
@@ -238,16 +237,31 @@ export class Controller implements ChatViewListener {
       intercepted,
     });
 
-    // Real intercepted-tool execution lands in the next commit. For now
-    // stub the reply so the agent doesn't hang.
     if (intercepted) {
-      this.rpc?.send({
-        type: 'tool_result',
-        id: m.id,
-        ok: false,
-        error: `tool ${m.name} interception not yet wired (Phase 4)`,
-      });
+      void this.executeInterceptedTool(m);
     }
+  }
+
+  private async executeInterceptedTool(m: {
+    id: string;
+    name: string;
+    arguments: string;
+  }): Promise<void> {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+    const result = await dispatchTool(m.name, m.arguments, workspaceRoot);
+    this.view.send({
+      type: 'tool_result',
+      id: m.id,
+      ok: result.ok,
+      content: result.ok ? result.content : result.error,
+    });
+    this.rpc?.send({
+      type: 'tool_result',
+      id: m.id,
+      ok: result.ok,
+      content: result.content,
+      error: result.error,
+    });
   }
 
   private handleToolResult(m: ToolResultLocalMsg): void {
