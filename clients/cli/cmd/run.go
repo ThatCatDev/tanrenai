@@ -75,6 +75,19 @@ func tanrenaiDataDir() string {
 	return filepath.Join(home, ".local", "share", "tanrenai")
 }
 
+// projectDirName is the conventional folder name created in cwd for
+// project-local tanrenai state (architect spec, scrolls, permissions).
+const projectDirName = ".tanrenai"
+
+// ensureProjectDir creates `.tanrenai/` in the current working directory if
+// it doesn't already exist. Failures are logged but not fatal — a read-only
+// workspace should still be able to chat.
+func ensureProjectDir(log *startupLog) {
+	if err := os.MkdirAll(projectDirName, 0o755); err != nil {
+		log.Warn(fmt.Sprintf("could not create %s/ in current directory: %v", projectDirName, err))
+	}
+}
+
 // projectMemoryDir returns a project-scoped memory directory based on a hash of the working directory.
 func projectMemoryDir() string {
 	wd, err := os.Getwd()
@@ -795,9 +808,14 @@ type sessionDeps struct {
 }
 
 // setupSession initialises the backend client, model, context manager,
-// tools, scrolls, and memory — everything both TUI and pipe mode need.
+// tools, scrolls, and memory — everything TUI, pipe, and agent-rpc need.
 func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDeps, error) {
 	deps := &sessionDeps{modelName: p.model}
+
+	// Ensure the project-local `.tanrenai/` exists in cwd. Home for
+	// architect.md (swarm), project-scoped scrolls, and permissions.json.
+	// Non-fatal — read-only workspaces still get chat.
+	ensureProjectDir(log)
 
 	mode := resolveSessionMode(p, log)
 
