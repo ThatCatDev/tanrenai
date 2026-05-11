@@ -455,17 +455,21 @@ export class Controller implements ChatViewListener {
 
   async onStopGpu(): Promise<void> {
     const choice = await vscode.window.showWarningMessage(
-      'Stop the GPU instance? This pauses it (vast.ai may still bill while paused).',
+      'Stop the GPU instance? This pauses it (vast.ai may still bill while paused). ' +
+        'Your chat is preserved — the next message will wake it back up.',
       { modal: true },
       'Stop',
     );
     if (choice !== 'Stop') {
       return;
     }
-    await this.disconnect();
+    // Note: NOT disconnecting the CLI subprocess. deps.mgr (the canonical
+    // conversation) stays alive. When the user sends the next message,
+    // the withStreamGPURetry wrapper sees the provisioning error and
+    // automatically re-wakes the instance with the full prior context.
     try {
       await platform.instanceStop();
-      void vscode.window.showInformationMessage('Tanrenai: GPU stopped.');
+      void vscode.window.showInformationMessage('Tanrenai: GPU stopped. Chat is preserved.');
     } catch (err) {
       const message = (err as Error).message;
       void vscode.window.showErrorMessage(`Tanrenai: stop failed — ${message}`);
@@ -476,16 +480,23 @@ export class Controller implements ChatViewListener {
     const choice = await vscode.window.showWarningMessage(
       'Destroy the GPU instance? This deletes it on vast.ai. ' +
         'Use this if instances are being spawned repeatedly without being torn down.',
-      { modal: true, detail: 'Cannot be undone. Models will need to re-pull on the next session.' },
+      {
+        modal: true,
+        detail:
+          'Chat is preserved. The next message will spin up a fresh GPU and the model ' +
+          'will see the prior conversation. Cached models on the destroyed instance are lost ' +
+          'and may need to re-pull.',
+      },
       'Destroy',
     );
     if (choice !== 'Destroy') {
       return;
     }
-    await this.disconnect();
+    // Same as stop: don't kill the CLI subprocess. mgr survives;
+    // next turn triggers a fresh spawn with full context.
     try {
       await platform.instanceDestroy();
-      void vscode.window.showInformationMessage('Tanrenai: GPU destroyed.');
+      void vscode.window.showInformationMessage('Tanrenai: GPU destroyed. Chat is preserved.');
     } catch (err) {
       const message = (err as Error).message;
       void vscode.window.showErrorMessage(`Tanrenai: destroy failed — ${message}`);
