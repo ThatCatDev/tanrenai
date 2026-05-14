@@ -1,5 +1,9 @@
-import { useState } from 'preact/hooks';
-import type { Mode, SelectionAttachment } from '../../src/protocol';
+import { useRef, useState } from 'preact/hooks';
+import type {
+  ImageAttachment,
+  Mode,
+  SelectionAttachment,
+} from '../../src/protocol';
 import { send } from '../host';
 import type { Action } from '../state';
 
@@ -7,12 +11,26 @@ interface Props {
   turnRunning: boolean;
   mode: Mode;
   attachments: SelectionAttachment[];
+  images: ImageAttachment[];
   availableSelection: SelectionAttachment | null;
   dispatch: (a: Action) => void;
 }
 
-export function Composer({ turnRunning, mode, attachments, availableSelection, dispatch }: Props) {
+/** Cap individual image size — guards against pasting 20MB screenshots that
+ *  blow past the model's input limits or the IPC channel. */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+export function Composer({
+  turnRunning,
+  mode,
+  attachments,
+  images,
+  availableSelection,
+  dispatch,
+}: Props) {
   const [value, setValue] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   // Suppress the live indicator when this exact selection is already
   // attached — avoids showing "Selection available" alongside an
@@ -31,7 +49,7 @@ export function Composer({ turnRunning, mode, attachments, availableSelection, d
 
   const submit = () => {
     const text = value.trim();
-    if (!text && attachments.length === 0) return;
+    if (!text && attachments.length === 0 && images.length === 0) return;
     if (text.startsWith('/') && handleSlashCommand(text)) {
       setValue('');
 
@@ -39,12 +57,99 @@ export function Composer({ turnRunning, mode, attachments, availableSelection, d
     }
     if (turnRunning) return;
     setValue('');
-    send({ type: 'send', content: text, attachments });
+    send({
+      type: 'send',
+      content: text,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      images: images.length > 0 ? images : undefined,
+    });
     dispatch({ type: 'attach_clear_pending' });
+    dispatch({ type: 'image_clear_pending' });
+  };
+
+  /** Read a File into an ImageAttachment (data URL) and dispatch it. */
+  const ingestFile = (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    if (file.size > MAX_IMAGE_BYTES) {
+      // Surface to the user — toast won't work in a webview, so render an
+      // inline notice the next time we render. Simplest: insert a chip with
+      // an error label and let them remove it.
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? '');
+      if (!dataUrl.startsWith('data:')) return;
+      dispatch({
+        type: 'image_attach',
+        image: {
+          label: file.name || 'image',
+          mimeType: file.type,
+          dataUrl,
+          size: file.size,
+        },
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const onPaste = (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    let consumedAny = false;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          ingestFile(file);
+          consumedAny = true;
+        }
+      }
+    }
+    if (consumedAny) {
+      e.preventDefault();
+    }
+  };
+
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = e.dataTransfer?.files;
+    if (!files) return;
+    for (let i = 0; i < files.length; i++) {
+      ingestFile(files[i]);
+    }
+  };
+
+  const onFilesPicked = (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    if (!target.files) return;
+    for (let i = 0; i < target.files.length; i++) {
+      ingestFile(target.files[i]);
+    }
+    target.value = ''; // allow re-picking the same file
   };
 
   return (
-    <div class="input-row">
+    <div
+      class={`input-row${dragOver ? ' drag-over' : ''}`}
+      onDragEnter={(e) => {
+        if (e.dataTransfer?.types.includes('Files')) {
+          e.preventDefault();
+          setDragOver(true);
+        }
+      }}
+      onDragOver={(e) => {
+        if (e.dataTransfer?.types.includes('Files')) {
+          e.preventDefault();
+        }
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragOver(false);
+      }}
+      onDrop={onDrop}
+    >
       {liveSelection && (
         <button
           class="selection-hint"
@@ -58,10 +163,10 @@ export function Composer({ turnRunning, mode, attachments, availableSelection, d
           <span class="selection-hint-action">+ Add</span>
         </button>
       )}
-      {attachments.length > 0 && (
+      {(attachments.length > 0 || images.length > 0) && (
         <div class="attachments">
           {attachments.map((a, i) => (
-            <span key={`${a.path}-${a.startLine}-${i}`} class="chip" title={a.text}>
+            <span key={`sel-${a.path}-${a.startLine}-${i}`} class="chip" title={a.text}>
               <span class="chip-label">
                 <span class="chip-glyph">⟦</span>
                 {a.label}
@@ -71,6 +176,19 @@ export function Composer({ turnRunning, mode, attachments, availableSelection, d
                 class="chip-x"
                 title="Remove"
                 onClick={() => dispatch({ type: 'attach_remove', index: i })}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {images.map((img, i) => (
+            <span key={`img-${i}`} class="chip image-chip" title={img.label}>
+              <img class="chip-thumb" src={img.dataUrl} alt="" />
+              <span class="chip-label">{img.label}</span>
+              <button
+                class="chip-x"
+                title="Remove"
+                onClick={() => dispatch({ type: 'image_remove', index: i })}
               >
                 ×
               </button>
@@ -89,6 +207,15 @@ export function Composer({ turnRunning, mode, attachments, availableSelection, d
             submit();
           }
         }}
+        onPaste={onPaste}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={onFilesPicked}
       />
       <div class="actions">
         <button
@@ -96,9 +223,18 @@ export function Composer({ turnRunning, mode, attachments, availableSelection, d
           title="Attach editor selection"
           onClick={() => send({ type: 'attach_request' })}
         >
-          + Attach
+          + Sel
         </button>
-        <span class="hint">{turnRunning ? 'Streaming' : '⏎ to send · ⇧⏎ for newline'}</span>
+        <button
+          class="secondary attach-btn"
+          title="Attach image (paste or drag also works)"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          + Img
+        </button>
+        <span class="hint">
+          {turnRunning ? 'Streaming' : '⏎ to send · paste / drag image'}
+        </span>
         {turnRunning ? (
           <button class="secondary" onClick={() => send({ type: 'cancel' })}>
             Cancel

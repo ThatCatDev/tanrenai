@@ -16,7 +16,12 @@ export type ConnectionState =
   | { status: 'error'; message: string };
 
 export type WebviewInbound =
-  | { type: 'send'; content: string; attachments?: SelectionAttachment[] }
+  | {
+      type: 'send';
+      content: string;
+      attachments?: SelectionAttachment[];
+      images?: ImageAttachment[];
+    }
   | { type: 'attach_request' }
   | { type: 'attach_clear' }
   | { type: 'cancel' }
@@ -44,6 +49,17 @@ export interface SelectionAttachment {
   endLine: number;
   /** The selected text. */
   text: string;
+}
+
+export interface ImageAttachment {
+  /** Display label, e.g. "screenshot.png". */
+  label: string;
+  /** MIME type, e.g. "image/png". */
+  mimeType: string;
+  /** Full data URL: `data:<mime>;base64,<payload>` — sent to the model. */
+  dataUrl: string;
+  /** Byte size (raw, not the base64-encoded length). */
+  size: number;
 }
 
 export type WebviewOutbound =

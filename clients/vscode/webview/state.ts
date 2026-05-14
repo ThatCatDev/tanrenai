@@ -1,6 +1,12 @@
 // State model the App reduces from inbound messages.
 
-import type { ConnectionState, Mode, SelectionAttachment, WebviewOutbound } from '../src/protocol';
+import type {
+  ConnectionState,
+  ImageAttachment,
+  Mode,
+  SelectionAttachment,
+  WebviewOutbound,
+} from '../src/protocol';
 
 export interface AssistantMsg {
   kind: 'assistant';
@@ -57,8 +63,10 @@ export interface AppState {
   iteration: number; // 0 when no turn or pre-iteration
   maxIterations: number;
   streamingTools: StreamingTool[];
-  /** Attachments queued to send with the next user message. */
+  /** Selection attachments queued for the next user message. */
   pendingAttachments: SelectionAttachment[];
+  /** Image attachments queued for the next user message. */
+  pendingImages: ImageAttachment[];
   /** Live preview of the active editor's selection (null = no selection). */
   availableSelection: SelectionAttachment | null;
 }
@@ -72,6 +80,7 @@ export const initialState: AppState = {
   maxIterations: 0,
   streamingTools: [],
   pendingAttachments: [],
+  pendingImages: [],
   availableSelection: null,
 };
 
@@ -133,7 +142,10 @@ export function deriveActivity(state: AppState): Activity {
  */
 export type InternalAction =
   | { type: 'attach_remove'; index: number }
-  | { type: 'attach_clear_pending' };
+  | { type: 'attach_clear_pending' }
+  | { type: 'image_attach'; image: ImageAttachment }
+  | { type: 'image_remove'; index: number }
+  | { type: 'image_clear_pending' };
 
 export type Action = WebviewOutbound | InternalAction;
 
@@ -310,6 +322,15 @@ export function reduce(state: AppState, msg: Action): AppState {
       };
     case 'attach_clear_pending':
       return { ...state, pendingAttachments: [] };
+    case 'image_attach':
+      return { ...state, pendingImages: [...state.pendingImages, msg.image] };
+    case 'image_remove':
+      return {
+        ...state,
+        pendingImages: state.pendingImages.filter((_, i) => i !== msg.index),
+      };
+    case 'image_clear_pending':
+      return { ...state, pendingImages: [] };
     default:
       return state;
   }

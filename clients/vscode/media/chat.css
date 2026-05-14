@@ -624,6 +624,28 @@ body {
   padding: 0.25rem 0.55rem !important;
 }
 
+.chip.image-chip {
+  padding: 0;
+  align-items: center;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+.chip-thumb {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  display: block;
+  border-right: 1px solid var(--tn-rule);
+}
+.chip.image-chip .chip-label {
+  padding: 0.22rem 0.5rem;
+}
+
+.input-row.drag-over {
+  outline: 1px dashed var(--tn-accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--tn-accent) 6%, transparent);
+}
+
 .selection-hint {
   width: 100%;
   display: flex;

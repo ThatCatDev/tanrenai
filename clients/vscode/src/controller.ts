@@ -285,7 +285,11 @@ export class Controller implements ChatViewListener {
     return vscode.Disposable.from(...disposables);
   }
 
-  onSend(content: string, attachments?: import('./protocol').SelectionAttachment[]): void {
+  onSend(
+    content: string,
+    attachments?: import('./protocol').SelectionAttachment[],
+    images?: import('./protocol').ImageAttachment[],
+  ): void {
     if (!this.rpc) {
       this.view.send({ type: 'turn_end', ok: false, reason: 'not connected' });
 
@@ -302,7 +306,13 @@ export class Controller implements ChatViewListener {
 
     // Fold any attached selections into the user content as fenced blocks
     // before either the model or the transcript see it.
-    const fullContent = composeWithAttachments(content, attachments);
+    let fullContent = composeWithAttachments(content, attachments);
+    // Append an attachment list for any image so the visible bubble (and
+    // the chat history sent to the model) records what images were sent.
+    if (images && images.length > 0) {
+      const note = images.map((i) => `[image: ${i.label}]`).join(' ');
+      fullContent = fullContent ? `${fullContent}\n\n${note}` : note;
+    }
 
     // Record + render the user's turn.
     const userId = `u_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -313,7 +323,12 @@ export class Controller implements ChatViewListener {
     this.view.send({ type: 'turn_start' });
 
     try {
-      this.rpc.send({ type: 'user_message', content: fullContent, mode: this.mode });
+      this.rpc.send({
+        type: 'user_message',
+        content: fullContent,
+        mode: this.mode,
+        images: images && images.length > 0 ? images.map((i) => i.dataUrl) : undefined,
+      });
     } catch (err) {
       this.turnRunning = false;
       this.view.send({ type: 'turn_end', ok: false, reason: (err as Error).message });

@@ -25,6 +25,9 @@ export interface UserMessageMsg {
   content: string;
   /** Optional per-turn mode override; empty/undefined = use init's mode. */
   mode?: 'chat' | 'agent' | 'swarm';
+  /** Optional image attachments as data: / http(s) URLs. Sent to the
+   *  model as multimodal content_parts. Requires a vision-capable model. */
+  images?: string[];
 }
 
 export interface ClearHistoryMsg {

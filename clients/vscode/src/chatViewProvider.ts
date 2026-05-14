@@ -1,16 +1,24 @@
 import * as vscode from 'vscode';
 import type {
   ConnectionState,
+  ImageAttachment,
   Mode,
   SelectionAttachment,
   WebviewInbound,
   WebviewOutbound,
 } from './protocol';
 
-export type { ConnectionState, Mode, SelectionAttachment, WebviewInbound, WebviewOutbound };
+export type {
+  ConnectionState,
+  ImageAttachment,
+  Mode,
+  SelectionAttachment,
+  WebviewInbound,
+  WebviewOutbound,
+};
 
 export interface ChatViewListener {
-  onSend(content: string, attachments?: SelectionAttachment[]): void;
+  onSend(content: string, attachments?: SelectionAttachment[], images?: ImageAttachment[]): void;
   onCancel(): void;
   onCancelConnect(): void;
   onPickModel(): void;
@@ -62,7 +70,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     view.webview.onDidReceiveMessage((msg: WebviewInbound) => {
       switch (msg.type) {
         case 'send':
-          this.listener?.onSend(msg.content, msg.attachments);
+          this.listener?.onSend(msg.content, msg.attachments, msg.images);
           break;
         case 'attach_request':
           this.listener?.onAttachRequest();

@@ -49,6 +49,11 @@ type rpcUserMessageMsg struct {
 	// Optional per-turn mode override: "chat" | "agent" | "swarm".
 	// Empty string = use whatever mode `init` configured.
 	Mode string `json:"mode,omitempty"`
+	// Optional image attachments. Each entry is a URL — typically a
+	// `data:image/<type>;base64,…` data URL emitted by the webview.
+	// Sent to the model as multimodal content_parts. Requires the
+	// loaded model to be vision-capable.
+	Images []string `json:"images,omitempty"`
 }
 
 type rpcClearHistoryMsg struct {
@@ -467,11 +472,12 @@ func runAgentRPC(ctx context.Context) error {
 			turnCtx, cancel := context.WithCancel(ctx)
 			turn.cancel = cancel
 			turn.running.Store(true)
-			go func(input string) {
+			images := msg.Images
+			go func(input string, imgs []string) {
 				defer turn.running.Store(false)
 				defer cancel()
-				runRPCTurn(turnCtx, deps, srv, input)
-			}(msg.Content)
+				runRPCTurn(turnCtx, deps, srv, input, imgs)
+			}(msg.Content, images)
 
 		case "clear_history":
 			if deps.mgr != nil {
@@ -557,8 +563,14 @@ func buildReadyMsg(deps *sessionDeps, model string) rpcReadyMsg {
 
 // runRPCTurn runs a single turn: scrolls + memory + agent loop, emitting
 // IPC events as the turn progresses. Errors are reported via turn_done.
-func runRPCTurn(ctx context.Context, deps *sessionDeps, srv *rpcServer, input string) {
-	deps.mgr.Append(api.Message{Role: "user", Content: input})
+// `images` is a list of data: or http(s) URLs to attach to the user message
+// as multimodal content (vision-capable models only).
+func runRPCTurn(ctx context.Context, deps *sessionDeps, srv *rpcServer, input string, images []string) {
+	if len(images) > 0 {
+		deps.mgr.Append(api.NewMultimodalMessage("user", input, images))
+	} else {
+		deps.mgr.Append(api.Message{Role: "user", Content: input})
+	}
 
 	if deps.scrollsEnabled {
 		matched := scrolls.Match(deps.allScrolls, input, 3)
