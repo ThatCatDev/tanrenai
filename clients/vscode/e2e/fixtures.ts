@@ -36,7 +36,18 @@ export const test = base.extend<{ webview: Webview }>({
     // known idle state. Specs that need a connected shell call
     // `webview.push({ type: 'state', state: { status: 'connected', ... } })`
     // themselves.
+    //
+    // Also clear any persisted shell from a previous test. localStorage
+    // is per-origin and survives page navigation, so without this a
+    // test that left "connected" persisted would pre-paint the chat
+    // shell for the next test and trip "starts idle" assertions.
     await page.goto('/?nostate=1');
+    await page.evaluate(() => {
+      try {
+        localStorage.removeItem('__dev_vscode_state');
+      } catch { /* private mode — fine */ }
+    });
+    await page.reload();
     // Wait until the bundle has wired up the message listener.
     await page.waitForFunction(() => typeof (window as any).__pushMsg === 'function');
 

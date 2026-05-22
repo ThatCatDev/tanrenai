@@ -235,6 +235,109 @@ test.describe('swarm dock', () => {
     await expect(dock.locator('.swarm-dock-desc')).toHaveText('inner one');
   });
 
+  test('clicking an ancestor crumb pins the dock to that depth', async ({ webview }) => {
+    // Drill-down: a sub-decomposition (depth 1) is live, but the user
+    // wants to see the outer plan's full step list. Click the d0 crumb
+    // → dock pins to depth 0, expands, lists all outer steps.
+    const outer = Array.from({ length: 11 }, (_, i) => ({
+      index: i + 1,
+      description: `outer ${i + 1}`,
+    }));
+    await webview.pushSequence([
+      { type: 'turn_start' },
+      { type: 'swarm_plan', depth: 0, steps: outer },
+      { type: 'swarm_worker_done', depth: 0, stepIndex: 1, status: 'done' },
+      { type: 'swarm_worker_done', depth: 0, stepIndex: 2, status: 'done' },
+      { type: 'swarm_worker_done', depth: 0, stepIndex: 3, status: 'done' },
+      { type: 'swarm_worker_start', depth: 0, stepIndex: 4, description: 'outer 4' },
+      {
+        type: 'swarm_plan',
+        depth: 1,
+        steps: [
+          { index: 1, description: 'inner one' },
+          { index: 2, description: 'inner two' },
+        ],
+      },
+      { type: 'swarm_worker_start', depth: 1, stepIndex: 1, description: 'inner one' },
+    ]);
+
+    // Default: dock shows the live (depth-1) status.
+    const dock = webview.page.locator('.swarm-dock');
+    await expect(dock.locator('.swarm-dock-count')).toHaveText('0/2');
+
+    // Click the d0 crumb. Now the dock pins to depth 0 — count
+    // updates, "viewing" verb appears, full outer step list is shown
+    // expanded (the user explicitly drilled in, they want all 11).
+    await webview.page.locator('.swarm-dock-crumb-btn').click();
+    await expect(dock).toHaveClass(/pinned/);
+    await expect(dock.locator('.swarm-dock-count')).toHaveText('3/11');
+    await expect(dock.locator('.swarm-dock-verb')).toHaveText('viewing');
+    await expect(webview.page.locator('.swarm-dock-step')).toHaveCount(11);
+    // Crumb itself is marked focused.
+    await expect(webview.page.locator('.swarm-dock-crumb')).toHaveClass(/is-focused/);
+  });
+
+  test('clicking the main row while pinned returns to live status', async ({ webview }) => {
+    await webview.pushSequence([
+      { type: 'turn_start' },
+      {
+        type: 'swarm_plan',
+        depth: 0,
+        steps: [{ index: 1, description: 'outer' }],
+      },
+      { type: 'swarm_worker_start', depth: 0, stepIndex: 1, description: 'outer' },
+      {
+        type: 'swarm_plan',
+        depth: 1,
+        steps: [{ index: 1, description: 'inner' }],
+      },
+      { type: 'swarm_worker_start', depth: 1, stepIndex: 1, description: 'inner' },
+    ]);
+
+    // Pin to d0.
+    await webview.page.locator('.swarm-dock-crumb-btn').click();
+    const dock = webview.page.locator('.swarm-dock');
+    await expect(dock).toHaveClass(/pinned/);
+    await expect(dock.locator('.swarm-dock-desc')).toHaveText('outer');
+
+    // Click the main summary row — un-pin and return to following the
+    // live (deepest) swarm.
+    await webview.page.locator('.swarm-dock-summary').click();
+    await expect(dock).not.toHaveClass(/pinned/);
+    await expect(dock.locator('.swarm-dock-desc')).toHaveText('inner');
+  });
+
+  test('depth 5 hierarchy: dock renders all 5 ancestor crumbs', async ({ webview }) => {
+    // Nested swarms can in principle go arbitrarily deep. The dock
+    // doesn't crash, and each crumb is clickable.
+    await webview.push({ type: 'turn_start' });
+    for (let d = 0; d <= 5; d++) {
+      await webview.push({
+        type: 'swarm_plan',
+        depth: d,
+        steps: [
+          { index: 1, description: `d${d} step a` },
+          { index: 2, description: `d${d} step b` },
+        ],
+      });
+    }
+    await webview.push({
+      type: 'swarm_worker_start',
+      depth: 5,
+      stepIndex: 1,
+      description: 'd5 step a',
+    });
+
+    // Active is d5; the breadcrumb should hold all 5 ancestors d0..d4.
+    await expect(webview.page.locator('.swarm-dock-crumb')).toHaveCount(5);
+    const crumbs = webview.page.locator('.swarm-dock-crumb-depth');
+    for (let d = 0; d < 5; d++) {
+      await expect(crumbs.nth(d)).toHaveText(`d${d}`);
+    }
+    // The current depth chip on the main row reflects d5.
+    await expect(webview.page.locator('.swarm-dock-depth')).toHaveText('d5');
+  });
+
   test('no breadcrumb when the active swarm is at depth 0', async ({ webview }) => {
     // The breadcrumb is only meaningful when there's a parent — a
     // single-line "d0 0/3" above an identical d0 main row would be

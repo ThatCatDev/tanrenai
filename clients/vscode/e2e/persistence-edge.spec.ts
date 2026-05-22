@@ -53,7 +53,13 @@ test.describe('persistence edge cases', () => {
       type: 'state',
       state: { status: 'error', message: 'persisted-error-marker' },
     });
-    await webview.page.getByText('persisted-error-marker').waitFor();
+    // Wait for the persistence effect (which fires after paint) to have
+    // committed before we reload — waitFor on text is paint-done but
+    // not effect-done; goto would race the useEffect.
+    await webview.page.waitForFunction(() => {
+      const raw = localStorage.getItem('__dev_vscode_state');
+      return raw !== null && raw.includes('persisted-error-marker');
+    });
     await webview.page.goto('/?nostate=1');
     await expect(webview.page.getByText('persisted-error-marker')).toBeVisible();
 

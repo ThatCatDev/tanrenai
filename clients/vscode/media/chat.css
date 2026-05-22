@@ -1437,3 +1437,54 @@ button.secondary:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── swarm dock — clickable breadcrumb ─────────────────────────── */
+
+.swarm-dock-crumb {
+  /* Wrapper resets — actual styling lives on the inner button so
+   * keyboard focus and click affordance are unambiguous. */
+  margin: 0;
+  padding: 0;
+}
+.swarm-dock-crumb-btn {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0.05rem 0;
+  text-align: left;
+  color: inherit;
+  /* Inherit the breadcrumb's font sizing rather than the user-agent
+   * button default. */
+  font: inherit;
+}
+.swarm-dock-crumb-btn:hover {
+  color: var(--vscode-foreground);
+}
+.swarm-dock-crumb-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.swarm-dock-crumb.is-focused .swarm-dock-crumb-btn {
+  /* Pinned ancestor — gets a visible left rail so users know which
+   * depth's steps the body is showing. */
+  background: color-mix(in srgb, var(--tn-accent) 10%, transparent);
+  box-shadow: inset 2px 0 0 var(--tn-accent);
+  padding-left: 0.35rem;
+}
+.swarm-dock-crumb.is-focused .swarm-dock-crumb-depth {
+  color: var(--tn-accent);
+}
+
+/* When the dock is pinned to an ancestor (rather than live-following
+ * the deepest swarm), tint the whole dock to make the state legible
+ * and the "return to live" affordance obvious. */
+.swarm-dock.pinned {
+  background: color-mix(in srgb, var(--tn-accent) 9%, transparent);
+}
+.swarm-dock.pinned .swarm-dock-verb {
+  color: var(--tn-accent);
+}

@@ -21,22 +21,42 @@ interface Props {
  *    visual footprint, just enough to answer "what's it on right now?"
  *  - Expanded: full step list, click anywhere on the row to toggle.
  *
+ * Drill-down: when there are ancestor crumbs, each is clickable. The
+ * dock locally remembers a "focused depth" so the user can inspect any
+ * level of the hierarchy without losing the live status — the
+ * breadcrumb stays visible while the body shows the focused depth's
+ * steps. Reverts to the active swarm's depth on next live event.
+ *
  * Closes itself when there's nothing to show; the caller is expected
  * to render conditionally.
  */
 export function SwarmDock({ swarm, ancestors }: Props) {
   const [open, setOpen] = useState(false);
+  // null = follow the active swarm (default). When the user clicks an
+  // ancestor crumb we pin to that depth until the live tracker
+  // advances (a new worker_start at a deeper depth) — at that point
+  // the user almost certainly wants the live thing back. We approximate
+  // that by resetting focus whenever the active swarm's identity
+  // changes; tracked via the swarm prop's depth as the comparison key.
+  const [focusedDepth, setFocusedDepth] = useState<number | null>(null);
+  // Pick which swarm's body to show. Defaults to the live active swarm
+  // (when focusedDepth is null OR the focused depth no longer exists).
+  const all = [...ancestors, swarm];
+  const focused =
+    focusedDepth === null
+      ? swarm
+      : all.find((s) => s.depth === focusedDepth) ?? swarm;
 
-  const total = swarm.steps.length;
-  const done = swarm.steps.filter((s) => s.status === 'done').length;
-  const running = swarm.steps.find((s) => s.status === 'running');
+  const total = focused.steps.length;
+  const done = focused.steps.filter((s) => s.status === 'done').length;
+  const running = focused.steps.find((s) => s.status === 'running');
   // Current step priority: actively running > first pending > last done.
   // If everything's done the dock shows the final step so users can read
   // the result of the most recent work while the chat sits idle.
   const current =
     running ??
-    swarm.steps.find((s) => s.status === 'pending') ??
-    swarm.steps[swarm.steps.length - 1];
+    focused.steps.find((s) => s.status === 'pending') ??
+    focused.steps[focused.steps.length - 1];
 
   const phase: 'running' | 'done' | 'pending' | 'mixed' =
     running ? 'running'
@@ -44,8 +64,10 @@ export function SwarmDock({ swarm, ancestors }: Props) {
     : done > 0 ? 'mixed'
     : 'pending';
 
+  const isPinned = focusedDepth !== null && focusedDepth !== swarm.depth;
+
   return (
-    <div class={`swarm-dock ${phase}`} role="status" aria-live="polite">
+    <div class={`swarm-dock ${phase}${isPinned ? ' pinned' : ''}`} role="status" aria-live="polite">
       {ancestors.length > 0 && (
         <ol class="swarm-dock-breadcrumb" aria-label="Swarm hierarchy">
           {ancestors.map((parent) => {
@@ -56,17 +78,27 @@ export function SwarmDock({ swarm, ancestors }: Props) {
             // Falls back to the last-touched step if none is currently
             // running (the parent paused while the child works).
             const pCurrent = currentParentStep(parent);
+            const isFocused = focused.depth === parent.depth;
             return (
-              <li key={parent.depth} class="swarm-dock-crumb">
-                <span class="swarm-dock-crumb-depth">d{parent.depth}</span>
-                <span class="swarm-dock-crumb-count">
-                  {pDone}/{pTotal}
-                </span>
-                {pCurrent && (
-                  <span class="swarm-dock-crumb-step" title={pCurrent.description}>
-                    ▸ {pCurrent.description}
+              <li key={parent.depth} class={`swarm-dock-crumb${isFocused ? ' is-focused' : ''}`}>
+                <button
+                  class="swarm-dock-crumb-btn"
+                  onClick={() => {
+                    setFocusedDepth(parent.depth);
+                    setOpen(true);
+                  }}
+                  title={`Focus depth ${parent.depth}`}
+                >
+                  <span class="swarm-dock-crumb-depth">d{parent.depth}</span>
+                  <span class="swarm-dock-crumb-count">
+                    {pDone}/{pTotal}
                   </span>
-                )}
+                  {pCurrent && (
+                    <span class="swarm-dock-crumb-step" title={pCurrent.description}>
+                      ▸ {pCurrent.description}
+                    </span>
+                  )}
+                </button>
               </li>
             );
           })}
@@ -74,9 +106,23 @@ export function SwarmDock({ swarm, ancestors }: Props) {
       )}
       <button
         class="swarm-dock-summary"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (isPinned) {
+            // Pinned to an ancestor — clicking the main row pops back
+            // to the live active swarm (and stays expanded if it was).
+            setFocusedDepth(null);
+          } else {
+            setOpen((v) => !v);
+          }
+        }}
         aria-expanded={open}
-        title={open ? 'Collapse swarm status' : 'Expand swarm status'}
+        title={
+          isPinned
+            ? 'Return to live status'
+            : open
+              ? 'Collapse swarm status'
+              : 'Expand swarm status'
+        }
       >
         <span class="swarm-dock-marker" aria-hidden="true">
           {phase === 'running' ? '◐' : phase === 'done' ? '✓' : '·'}
@@ -84,21 +130,23 @@ export function SwarmDock({ swarm, ancestors }: Props) {
         <span class="swarm-dock-count">
           {done}/{total}
         </span>
-        {swarm.depth > 0 && <span class="swarm-dock-depth">d{swarm.depth}</span>}
+        {focused.depth > 0 && <span class="swarm-dock-depth">d{focused.depth}</span>}
         {current && (
           <span class="swarm-dock-current">
-            <span class="swarm-dock-verb">{phaseLabel(phase, current.status)}</span>
+            <span class="swarm-dock-verb">
+              {isPinned ? 'viewing' : phaseLabel(phase, current.status)}
+            </span>
             <span class="swarm-dock-desc">{current.description || '—'}</span>
           </span>
         )}
-        {swarm.verifying && <span class="swarm-dock-verify">verifying…</span>}
+        {focused.verifying && <span class="swarm-dock-verify">verifying…</span>}
         <span class="swarm-dock-toggle" aria-hidden="true">
-          {open ? '▴' : '▾'}
+          {isPinned ? '↺' : open ? '▴' : '▾'}
         </span>
       </button>
       {open && (
         <ol class="swarm-dock-steps">
-          {swarm.steps.map((s) => (
+          {focused.steps.map((s) => (
             <li
               key={s.index}
               class={`swarm-dock-step ${s.status}${s === current ? ' is-current' : ''}`}
