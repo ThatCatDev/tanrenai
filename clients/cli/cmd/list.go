@@ -11,7 +11,17 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available models",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := newAuthedClient(serverURL, authToken)
+		// --local mirrors pull/run: spin up embedded GPU+backend so the
+		// command works against the user's local model directory without
+		// needing a long-running `tanrenai serve`. Without this branch,
+		// `tanrenai --local list` silently hit the default remote URL.
+		activeURL, cleanup, err := resolveBackend(cmd.Context(), cmd)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+
+		client := newAuthedClient(activeURL, authToken)
 		resp, err := client.ListModels(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("failed to list models: %w", err)
