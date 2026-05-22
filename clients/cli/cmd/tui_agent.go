@@ -92,6 +92,7 @@ func (t *tuiApp) startChatTurn(input string) {
 		},
 		OnContentDelta: func(delta string) {
 			t.currentIterOutput += len(delta)
+			t.genRate.Record()
 			t.app.QueueUpdateDraw(func() {
 				t.streaming.WriteString(delta)
 				t.updateStreamingLine()
@@ -439,6 +440,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 					t.startProgressTicker()
 					t.iterStartTime = time.Now()
 					t.estimatedDur = t.predictDuration(inputTokens)
+					t.genRate.Reset()
 					t.updateStatusBar()
 				})
 			},
@@ -456,10 +458,12 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 			},
 			OnContentDelta: func(delta string) {
 				t.currentIterOutput += len(delta)
+				t.genRate.Record()
 				contentFilt.write(delta)
 			},
 			OnReasoningDelta: func(delta string) {
 				t.currentIterOutput += len(delta)
+				t.genRate.Record()
 				reasoningBuf.WriteString(delta)
 			},
 			UserInput: userInputCh,
@@ -703,13 +707,16 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 				t.app.QueueUpdateDraw(func() {
 					t.startProgressTicker()
 					t.iterStartTime = time.Now()
+					t.genRate.Reset()
 					t.updateStatusBar()
 				})
 			},
 			OnContentDelta: func(delta string) {
+				t.genRate.Record()
 				contentFilt.write(delta)
 			},
 			OnReasoningDelta: func(delta string) {
+				t.genRate.Record()
 				reasoningBuf.WriteString(delta)
 			},
 			OnThinking: func() {
