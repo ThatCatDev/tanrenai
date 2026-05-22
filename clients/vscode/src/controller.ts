@@ -14,6 +14,11 @@ import {
   TokenRateMsg,
   TurnDoneMsg,
   ErrorMsg,
+  SwarmArchitectMsg,
+  SwarmPlanMsg,
+  SwarmWorkerStartMsg,
+  SwarmWorkerDoneMsg,
+  SwarmVerifyMsg,
 } from './rpc/messages';
 import { ProposedContentProvider } from './diff/proposedProvider';
 import * as platform from './platform';
@@ -185,6 +190,33 @@ export class Controller implements ChatViewListener {
     rpc.on('turn_done', (m: TurnDoneMsg) => this.handleTurnDone(m));
     rpc.on('iteration_start', () => this.handleIterationStart());
     rpc.on('token_rate', (m: TokenRateMsg) => this.handleTokenRate(m));
+    rpc.on('swarm_architect', (m: SwarmArchitectMsg) =>
+      this.view.send({ type: 'swarm_architect', depth: m.depth, spec: m.spec }),
+    );
+    rpc.on('swarm_plan', (m: SwarmPlanMsg) =>
+      this.view.send({ type: 'swarm_plan', depth: m.depth, steps: m.steps }),
+    );
+    rpc.on('swarm_worker_start', (m: SwarmWorkerStartMsg) =>
+      this.view.send({
+        type: 'swarm_worker_start',
+        depth: m.depth,
+        stepIndex: m.stepIndex,
+        description: m.description,
+      }),
+    );
+    rpc.on('swarm_worker_done', (m: SwarmWorkerDoneMsg) =>
+      this.view.send({
+        type: 'swarm_worker_done',
+        depth: m.depth,
+        stepIndex: m.stepIndex,
+        status: m.status,
+        result: m.result,
+        error: m.error,
+      }),
+    );
+    rpc.on('swarm_verify', (m: SwarmVerifyMsg) =>
+      this.view.send({ type: 'swarm_verify', depth: m.depth }),
+    );
     rpc.on('error', (m: ErrorMsg) => {
       this.log(`error: ${m.message}`);
       if (m.fatal) {

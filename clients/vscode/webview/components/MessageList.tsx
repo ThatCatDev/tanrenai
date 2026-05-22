@@ -26,6 +26,11 @@ function contentSignature(entries: Entry[]): string {
     else if (e.kind === 'tool') sig += `|t${e.result ? '!' : '?'}${e.args.length}`;
     else if (e.kind === 'approval') sig += `|p${e.resolved ? '!' : '?'}`;
     else if (e.kind === 'error') sig += `|e`;
+    else if (e.kind === 'swarm') {
+      // Swarm activity grows when steps transition status — encode each
+      // step's status so auto-scroll fires when a worker_done arrives.
+      sig += `|s${e.depth}.${e.verifying ? 'v' : ''}.` + e.steps.map((s) => s.status[0]).join('');
+    }
   }
 
   return sig;
@@ -172,6 +177,8 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
       return <ToolCard entry={entry} />;
     case 'approval':
       return <ApprovalCard entry={entry} />;
+    case 'swarm':
+      return <SwarmActivityCard entry={entry} />;
     case 'error':
       return (
         <div class="msg reasoning" style="color: var(--vscode-charts-red);">
@@ -179,6 +186,70 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
           <div class="body">{entry.text}</div>
         </div>
       );
+  }
+}
+
+function SwarmActivityCard({ entry }: { entry: Extract<Entry, { kind: 'swarm' }> }) {
+  const total = entry.steps.length;
+  const done = entry.steps.filter((s) => s.status === 'done').length;
+  // Pluralisation matters here — "1 of 1 step" looks broken. Keep
+  // pluralisation simple; agent plans never go below 1 step in practice.
+  const stepWord = total === 1 ? 'step' : 'steps';
+  return (
+    <div class="swarm">
+      <div class="swarm-head">
+        <span class="bracket">〔</span>
+        <span>Swarm</span>
+        {entry.depth > 0 && <span class="swarm-depth">depth {entry.depth}</span>}
+        <span class="swarm-progress">
+          {done}/{total} {stepWord}
+        </span>
+        {entry.verifying && <span class="swarm-verify">verifying…</span>}
+        <span class="bracket" style="margin-left:auto">〕</span>
+      </div>
+      {entry.architectSpec && (
+        // Architect spec is usually multi-line markdown; render as
+        // pre-wrapped text so structure survives without pulling in a
+        // full markdown renderer just for this surface.
+        <details class="swarm-architect">
+          <summary>Architecture spec</summary>
+          <pre>{entry.architectSpec}</pre>
+        </details>
+      )}
+      <ol class="swarm-steps">
+        {entry.steps.map((s) => (
+          <li key={s.index} class={`swarm-step ${s.status}`}>
+            <span class="swarm-step-marker" aria-hidden="true">
+              {stepGlyph(s.status)}
+            </span>
+            <span class="swarm-step-body">
+              <span class="swarm-step-desc">{s.description}</span>
+              {s.status === 'done' && s.result && (
+                <span class="swarm-step-result">{s.result}</span>
+              )}
+              {s.status === 'error' && s.error && (
+                <span class="swarm-step-error">{s.error}</span>
+              )}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** Single-character status glyph for a step. Unicode shapes match the
+ *  rest of the editorial-forge aesthetic — flat, no boxed-tick icons. */
+function stepGlyph(status: string): string {
+  switch (status) {
+    case 'done':
+      return '✓';
+    case 'error':
+      return '✗';
+    case 'running':
+      return '◐';
+    default:
+      return '·';
   }
 }
 

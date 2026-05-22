@@ -46,7 +46,39 @@ export interface ErrorMsg {
   text: string;
 }
 
-export type Entry = AssistantMsg | UserMsg | ToolMsg | ApprovalMsg | ErrorMsg;
+/** A single step within a swarm plan. Status transitions:
+ *  `pending` (after swarm_plan) → `running` (after swarm_worker_start) →
+ *  `done` | `error` (after swarm_worker_done). */
+export interface SwarmStep {
+  index: number;
+  description: string;
+  status: 'pending' | 'running' | 'done' | 'error' | string;
+  result?: string;
+  error?: string;
+}
+
+/** Swarm orchestrator activity for a single nesting depth. One entry
+ *  per depth per turn — depth 0 is the top-level orchestrator, depth>0
+ *  is a child swarm spawned by a worker. */
+export interface SwarmActivityMsg {
+  kind: 'swarm';
+  id: string;
+  depth: number;
+  /** Architecture spec the orchestrator loaded/produced for this depth.
+   *  Optional — only present when the agent emits one. */
+  architectSpec?: string;
+  steps: SwarmStep[];
+  /** Set after swarm_verify lands; UI surfaces a "verifying" indicator. */
+  verifying: boolean;
+}
+
+export type Entry =
+  | AssistantMsg
+  | UserMsg
+  | ToolMsg
+  | ApprovalMsg
+  | ErrorMsg
+  | SwarmActivityMsg;
 
 /** A tool call still being streamed by the model — not yet finalised. */
 export interface StreamingTool {
@@ -349,9 +381,96 @@ export function reduce(state: AppState, msg: Action): AppState {
       };
     case 'image_clear_pending':
       return { ...state, pendingImages: [] };
+
+    // ── Swarm events ────────────────────────────────────────────────
+    // Each depth gets one SwarmActivity entry per turn. We use a stable
+    // id derived from depth so worker-start/done events can locate and
+    // mutate the right plan, and so a re-emitted plan (rare, but the
+    // agent can replan) updates in place rather than appending a dupe.
+    case 'swarm_architect':
+      return upsertSwarm(state, msg.depth, (a) => ({ ...a, architectSpec: msg.spec }));
+    case 'swarm_plan':
+      return upsertSwarm(state, msg.depth, (a) => ({
+        ...a,
+        steps: msg.steps.map((s) => ({
+          index: s.index,
+          description: s.description,
+          status: 'pending' as const,
+        })),
+      }));
+    case 'swarm_worker_start':
+      return upsertSwarm(state, msg.depth, (a) => ({
+        ...a,
+        steps: updateStep(a.steps, msg.stepIndex, (s) => ({ ...s, status: 'running' })),
+      }));
+    case 'swarm_worker_done':
+      return upsertSwarm(state, msg.depth, (a) => ({
+        ...a,
+        steps: updateStep(a.steps, msg.stepIndex, (s) => ({
+          ...s,
+          // Trust whatever string the agent reported; only normalise the
+          // happy/error cases the UI styles. Anything else (skipped,
+          // cancelled, etc.) passes through and renders as plain text.
+          status:
+            msg.status === 'done' || msg.status === 'error'
+              ? msg.status
+              : (msg.status as SwarmStep['status']),
+          result: msg.result,
+          error: msg.error,
+        })),
+      }));
+    case 'swarm_verify':
+      return upsertSwarm(state, msg.depth, (a) => ({ ...a, verifying: true }));
+
     default:
       return state;
   }
+}
+
+/** Update the SwarmActivity entry for a depth (creating it if missing).
+ *  Per-depth identity means worker-start/done events landing before the
+ *  plan event still find a parent to attach to — handy because plan
+ *  generation and the first worker_start can race on the agent side. */
+function upsertSwarm(
+  state: AppState,
+  depth: number,
+  mutate: (a: SwarmActivityMsg) => SwarmActivityMsg,
+): AppState {
+  const id = `swarm_d${depth}`;
+  const idx = state.entries.findIndex((e) => e.kind === 'swarm' && e.id === id);
+  const base: SwarmActivityMsg =
+    idx === -1
+      ? { kind: 'swarm', id, depth, steps: [], verifying: false }
+      : (state.entries[idx] as SwarmActivityMsg);
+  const next = mutate(base);
+  if (idx === -1) {
+    return { ...state, entries: [...state.entries, next] };
+  }
+  const entries = state.entries.slice();
+  entries[idx] = next;
+
+  return { ...state, entries };
+}
+
+/** Replace the first step matching `stepIndex`, or append if missing.
+ *  Append happens when worker_start lands before swarm_plan — we still
+ *  want to render the in-flight worker rather than drop the event. */
+function updateStep(
+  steps: SwarmStep[],
+  stepIndex: number,
+  mutate: (s: SwarmStep) => SwarmStep,
+): SwarmStep[] {
+  const idx = steps.findIndex((s) => s.index === stepIndex);
+  if (idx === -1) {
+    return [
+      ...steps,
+      mutate({ index: stepIndex, description: '', status: 'pending' }),
+    ];
+  }
+  const next = steps.slice();
+  next[idx] = mutate(next[idx]);
+
+  return next;
 }
 
 function appendOrUpdate(state: AppState, entry: Entry): AppState {

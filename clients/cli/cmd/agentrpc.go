@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -144,6 +143,56 @@ type rpcTurnDoneMsg struct {
 	Type   string `json:"type"`
 	OK     bool   `json:"ok"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// ── Swarm events ───────────────────────────────────────────────────────
+// Structured events for the swarm orchestrator's lifecycle. Previously
+// these were folded into content_delta strings ("[swarm plan d=0] 1. …")
+// which left the webview no way to render them as proper UI — the v1
+// "swarm sucks" complaint. Each event carries enough state for the
+// webview to render a depth-aware plan card with per-step status that
+// updates as workers progress.
+//
+// `depth` is the swarm nesting level (0 = top-level orchestrator;
+// children spawn at depth+1). One plan per depth per turn.
+
+type rpcSwarmPlanStep struct {
+	Index       int    `json:"index"`
+	Description string `json:"description"`
+}
+
+type rpcSwarmArchitectMsg struct {
+	Type  string `json:"type"`  // "swarm_architect"
+	Depth int    `json:"depth"`
+	Spec  string `json:"spec"`
+}
+
+type rpcSwarmPlanMsg struct {
+	Type  string             `json:"type"` // "swarm_plan"
+	Depth int                `json:"depth"`
+	Steps []rpcSwarmPlanStep `json:"steps"`
+}
+
+type rpcSwarmWorkerStartMsg struct {
+	Type        string `json:"type"` // "swarm_worker_start"
+	Depth       int    `json:"depth"`
+	StepIndex   int    `json:"stepIndex"`
+	Description string `json:"description"`
+}
+
+type rpcSwarmWorkerDoneMsg struct {
+	Type      string `json:"type"` // "swarm_worker_done"
+	Depth     int    `json:"depth"`
+	StepIndex int    `json:"stepIndex"`
+	// Status is the agent.StepStatus string form: "done", "error", etc.
+	Status string `json:"status"`
+	Result string `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type rpcSwarmVerifyMsg struct {
+	Type  string `json:"type"` // "swarm_verify"
+	Depth int    `json:"depth"`
 }
 
 // rpcTokenRateMsg reports current generation throughput. Emitted live
@@ -814,8 +863,11 @@ func buildRPCAgentConfig(deps *sessionDeps, srv *rpcServer) agent.PlanAgentConfi
 }
 
 // buildRPCSwarmConfig is the swarm equivalent. Swarm-specific events
-// (architect spec, plan, worker start/done, verify) are folded into
-// content_delta lines for v1; a richer protocol for swarm UI lands in v1.1.
+// (architect spec, plan, worker start/done, verify) get their own
+// typed messages so the webview can render a structured activity card
+// per depth with per-step status that updates as workers progress —
+// replaces the v1 approach of folding everything into content_delta
+// strings, which left no rendering hook on the UI side.
 func buildRPCSwarmConfig(deps *sessionDeps, srv *rpcServer) agent.SwarmConfig {
 	var workerTools *tools.Registry
 	if deps.registry != nil {
@@ -887,25 +939,47 @@ func buildRPCSwarmConfig(deps *sessionDeps, srv *rpcServer) agent.SwarmConfig {
 		},
 		WorkerTools:   workerTools,
 		ArchitectFile: filepath.Join(".tanrenai", "architect.md"),
+		OnArchitectSpec: func(depth int, spec string) {
+			_ = srv.write(rpcSwarmArchitectMsg{
+				Type:  "swarm_architect",
+				Depth: depth,
+				Spec:  spec,
+			})
+		},
 		OnPlanGenerated: func(depth int, plan *agent.Plan) {
-			var sb strings.Builder
-			fmt.Fprintf(&sb, "[swarm plan d=%d]\n", depth)
-			for _, step := range plan.Steps {
-				fmt.Fprintf(&sb, "  %d. %s\n", step.Index, step.Description)
+			steps := make([]rpcSwarmPlanStep, len(plan.Steps))
+			for i, s := range plan.Steps {
+				steps[i] = rpcSwarmPlanStep{Index: s.Index, Description: s.Description}
 			}
-			_ = srv.write(rpcContentDeltaMsg{Type: "content_delta", Text: sb.String()})
+			_ = srv.write(rpcSwarmPlanMsg{
+				Type:  "swarm_plan",
+				Depth: depth,
+				Steps: steps,
+			})
 		},
 		OnWorkerStart: func(depth, _ int, step *agent.PlanStep) {
-			_ = srv.write(rpcContentDeltaMsg{
-				Type: "content_delta",
-				Text: fmt.Sprintf("[swarm worker d=%d %d] %s\n", depth, step.Index, step.Description),
+			_ = srv.write(rpcSwarmWorkerStartMsg{
+				Type:        "swarm_worker_start",
+				Depth:       depth,
+				StepIndex:   step.Index,
+				Description: step.Description,
 			})
 		},
 		OnWorkerDone: func(depth, _ int, step *agent.PlanStep) {
-			_ = srv.write(rpcContentDeltaMsg{
-				Type: "content_delta",
-				Text: fmt.Sprintf("[swarm done d=%d %d] %s\n", depth, step.Index, step.Status.String()),
+			_ = srv.write(rpcSwarmWorkerDoneMsg{
+				Type:      "swarm_worker_done",
+				Depth:     depth,
+				StepIndex: step.Index,
+				Status:    step.Status.String(),
+				Result:    step.Result,
+				Error:     step.Error,
 			})
+		},
+		OnVerifyStart: func() {
+			// Verify runs at depth 0 (top-level orchestrator double-checks
+			// the worker outputs); the agent doesn't pass depth here so
+			// we encode that assumption in the message.
+			_ = srv.write(rpcSwarmVerifyMsg{Type: "swarm_verify", Depth: 0})
 		},
 	}
 }

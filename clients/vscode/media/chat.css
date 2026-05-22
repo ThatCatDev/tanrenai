@@ -963,3 +963,125 @@ button.secondary:hover {
     padding: 0.25rem 0.4rem;
   }
 }
+
+/* ── swarm activity card ─────────────────────────────────────────
+ *
+ * Mirrors the .approval / .tool aesthetic — left-accent rail + flat
+ * type, no boxed cards. Step list uses unicode glyphs for status so
+ * the colour layer is reserved for state (done = accent, error = err,
+ * running = warn) rather than decoration. */
+.swarm {
+  position: relative;
+  margin: 0;
+  padding: 0.75rem var(--tn-pad) 0.7rem calc(var(--tn-pad) + 0.5rem);
+  border-left: 2px solid var(--tn-accent);
+  background: color-mix(in srgb, var(--tn-accent) 6%, transparent);
+}
+.swarm-head {
+  color: var(--tn-accent);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.swarm-head .bracket {
+  opacity: 0.7;
+}
+.swarm-depth,
+.swarm-progress,
+.swarm-verify {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--tn-soft);
+  text-transform: none;
+}
+.swarm-verify {
+  color: var(--tn-warn);
+  margin-left: 0.4rem;
+}
+.swarm-architect {
+  margin-bottom: 0.5rem;
+  font-family: var(--tn-body);
+  font-size: 11.5px;
+}
+.swarm-architect summary {
+  cursor: pointer;
+  color: var(--tn-soft);
+  margin-bottom: 0.35rem;
+}
+.swarm-architect pre {
+  font-family: var(--tn-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  color: var(--tn-soft);
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  max-height: 140px;
+  overflow-y: auto;
+}
+.swarm-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.swarm-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-family: var(--tn-body);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.swarm-step-marker {
+  flex: 0 0 auto;
+  width: 1em;
+  font-family: var(--tn-mono);
+  color: var(--tn-faint);
+  text-align: center;
+}
+.swarm-step.running .swarm-step-marker {
+  color: var(--tn-warn);
+  /* Slow pulse so the user sees which step is "now" without it being
+   * a distracting flicker on long-running workers. */
+  animation: swarm-pulse 1.4s ease-in-out infinite;
+}
+.swarm-step.done .swarm-step-marker {
+  color: var(--tn-accent);
+}
+.swarm-step.error .swarm-step-marker {
+  color: var(--tn-err);
+}
+.swarm-step-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.swarm-step-desc {
+  color: var(--vscode-foreground);
+}
+.swarm-step.done .swarm-step-desc {
+  color: var(--tn-soft);
+}
+.swarm-step-result {
+  color: var(--tn-soft);
+  font-size: 11.5px;
+}
+.swarm-step-error {
+  color: var(--tn-err);
+  font-size: 11.5px;
+}
+
+@keyframes swarm-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}

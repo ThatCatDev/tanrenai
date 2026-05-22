@@ -86,4 +86,23 @@ export type WebviewOutbound =
    *  the first and last delta (excludes prompt-eval latency). Webview
    *  surfaces it in the status panel during streaming and on the final
    *  emitted value after the turn closes. */
-  | { type: 'token_rate'; tokens: number; tps: number };
+  | { type: 'token_rate'; tokens: number; tps: number }
+  /** Swarm orchestrator lifecycle events. Forwarded as-is from the CLI;
+   *  the webview reducer turns them into a per-depth SwarmActivity entry
+   *  rendered as a step list with live status updates. */
+  | { type: 'swarm_architect'; depth: number; spec: string }
+  | {
+      type: 'swarm_plan';
+      depth: number;
+      steps: Array<{ index: number; description: string }>;
+    }
+  | { type: 'swarm_worker_start'; depth: number; stepIndex: number; description: string }
+  | {
+      type: 'swarm_worker_done';
+      depth: number;
+      stepIndex: number;
+      status: string;
+      result?: string;
+      error?: string;
+    }
+  | { type: 'swarm_verify'; depth: number };

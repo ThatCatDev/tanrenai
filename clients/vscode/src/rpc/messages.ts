@@ -155,6 +155,52 @@ export interface TokenRateMsg {
   tps: number;
 }
 
+// ── Swarm events ──────────────────────────────────────────────────────
+// Structured progress events emitted by the swarm orchestrator. The
+// webview reduces these into a SwarmActivity entry per depth and renders
+// the plan as a step list with live status; see webview/state.ts and
+// components/SwarmActivity.tsx. Pre-v2 these were folded into
+// content_delta strings which left no rendering hook.
+
+export interface SwarmPlanStep {
+  index: number;
+  description: string;
+}
+
+export interface SwarmArchitectMsg {
+  type: 'swarm_architect';
+  depth: number;
+  spec: string;
+}
+
+export interface SwarmPlanMsg {
+  type: 'swarm_plan';
+  depth: number;
+  steps: SwarmPlanStep[];
+}
+
+export interface SwarmWorkerStartMsg {
+  type: 'swarm_worker_start';
+  depth: number;
+  stepIndex: number;
+  description: string;
+}
+
+export interface SwarmWorkerDoneMsg {
+  type: 'swarm_worker_done';
+  depth: number;
+  stepIndex: number;
+  /** agent.StepStatus stringified — typically "done", "error", "skipped". */
+  status: string;
+  result?: string;
+  error?: string;
+}
+
+export interface SwarmVerifyMsg {
+  type: 'swarm_verify';
+  depth: number;
+}
+
 export interface ErrorMsg {
   type: 'error';
   message: string;
@@ -174,4 +220,9 @@ export type InboundMsg =
   | ApprovalRequiredMsg
   | TurnDoneMsg
   | TokenRateMsg
+  | SwarmArchitectMsg
+  | SwarmPlanMsg
+  | SwarmWorkerStartMsg
+  | SwarmWorkerDoneMsg
+  | SwarmVerifyMsg
   | ErrorMsg;
