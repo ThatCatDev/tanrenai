@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { send } from '../host';
+import { renderMarkdown } from '../markdown';
 import type { Activity, Entry } from '../state';
 
 interface Props {
@@ -158,14 +159,21 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
                 Thinking
                 {reasoningStreaming && <span class="pulse" />}
               </div>
-              <div class="body">{entry.reasoning}</div>
+              <div
+                class="body markdown"
+                // CSP `default-src 'none'; script-src 'nonce-X'` blocks
+                // anything dangerous a model could inject (scripts, img
+                // loads, iframes) so the parsed HTML is safe to mount.
+                // See webview/markdown.ts.
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(entry.reasoning) }}
+              />
             </div>
           )}
           {entry.content && (
             <div class={`msg assistant${contentStreaming ? ' streaming' : ''}`}>
               <div class="role">Tanrenai</div>
-              <div class="body">
-                {entry.content}
+              <div class="body markdown">
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(entry.content) }} />
                 {contentStreaming && <span class="caret" />}
               </div>
             </div>

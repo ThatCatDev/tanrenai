@@ -120,6 +120,7 @@
     "webview:dev": "node scripts/serve-dev.mjs"
   },
   "dependencies": {
+    "marked": "^18.0.4",
     "preact": "^10.29.1"
   },
   "devDependencies": {

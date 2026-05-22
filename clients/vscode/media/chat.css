@@ -1085,3 +1085,145 @@ button.secondary:hover {
   0%, 100% { opacity: 0.55; }
   50%      { opacity: 1; }
 }
+
+/* ── markdown rendering ──────────────────────────────────────────
+ *
+ * Assistant content + reasoning come through marked → HTML and land
+ * inside `.body.markdown`. Styles here keep the type rhythm consistent
+ * with the rest of the chat aesthetic — no boxed cards, tight vertical
+ * spacing, VS Code theme variables for code/quote backgrounds so
+ * dark/light themes both look right. */
+
+.body.markdown > *:first-child {
+  margin-top: 0;
+}
+.body.markdown > *:last-child {
+  margin-bottom: 0;
+}
+.body.markdown p {
+  margin: 0 0 0.55em;
+}
+.body.markdown h1,
+.body.markdown h2,
+.body.markdown h3,
+.body.markdown h4 {
+  margin: 0.9em 0 0.4em;
+  font-family: var(--tn-body);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.body.markdown h1 { font-size: 1.15em; }
+.body.markdown h2 { font-size: 1.08em; }
+.body.markdown h3 { font-size: 1.0em; color: var(--tn-soft); }
+.body.markdown h4 { font-size: 0.95em; color: var(--tn-soft); }
+
+.body.markdown ul,
+.body.markdown ol {
+  margin: 0.2em 0 0.45em;
+  padding-left: 1.4em;
+}
+.body.markdown li {
+  margin-bottom: 0;
+}
+/* Loose lists: `marked` wraps each <li>'s text in a <p>. Without
+ * resetting the <p> margins, the cumulative spacing (li + p + nested
+ * ul) produced the airy layout we kept hitting. Reset to zero and
+ * only keep inter-paragraph spacing when an <li> genuinely has
+ * multiple paragraphs (rare in chat). */
+.body.markdown li > p {
+  margin: 0;
+}
+.body.markdown li > p + p {
+  margin-top: 0.3em;
+}
+/* Nested lists inside a list item — tight against the parent item's
+ * paragraph; the indentation alone signals the hierarchy. */
+.body.markdown li > ul,
+.body.markdown li > ol {
+  margin: 0.1em 0 0.25em;
+}
+
+.body.markdown a {
+  color: var(--tn-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.body.markdown a:hover {
+  filter: brightness(1.15);
+}
+
+.body.markdown strong {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+.body.markdown em {
+  font-style: italic;
+}
+
+/* Inline code — same monospace family as code blocks, faint background
+ * so it stands out from prose without screaming. */
+.body.markdown code {
+  font-family: var(--tn-mono);
+  font-size: 0.92em;
+  padding: 0.05em 0.35em;
+  background: var(--vscode-textCodeBlock-background, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+  border-radius: 2px;
+  /* Don't let inline code break the line in weird places — long
+   * identifiers (file paths, urls) wrap as a unit. */
+  word-break: break-word;
+}
+
+/* Code blocks (fenced ``` or indented). marked wraps in <pre><code>;
+ * we style the <pre> so padding/scroll work even when code has no
+ * embedded newlines (one long line scrolls horizontally instead of
+ * forcing the chat column wider). */
+.body.markdown pre {
+  margin: 0.5em 0 0.7em;
+  padding: 0.7rem 0.85rem;
+  background: var(--vscode-textCodeBlock-background, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+  border-left: 2px solid var(--tn-rule-strong);
+  border-radius: 0;
+  overflow-x: auto;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.body.markdown pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+  /* Block-level code — no width clamp, no wrap, no break. The <pre>
+   * handles scrolling. */
+  word-break: normal;
+  white-space: pre;
+}
+
+.body.markdown blockquote {
+  margin: 0.5em 0;
+  padding: 0.1em 0.85em;
+  border-left: 2px solid var(--tn-rule-strong);
+  color: var(--tn-soft);
+  background: var(--vscode-textBlockQuote-background, transparent);
+}
+
+.body.markdown hr {
+  border: none;
+  border-top: 1px solid var(--tn-rule);
+  margin: 1em 0;
+}
+
+.body.markdown table {
+  border-collapse: collapse;
+  margin: 0.5em 0 0.7em;
+  font-size: 11.5px;
+}
+.body.markdown th,
+.body.markdown td {
+  border-bottom: 1px solid var(--tn-rule);
+  padding: 0.3em 0.7em;
+  text-align: left;
+}
+.body.markdown th {
+  font-weight: 600;
+  color: var(--tn-soft);
+}
