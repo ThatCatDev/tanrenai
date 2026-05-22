@@ -116,12 +116,14 @@
     "package": "vsce package",
     "lint": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "webview:dev": "node scripts/serve-dev.mjs"
   },
   "dependencies": {
     "preact": "^10.29.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^2.24.0",

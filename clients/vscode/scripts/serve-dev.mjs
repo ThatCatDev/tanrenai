@@ -31,8 +31,17 @@ copyStatic();
 
 // Watch the static files for changes too — without this, edits to
 // dev.html or chat.css would only show up after a server restart.
-fs.watch(path.join(root, 'webview/dev.html'), copyStatic);
-fs.watch(path.join(root, 'media/chat.css'), copyStatic);
+// fs.watch is event-driven but unreliable on macOS (misses some edits
+// silently); fs.watchFile is polling but reliable. Use the latter at a
+// modest interval — these files are tiny so the poll cost is nothing,
+// and the alternative is "wait, my edit didn't apply" debugging.
+const watched = [
+  { src: path.join(root, 'webview/dev.html'), dst: path.join(outDir, 'index.html') },
+  { src: path.join(root, 'media/chat.css'), dst: path.join(outDir, 'chat.css') },
+];
+for (const { src } of watched) {
+  fs.watchFile(src, { interval: 300 }, copyStatic);
+}
 
 const ctx = await esbuild.context({
   entryPoints: [path.join(root, 'webview/main.tsx')],

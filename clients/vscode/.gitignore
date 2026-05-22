@@ -8,6 +8,8 @@ dist/bin/
 dist-dev/
 *.vsix
 .vscode-test/
+playwright-report/
+test-results/
 
 # The repo-level .gitignore excludes `.vscode/` everywhere; we want to
 # share the extension dev-host launch config, but nothing else.

@@ -60,7 +60,7 @@
       }
       .dev-toolbar {
         position: fixed;
-        top: 8px;
+        bottom: 8px;
         right: 8px;
         z-index: 1000;
         background: var(--vscode-editorWidget-background);
@@ -69,7 +69,15 @@
         padding: 8px 10px;
         font: 11px var(--vscode-font-family);
         color: var(--vscode-descriptionForeground);
-        max-width: 280px;
+        max-width: 260px;
+        opacity: 0.85;
+        /* Don't intercept clicks on the webview underneath — Playwright
+         * and ordinary devtool clicks expect to hit the chat UI even
+         * when the help box overlaps it. */
+        pointer-events: none;
+      }
+      .dev-toolbar code {
+        pointer-events: auto;
       }
       .dev-toolbar code {
         font-family: var(--vscode-editor-font-family);
@@ -81,22 +89,43 @@
       // Stub `acquireVsCodeApi` BEFORE the bundle loads — host.ts captures
       // it at module-init time, so this script tag MUST run first.
       (function () {
-        let _state;
+        // Persist setState() to localStorage so a page reload here
+        // simulates VS Code remounting the webview after the user
+        // toggles the sidebar — matches what real `webview.setState`
+        // does. Without this, the persisted-shell remount tests can't
+        // verify that the chat shell repaints without flashing the
+        // idle/connecting screens.
+        const STATE_KEY = '__dev_vscode_state';
+        const readState = () => {
+          try {
+            const raw = localStorage.getItem(STATE_KEY);
+            return raw ? JSON.parse(raw) : undefined;
+          } catch {
+            return undefined;
+          }
+        };
+        const writeState = (s) => {
+          try {
+            if (s === undefined) localStorage.removeItem(STATE_KEY);
+            else localStorage.setItem(STATE_KEY, JSON.stringify(s));
+          } catch { /* quota/private mode — fine, just don't persist */ }
+        };
         window.acquireVsCodeApi = function () {
           return {
             postMessage: function (msg) {
               window.__sentMessages.push(msg);
               window.dispatchEvent(new CustomEvent('webview-sent', { detail: msg }));
             },
-            getState: function () {
-              return _state;
-            },
+            getState: readState,
             setState: function (s) {
-              _state = s;
+              writeState(s);
               return s;
             },
           };
         };
+        // Helper for tests that need to wipe the persisted shell to
+        // start from a clean idle state.
+        window.__clearPersistedState = () => writeState(undefined);
 
         // Public API for Playwright (or devtools).
         //
