@@ -12,6 +12,7 @@ import {
   deriveActivity,
   initialState,
   reduce,
+  swarmAncestors,
   type Action,
   type AppState,
 } from './state';
@@ -65,7 +66,9 @@ function renderRoot(state: AppState, dispatch: (a: Action) => void) {
       <MessageList entries={state.entries} activity={activity} />
       {(() => {
         const swarm = activeSwarm(state);
-        return swarm ? <SwarmDock swarm={swarm} /> : null;
+        if (!swarm) return null;
+        const ancestors = swarmAncestors(state, swarm);
+        return <SwarmDock swarm={swarm} ancestors={ancestors} />;
       })()}
       <ActivityBar
         activity={activity}

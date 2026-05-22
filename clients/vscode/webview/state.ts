@@ -150,6 +150,29 @@ export function activeSwarm(state: AppState): SwarmActivityMsg | null {
   return swarms[swarms.length - 1];
 }
 
+/** Walk up from the given swarm to the root, returning the chain of
+ *  ancestor swarm entries (depth 0..swarm.depth-1) in depth order.
+ *  Used by the dock to render a "you are here" breadcrumb when the
+ *  active swarm is a sub-decomposition — otherwise users see a tiny
+ *  inner plan and lose the parent context (the dreaded "11 became 2"
+ *  reading where actually a depth-0 step spawned a depth-1 swarm). */
+export function swarmAncestors(
+  state: AppState,
+  swarm: SwarmActivityMsg,
+): SwarmActivityMsg[] {
+  if (swarm.depth === 0) return [];
+  const byDepth = new Map<number, SwarmActivityMsg>();
+  for (const e of state.entries) {
+    if (e.kind === 'swarm') byDepth.set(e.depth, e);
+  }
+  const chain: SwarmActivityMsg[] = [];
+  for (let d = 0; d < swarm.depth; d++) {
+    const parent = byDepth.get(d);
+    if (parent) chain.push(parent);
+  }
+  return chain;
+}
+
 export type Activity =
   | { kind: 'idle' }
   | { kind: 'thinking' }

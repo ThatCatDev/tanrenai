@@ -1385,3 +1385,55 @@ button.secondary:hover {
    * full text. */
   word-break: break-word;
 }
+
+/* ── swarm dock — ancestor breadcrumb ───────────────────────────
+ *
+ * When the active swarm is a sub-decomposition (depth > 0), surface
+ * the parent depths above the main summary so the user keeps the
+ * "outer plan" in view rather than losing context every time the
+ * agent drills into a step. */
+
+.swarm-dock-breadcrumb {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem var(--tn-pad) 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  border-bottom: 1px dashed var(--tn-rule);
+  font: 10.5px var(--tn-body);
+  color: var(--tn-soft);
+}
+.swarm-dock-crumb {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.swarm-dock-crumb-depth {
+  font-family: var(--tn-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tn-faint);
+  flex: 0 0 auto;
+}
+.swarm-dock-crumb-count {
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  color: var(--vscode-foreground);
+  flex: 0 0 auto;
+  min-width: 2.6ch;
+}
+.swarm-dock-crumb-step {
+  /* The parent step description — truncate hard so the breadcrumb
+   * stays single-line even on a narrow sidebar. The title attribute
+   * keeps the full text accessible on hover. */
+  color: var(--tn-soft);
+  font-size: 11px;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
