@@ -23,6 +23,36 @@ marked.setOptions({
   breaks: true,
 });
 
+// Block raw HTML pass-through. marked happily forwards <script>, <img
+// onerror=…>, <iframe>, and friends straight into the output by
+// default. The VS Code webview's CSP (`default-src 'none'`) neutralises
+// those in production, but defense in depth here makes the same code
+// safe in the dev shell (no CSP) and in any future host whose CSP
+// might relax.
+//
+// The override the renderer's html() to escape rather than pass through.
+// Token-level tokenizer overrides are fiddly across marked versions; the
+// renderer hook is stable and covers both block-level and inline html
+// tokens that marked decides to emit.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+marked.use({
+  renderer: {
+    html(token: { text?: string; raw?: string } | string): string {
+      // Newer marked passes a token object; older string. Handle both.
+      const text = typeof token === 'string' ? token : token.text ?? token.raw ?? '';
+      return escapeHtml(text);
+    },
+  } as never,
+});
+
 /** Pattern that matches a single-paragraph wrapper inside a list item.
  *  Models love writing markdown lists with blank lines between items
  *  ("loose lists"), which marked then wraps in <p>. Each <li><p>…</p>…</li>
