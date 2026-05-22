@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tanrenai webview — dev</title>
+    <link rel="stylesheet" href="/chat.css" />
+    <style>
+      /* The webview's CSS reads VS Code theme variables (--vscode-*) which
+       * don't exist outside VS Code. Fake a dark-theme set here so the
+       * standalone page renders close to what users see in the sidebar.
+       * If you change one inside VS Code, mirror it here.
+       */
+      :root {
+        --vscode-foreground: #cccccc;
+        --vscode-editor-background: #1e1e1e;
+        --vscode-editor-foreground: #d4d4d4;
+        --vscode-editorWidget-background: #252526;
+        --vscode-input-background: #3c3c3c;
+        --vscode-input-foreground: #cccccc;
+        --vscode-input-border: #3c3c3c;
+        --vscode-button-background: #0e639c;
+        --vscode-button-foreground: #ffffff;
+        --vscode-button-hoverBackground: #1177bb;
+        --vscode-button-secondaryBackground: #3a3d41;
+        --vscode-button-secondaryForeground: #cccccc;
+        --vscode-textLink-foreground: #4eb1ff;
+        --vscode-textLink-activeForeground: #4eb1ff;
+        --vscode-textBlockQuote-background: #2d2d30;
+        --vscode-textCodeBlock-background: #1e1e1e;
+        --vscode-charts-blue: #4eb1ff;
+        --vscode-charts-yellow: #ffcc66;
+        --vscode-charts-red: #f48771;
+        --vscode-charts-green: #89d185;
+        --vscode-descriptionForeground: #989898;
+        --vscode-focusBorder: #4eb1ff;
+        --vscode-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        --vscode-editor-font-family: 'SF Mono', Menlo, Consolas, monospace;
+        --vscode-font-size: 13px;
+      }
+
+      /* Approximate sidebar dimensions so layout/wrap behaves like a real
+       * VS Code sidebar. Resize the column to test responsive behavior. */
+      html,
+      body {
+        background: #0a0a0a;
+      }
+      body {
+        margin: 0;
+        display: flex;
+        justify-content: center;
+      }
+      #root {
+        width: 480px;
+        min-height: 100vh;
+        background: var(--vscode-editor-background);
+        color: var(--vscode-foreground);
+        border-inline: 1px solid #333;
+        display: flex;
+        flex-direction: column;
+      }
+      .dev-toolbar {
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        z-index: 1000;
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid #444;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font: 11px var(--vscode-font-family);
+        color: var(--vscode-descriptionForeground);
+        max-width: 280px;
+      }
+      .dev-toolbar code {
+        font-family: var(--vscode-editor-font-family);
+        color: var(--vscode-foreground);
+      }
+    </style>
+    <script>
+      // ── Test harness ────────────────────────────────────────────────────
+      // Stub `acquireVsCodeApi` BEFORE the bundle loads — host.ts captures
+      // it at module-init time, so this script tag MUST run first.
+      (function () {
+        let _state;
+        window.acquireVsCodeApi = function () {
+          return {
+            postMessage: function (msg) {
+              window.__sentMessages.push(msg);
+              window.dispatchEvent(new CustomEvent('webview-sent', { detail: msg }));
+            },
+            getState: function () {
+              return _state;
+            },
+            setState: function (s) {
+              _state = s;
+              return s;
+            },
+          };
+        };
+
+        // Public API for Playwright (or devtools).
+        //
+        //   window.__pushMsg({ type: 'turn_start' })
+        //   window.__pushMsg({ type: 'message_start', role: 'assistant', id: 'a1' })
+        //   window.__pushMsg({ type: 'message_delta', id: 'a1', text: 'hello' })
+        //   window.__pushMsg({ type: 'turn_end', ok: true })
+        //
+        // `__sentMessages` captures everything the webview posts back so
+        // tests can assert what the user "triggered" (e.g. clicking SEND
+        // posts `{ type: 'send', content: '…' }`).
+        window.__sentMessages = [];
+        window.__pushMsg = function (msg) {
+          window.postMessage(msg, '*');
+        };
+        window.__pushSequence = async function (msgs, delayMs) {
+          for (const m of msgs) {
+            window.postMessage(m, '*');
+            if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+          }
+        };
+
+        // Auto-paint a connected shell on first load so the chat UI is
+        // visible without having to inject `state` manually each time. To
+        // start from the idle/connecting screens, set `?nostate=1` in URL.
+        window.addEventListener('DOMContentLoaded', function () {
+          if (new URLSearchParams(location.search).has('nostate')) return;
+          // Defer one tick so the bundle's `onMessage` handler has time
+          // to attach before we post.
+          setTimeout(function () {
+            window.__pushMsg({
+              type: 'state',
+              state: { status: 'connected', model: 'dev-model-Q4_K_M', toolCount: 9 },
+            });
+            window.__pushMsg({ type: 'mode', mode: 'agent' });
+          }, 0);
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div class="dev-toolbar">
+      Tanrenai webview dev shell.
+      Inject messages with <code>__pushMsg({...})</code>;
+      observe with <code>__sentMessages</code>.
+      Append <code>?nostate=1</code> to start without auto-connect.
+    </div>
+    <script src="/webview.js"></script>
+  </body>
+</html>

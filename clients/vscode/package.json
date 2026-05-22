@@ -115,7 +115,8 @@
     "watch": "node esbuild.config.mjs --watch",
     "package": "vsce package",
     "lint": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "webview:dev": "node scripts/serve-dev.mjs"
   },
   "dependencies": {
     "preact": "^10.29.1"

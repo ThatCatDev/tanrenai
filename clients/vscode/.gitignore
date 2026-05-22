@@ -5,6 +5,7 @@ dist/extension.js.map
 dist/webview.js
 dist/webview.js.map
 dist/bin/
+dist-dev/
 *.vsix
 .vscode-test/
 
