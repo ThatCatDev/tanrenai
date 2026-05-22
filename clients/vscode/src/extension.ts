@@ -6,7 +6,18 @@ import { ProposedContentProvider } from './diff/proposedProvider';
 export function activate(context: vscode.ExtensionContext): void {
   const view = new ChatViewProvider(context.extensionUri);
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, view),
+    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, view, {
+      // Keep the webview's DOM + Preact state alive when the user
+      // switches to another sidebar (Explorer, Search, etc.) and back.
+      // Without this, VS Code disposes the webview on hide and the
+      // chat surface starts empty until the controller's onMounted
+      // replay finishes — visible as "my messages disappeared". The
+      // replay logic still runs on initial mount and window reload.
+      //
+      // Memory cost is bounded by transcript size (text-only); a long
+      // session is still under a megabyte.
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
   );
 
   const proposed = new ProposedContentProvider();
