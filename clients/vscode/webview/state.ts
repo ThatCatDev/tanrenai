@@ -128,6 +128,28 @@ export const initialState: AppState = {
   tokenRate: null,
 };
 
+/** Return the swarm activity that should pin to the dock, or null if
+ *  there isn't one. We pick the deepest active entry — when a worker
+ *  spawns a child swarm at depth+1, the user wants to see *that* one
+ *  ticking, not the parent waiting. Falls back to the most recent
+ *  swarm entry overall so the dock stays useful after turn_end (the
+ *  user can still see what just finished).
+ */
+export function activeSwarm(state: AppState): SwarmActivityMsg | null {
+  const swarms = state.entries.filter(
+    (e): e is SwarmActivityMsg => e.kind === 'swarm',
+  );
+  if (swarms.length === 0) return null;
+  // Prefer one with a currently-running step at the deepest depth.
+  const running = swarms.filter((s) => s.steps.some((step) => step.status === 'running'));
+  if (running.length > 0) {
+    return running.reduce((a, b) => (b.depth > a.depth ? b : a));
+  }
+  // No running step — show the most recent (last in entries) so the
+  // dock surfaces "just finished" until the next turn starts.
+  return swarms[swarms.length - 1];
+}
+
 export type Activity =
   | { kind: 'idle' }
   | { kind: 'thinking' }

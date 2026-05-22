@@ -38,8 +38,10 @@ test.describe('swarm edge cases', () => {
     });
     await expect(webview.page.locator('.swarm')).toHaveCount(1);
     await expect(webview.page.locator('.swarm-step')).toHaveCount(3);
-    await expect(webview.page.getByText('revised A')).toBeVisible();
-    await expect(webview.page.getByText('original A')).toHaveCount(0);
+    // Scope to the in-message card so we don't pick up the dock's
+    // mirror of the same text — both show the current plan.
+    await expect(webview.page.locator('.swarm').getByText('revised A')).toBeVisible();
+    await expect(webview.page.locator('.swarm').getByText('original A')).toHaveCount(0);
   });
 
   test('worker_done for an unknown step appends a new row', async ({ webview }) => {

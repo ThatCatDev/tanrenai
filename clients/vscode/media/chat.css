@@ -1227,3 +1227,161 @@ button.secondary:hover {
   font-weight: 600;
   color: var(--tn-soft);
 }
+
+/* ── swarm dock ──────────────────────────────────────────────────
+ *
+ * Compact always-visible status pinned above the composer. Shows
+ * progress + current step in one row; click to expand the full step
+ * list overlay. The full SwarmActivityCard still lives in the chat
+ * as historical record. */
+
+.swarm-dock {
+  border-top: 1px solid var(--tn-rule);
+  border-bottom: 1px solid var(--tn-rule);
+  background: color-mix(in srgb, var(--tn-accent) 4%, transparent);
+  /* No outer padding — the inner button handles its own */
+}
+.swarm-dock.running {
+  background: color-mix(in srgb, var(--tn-warn) 7%, transparent);
+}
+.swarm-dock.done {
+  background: color-mix(in srgb, var(--tn-accent) 6%, transparent);
+}
+.swarm-dock-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.5rem var(--tn-pad);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font: 11.5px var(--tn-body);
+  color: var(--tn-soft);
+}
+.swarm-dock-summary:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+.swarm-dock-marker {
+  flex: 0 0 auto;
+  font-family: var(--tn-mono);
+  color: var(--tn-faint);
+}
+.swarm-dock.running .swarm-dock-marker {
+  color: var(--tn-warn);
+  animation: swarm-pulse 1.4s ease-in-out infinite;
+}
+.swarm-dock.done .swarm-dock-marker {
+  color: var(--tn-accent);
+}
+.swarm-dock-count {
+  font-family: var(--tn-mono);
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  /* Fixed-ish width so the rest of the row doesn't jump as numbers
+   * change. ch units track digit width nicely. */
+  min-width: 2.6ch;
+}
+.swarm-dock-depth {
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  color: var(--tn-faint);
+}
+.swarm-dock-current {
+  /* This is the biggest visual chunk; let it ellipsize so long step
+   * descriptions don't force horizontal scroll on a narrow sidebar. */
+  flex: 1 1 0;
+  display: flex;
+  gap: 0.4rem;
+  min-width: 0;
+  align-items: baseline;
+}
+.swarm-dock-verb {
+  font-family: var(--tn-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--tn-faint);
+}
+.swarm-dock.running .swarm-dock-verb {
+  color: var(--tn-warn);
+}
+.swarm-dock.done .swarm-dock-verb {
+  color: var(--tn-accent);
+}
+.swarm-dock-desc {
+  color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Slight nudge so the verb baseline reads naturally next to the
+   * smaller-caps verb text. */
+  font-size: 11.5px;
+}
+.swarm-dock-verify {
+  color: var(--tn-warn);
+  font-family: var(--tn-mono);
+  font-size: 10px;
+}
+.swarm-dock-toggle {
+  flex: 0 0 auto;
+  color: var(--tn-faint);
+  font-size: 10px;
+}
+
+.swarm-dock-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0.1rem var(--tn-pad) 0.55rem calc(var(--tn-pad) + 0.15rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border-top: 1px solid var(--tn-rule);
+  /* Cap the expanded list height so a 20-step plan doesn't push the
+   * composer off screen on a short sidebar. Internal scroll instead. */
+  max-height: 220px;
+  overflow-y: auto;
+}
+.swarm-dock-step {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-family: var(--tn-body);
+  font-size: 11.5px;
+  color: var(--tn-soft);
+  line-height: 1.4;
+}
+.swarm-dock-step.is-current {
+  color: var(--vscode-foreground);
+}
+.swarm-dock-step.done {
+  color: var(--tn-soft);
+}
+.swarm-dock-step.error {
+  color: var(--tn-err);
+}
+.swarm-dock-step-marker {
+  flex: 0 0 auto;
+  width: 1em;
+  font-family: var(--tn-mono);
+  color: var(--tn-faint);
+  text-align: center;
+}
+.swarm-dock-step.running .swarm-dock-step-marker {
+  color: var(--tn-warn);
+}
+.swarm-dock-step.done .swarm-dock-step-marker {
+  color: var(--tn-accent);
+}
+.swarm-dock-step.error .swarm-dock-step-marker {
+  color: var(--tn-err);
+}
+.swarm-dock-step-desc {
+  flex: 1 1 auto;
+  /* Wrap long step descriptions in the expanded list — the collapsed
+   * row ellipsizes, but the expanded one should let users read the
+   * full text. */
+  word-break: break-word;
+}

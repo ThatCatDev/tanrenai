@@ -5,8 +5,16 @@ import { Footer } from './components/Footer';
 import { Header } from './components/Header';
 import { MessageList } from './components/MessageList';
 import { StatusPanel } from './components/StatusPanel';
+import { SwarmDock } from './components/SwarmDock';
 import { getPersistedShell, onMessage, setPersistedShell } from './host';
-import { deriveActivity, initialState, reduce, type Action, type AppState } from './state';
+import {
+  activeSwarm,
+  deriveActivity,
+  initialState,
+  reduce,
+  type Action,
+  type AppState,
+} from './state';
 
 export function App() {
   const [state, dispatch] = useReducer(reduce, initialState, init);
@@ -55,6 +63,10 @@ function renderRoot(state: AppState, dispatch: (a: Action) => void) {
         mode={state.mode}
       />
       <MessageList entries={state.entries} activity={activity} />
+      {(() => {
+        const swarm = activeSwarm(state);
+        return swarm ? <SwarmDock swarm={swarm} /> : null;
+      })()}
       <ActivityBar
         activity={activity}
         iteration={state.iteration}
