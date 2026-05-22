@@ -10,7 +10,7 @@ permissions:
   pull-requests: write
 
 env:
-  LLAMA_CPP_VERSION: "b8277"
+  LLAMA_CPP_VERSION: "b9274"
 
 jobs:
   # ─── Determine version via semantic-release ───────────────────────
