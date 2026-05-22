@@ -3,7 +3,7 @@ module github.com/ThatCatDev/tanrenai/client
 go 1.25.0
 
 require (
-	github.com/ThatCatDev/tanrenai-gpu v1.1.0
+	github.com/ThatCatDev/tanrenai-gpu v1.4.0
 	github.com/ThatCatDev/tanrenai/server v0.0.0
 	github.com/ThatCatDev/tanrenai/shared v0.0.0
 	github.com/alecthomas/chroma/v2 v2.23.1

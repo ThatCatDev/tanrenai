@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ThatCatDev/tanrenai/shared/pkg/models"
+	"github.com/ThatCatDev/tanrenai-gpu/pkg/naming"
 )
 
 var pullCmd = &cobra.Command{
@@ -31,37 +31,16 @@ UD- dynamic quants). Override the on-disk basename with --name.`,
 		arg := args[0]
 		saveAs, _ := cmd.Flags().GetString("name")
 
-		// Bare-name path: resolve to an hf:// URI and pin the on-disk
-		// basename to the user-typed identifier so /api/load with the
-		// same name finds it. Explicit --name overrides the auto-derived
-		// one for users who want to rename on download.
-		modelURL := arg
-		if !models.IsURI(arg) {
-			resolved := models.ResolveBareNameToURI(arg)
-			if resolved == "" {
-				return fmt.Errorf("could not resolve %q — pass an hf:// URI, a direct URL, or a bare name with a recognizable quant suffix (e.g. -Q4_K_M, -UD-Q4_K_XL, -BF16)", arg)
-			}
-			modelURL = resolved
-			if saveAs == "" {
-				saveAs = arg
-			}
+		modelURL, saveAs, err := resolvePullArgs(arg, saveAs)
+		if err != nil {
+			return err
 		}
 
-		activeURL := serverURL
-		local, _ := cmd.Flags().GetBool("local")
-		if local {
-			gpuLayers, _ := cmd.Flags().GetInt("gpu-layers")
-			flashAttn, _ := cmd.Flags().GetBool("flash-attn")
-			url, cleanup, err := startLocalServers(cmd.Context(), localOpts{
-				GPULayers:      gpuLayers,
-				FlashAttention: flashAttn,
-			}, &startupLog{})
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			activeURL = url
+		activeURL, cleanup, err := resolveBackend(cmd.Context(), cmd)
+		if err != nil {
+			return err
 		}
+		defer cleanup()
 
 		client := newAuthedClient(activeURL, authToken)
 
@@ -98,6 +77,32 @@ UD- dynamic quants). Override the on-disk basename with --name.`,
 
 		return nil
 	},
+}
+
+// resolvePullArgs turns the user's pull argument plus an optional --name
+// override into the (URL, saveAs) pair sent to the backend.
+//
+// Bare names get expanded to canonical hf:// URIs here — that's a CLI UX
+// convenience the wire protocol doesn't know about — and the on-disk
+// basename is pinned to the user-typed identifier so a subsequent
+// /api/load by that same name finds the file.
+//
+// URIs flow through unchanged with saveAs left empty; the GPU server
+// itself derives `<repo>-<quant>` from canonical hf:// URIs via
+// naming.DeriveBareNameFromURI in its PullHandler (tanrenai-gpu ≥ v1.4.0).
+// An explicit --name always wins.
+func resolvePullArgs(arg, saveAs string) (modelURL, finalSaveAs string, err error) {
+	if naming.IsURI(arg) {
+		return arg, saveAs, nil
+	}
+	resolved := naming.ResolveBareNameToURI(arg)
+	if resolved == "" {
+		return "", "", fmt.Errorf("could not resolve %q — pass an hf:// URI, a direct URL, or a bare name with a recognizable quant suffix (e.g. -Q4_K_M, -UD-Q4_K_XL, -BF16)", arg)
+	}
+	if saveAs == "" {
+		saveAs = arg
+	}
+	return resolved, saveAs, nil
 }
 
 func printProgress(prefix string, percent int, downloaded, total int64) {
