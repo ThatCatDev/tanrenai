@@ -14,6 +14,7 @@ import (
 
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/agent"
+	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/scrolls"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
@@ -25,6 +26,18 @@ const pipeDelimiter = "---END---"
 func pipeStatus(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Fprintf(os.Stderr, "[%s]\n", msg)
+}
+
+// emitPipeGenRateSummary prints a one-line generation-rate summary to
+// stderr at the end of each turn, e.g. `[gen: 192 tokens, 42 t/s]`. Silent
+// when fewer than two tokens streamed — one sample can't yield a rate, and
+// the line would just be noise for non-generation turns (e.g. tool-only).
+func emitPipeGenRateSummary() {
+	tokens, tps := pipeGenRate.Snapshot()
+	if tps <= 0 {
+		return
+	}
+	pipeStatus("gen: %d tokens, %.1f t/s", tokens, tps)
 }
 
 // startPipe is the entry point for non-interactive pipe mode.
@@ -99,8 +112,17 @@ func readPipeMessage(scanner *bufio.Scanner) (string, bool) {
 	return strings.Join(lines, "\n"), true
 }
 
+// pipeGenRate is the per-process generation-rate tracker for pipe mode.
+// Shared by both runPipeSimpleTurn and the agent/swarm configs so the
+// summary line at the end of each turn covers whichever path ran. Reset
+// per turn in runPipeTurn before dispatching to the path.
+var pipeGenRate = &apiclient.TokenRateTracker{}
+
 // runPipeTurn executes a single user turn through the agent or chat path.
 func runPipeTurn(ctx context.Context, deps *sessionDeps, input string) error {
+	pipeGenRate.Reset()
+	defer emitPipeGenRateSummary()
+
 	deps.mgr.Append(api.Message{Role: "user", Content: input})
 
 	// Match scrolls.
@@ -234,12 +256,14 @@ func buildPipeAgentConfig(deps *sessionDeps) agent.PlanAgentConfig {
 				}
 			},
 			OnContentDelta: func(delta string) {
+				pipeGenRate.Record()
 				contentFilt.write(delta)
 				if text := contentFilt.string(); text != "" {
 					os.Stdout.WriteString(text)
 				}
 			},
 			OnReasoningDelta: func(delta string) {
+				pipeGenRate.Record()
 				// Accumulate reasoning tokens; flush on sentence boundaries.
 				reasoningBuf.WriteString(delta)
 				if strings.ContainsAny(delta, ".\n") && reasoningBuf.Len() > 40 {
@@ -299,7 +323,10 @@ func runPipeSimpleTurn(ctx context.Context, deps *sessionDeps, messages []api.Me
 	content, err := streamSimpleChat(events, chatStreamHooks{
 		OnThinking:     func() { pipeStatus("thinking") },
 		OnThinkingDone: func() { pipeStatus("generating") },
-		OnContentDelta: func(delta string) { os.Stdout.WriteString(delta) },
+		OnContentDelta: func(delta string) {
+			pipeGenRate.Record()
+			os.Stdout.WriteString(delta)
+		},
 	})
 	if err != nil {
 		return err
@@ -418,12 +445,14 @@ func buildPipeSwarmConfig(deps *sessionDeps) agent.SwarmConfig {
 				flushContent()
 			},
 			OnContentDelta: func(delta string) {
+				pipeGenRate.Record()
 				contentFilt.write(delta)
 				if text := contentFilt.string(); text != "" {
 					os.Stdout.WriteString(text)
 				}
 			},
 			OnReasoningDelta: func(delta string) {
+				pipeGenRate.Record()
 				reasoningBuf.WriteString(delta)
 				if strings.ContainsAny(delta, ".\n") && reasoningBuf.Len() > 40 {
 					fmt.Fprintf(os.Stderr, "[reasoning] %s\n", strings.TrimSpace(reasoningBuf.String()))

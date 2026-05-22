@@ -409,6 +409,7 @@ func (t *tuiApp) handleEnter(text string) {
 	t.startProgressTicker()
 	t.iterStartTime = time.Now()
 	t.estimatedDur = 0
+	t.genRate.Reset()
 	t.updateStatusBar()
 	t.streaming.Reset()
 

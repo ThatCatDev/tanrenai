@@ -98,6 +98,12 @@ type tuiApp struct {
 	memoryWg      sync.WaitGroup
 	liveCtxTokens int // live token count from agent loop (0 = use mgr.Budget())
 
+	// genRate tracks tokens-per-second during the current streaming turn.
+	// Reset at iteration start, Record()ed on each content delta, read by
+	// the status-bar renderer. Pointer so tui_view.go's renderer can safely
+	// pass it around without copying the mutex.
+	genRate *apiclient.TokenRateTracker
+
 	// Plan-execute agent mode
 	userInputCh chan string // non-nil during planned agent turns
 	plannedMode bool        // true when a planned agent turn is running
@@ -148,6 +154,7 @@ func newTuiApp(modelName string) *tuiApp {
 		modelName:     modelName,
 		permissions:   tools.LoadPermissions(),
 		anvilFrame:    -1, // not animating
+		genRate:       &apiclient.TokenRateTracker{},
 	}
 
 	t.app = tview.NewApplication()

@@ -20,15 +20,27 @@ import (
 
 func (t *tuiApp) updateStatusBar() {
 	ctx := t.contextUsageString()
+	rate := t.statusGenRateString()
 
 	switch {
 	case t.processing && t.statusText != "":
-		t.statusBar.SetText(" [gray::-]" + tview.Escape(t.statusText+t.statusTokenInfo()) + "[-:-:-] " + t.statusProgressBar() + ctx)
+		t.statusBar.SetText(" [gray::-]" + tview.Escape(t.statusText+t.statusTokenInfo()) + "[-:-:-] " + t.statusProgressBar() + ctx + rate)
 	case t.lastInputTokens > 0 || t.lastOutputTokens > 0:
-		t.statusBar.SetText(" [gray::-]" + strings.Join(t.statusTokenParts(), " / ") + "[-:-:-]" + ctx)
+		t.statusBar.SetText(" [gray::-]" + strings.Join(t.statusTokenParts(), " / ") + "[-:-:-]" + ctx + rate)
 	default:
-		t.statusBar.SetText(ctx)
+		t.statusBar.SetText(ctx + rate)
 	}
+}
+
+// statusGenRateString returns the "  45 t/s" portion of the status bar, or
+// "" until at least two tokens have streamed (one sample isn't enough for a
+// rate, and rendering "0 t/s" on the first frame is just visual noise).
+func (t *tuiApp) statusGenRateString() string {
+	_, tps := t.genRate.Snapshot()
+	if tps <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("  [gray::-]%.0f t/s[-:-:-]", tps)
 }
 
 // statusTokenInfo returns the " | ~Nk in" portion of the status bar, or "".
