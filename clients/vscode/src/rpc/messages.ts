@@ -141,6 +141,20 @@ export interface TurnDoneMsg {
   reason?: string;
 }
 
+/**
+ * Streamed throughput update for the current turn. The CLI sends one of
+ * these every ~500ms while content/reasoning deltas are arriving, plus a
+ * final one just before turn_done so the UI can land on a stable number.
+ * `tokens` is the count of streamed deltas; `tps` is the rate computed
+ * over the window between the first and last delta (excludes prompt-eval
+ * latency, so it reflects pure generation speed).
+ */
+export interface TokenRateMsg {
+  type: 'token_rate';
+  tokens: number;
+  tps: number;
+}
+
 export interface ErrorMsg {
   type: 'error';
   message: string;
@@ -159,4 +173,5 @@ export type InboundMsg =
   | ToolResultLocalMsg
   | ApprovalRequiredMsg
   | TurnDoneMsg
+  | TokenRateMsg
   | ErrorMsg;

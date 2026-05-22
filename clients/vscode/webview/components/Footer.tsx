@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Mode } from '../../src/protocol';
+import type { TokenRate } from '../state';
 import { send } from '../host';
 
 interface Props {
   signedIn: boolean;
   mode: Mode;
+  /** Generation throughput for the current/most-recent turn. Null until
+   *  the first delta arrives. The footer renders it next to the mode so
+   *  there's a quiet always-visible meter without taking dedicated space. */
+  tokenRate: TokenRate | null;
 }
 
-export function Footer({ signedIn, mode }: Props) {
+export function Footer({ signedIn, mode, tokenRate }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -34,6 +39,11 @@ export function Footer({ signedIn, mode }: Props) {
       <span class="footer-status">
         <span class="footer-dot" aria-hidden="true" />
         <span class="footer-mode">{mode}</span>
+        {tokenRate && (
+          <span class="footer-rate" title={`${tokenRate.tokens} tokens generated`}>
+            {tokenRate.tps.toFixed(0)} t/s
+          </span>
+        )}
       </span>
       <div class="footer-menu" ref={ref}>
         <button

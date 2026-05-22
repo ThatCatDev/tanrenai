@@ -41,7 +41,7 @@ function renderRoot(state: AppState, dispatch: (a: Action) => void) {
     return (
       <div class="root">
         <StatusPanel connection={state.connection} />
-        <Footer signedIn={signedIn} mode={state.mode} />
+        <Footer signedIn={signedIn} mode={state.mode} tokenRate={null} />
       </div>
     );
   }
@@ -68,7 +68,7 @@ function renderRoot(state: AppState, dispatch: (a: Action) => void) {
         availableSelection={state.availableSelection}
         dispatch={dispatch}
       />
-      <Footer signedIn={true} mode={state.mode} />
+      <Footer signedIn={true} mode={state.mode} tokenRate={state.tokenRate} />
     </div>
   );
 }

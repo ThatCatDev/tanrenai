@@ -18,6 +18,7 @@ import (
 
 	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/agent"
+	"github.com/ThatCatDev/tanrenai/shared/apiclient"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/scrolls"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
@@ -145,6 +146,18 @@ type rpcTurnDoneMsg struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// rpcTokenRateMsg reports current generation throughput. Emitted live
+// during streaming (throttled to one message per ~500ms so the wire
+// doesn't fill with redundant updates) and once more on turn end so the
+// webview lands on a stable final number. `Tokens` is the count of
+// streamed content+reasoning deltas; `Tps` is the rate computed over the
+// window between the first and last delta (excludes prompt-eval latency).
+type rpcTokenRateMsg struct {
+	Type   string  `json:"type"`
+	Tokens int     `json:"tokens"`
+	Tps    float64 `json:"tps"`
+}
+
 type rpcErrorMsg struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
@@ -164,7 +177,22 @@ type rpcServer struct {
 	nextID         atomic.Uint64
 	interceptedSet map[string]bool
 	permissions    *tools.Permissions
+
+	// genRate tracks generation throughput for the current turn. Reset by
+	// resetTokenRate() at the start of each turn; Record()ed by
+	// recordRateAndMaybeEmit() on every content/reasoning delta; flushed
+	// by flushTokenRate() before turn_done so the webview lands on a
+	// final value. Pointer keeps the mutex out of the rpcServer copy
+	// (encMu is the only one we want here).
+	genRate      *apiclient.TokenRateTracker
+	rateMu       sync.Mutex
+	lastRateEmit time.Time
 }
+
+// tokenRateThrottle bounds how often token_rate messages go out during
+// streaming. 500ms is short enough to feel live and long enough to keep
+// the wire from being dominated by rate updates on fast generators.
+const tokenRateThrottle = 500 * time.Millisecond
 
 func newRPCServer(out io.Writer, intercepted []string, permissions *tools.Permissions) *rpcServer {
 	set := make(map[string]bool, len(intercepted))
@@ -176,7 +204,53 @@ func newRPCServer(out io.Writer, intercepted []string, permissions *tools.Permis
 		enc:            json.NewEncoder(out),
 		interceptedSet: set,
 		permissions:    permissions,
+		genRate:        &apiclient.TokenRateTracker{},
 	}
+}
+
+// resetTokenRate clears the per-turn generation counters. Called at the
+// start of runRPCTurn so back-to-back turns don't bleed their rates into
+// each other.
+func (s *rpcServer) resetTokenRate() {
+	s.genRate.Reset()
+	s.rateMu.Lock()
+	s.lastRateEmit = time.Time{}
+	s.rateMu.Unlock()
+}
+
+// recordRateAndMaybeEmit counts one streamed delta and, if more than
+// tokenRateThrottle has elapsed since the last token_rate message, emits
+// an updated snapshot. Called from every OnContentDelta and
+// OnReasoningDelta hook on the RPC side.
+func (s *rpcServer) recordRateAndMaybeEmit() {
+	s.genRate.Record()
+
+	s.rateMu.Lock()
+	now := time.Now()
+	if now.Sub(s.lastRateEmit) < tokenRateThrottle {
+		s.rateMu.Unlock()
+		return
+	}
+	s.lastRateEmit = now
+	s.rateMu.Unlock()
+
+	tokens, tps := s.genRate.Snapshot()
+	if tps <= 0 {
+		return
+	}
+	_ = s.write(rpcTokenRateMsg{Type: "token_rate", Tokens: tokens, Tps: tps})
+}
+
+// flushTokenRate emits a final token_rate before turn_done so the webview
+// shows a stable final value rather than whatever fell out of the throttle.
+// Silent when fewer than two tokens streamed or the window was too short
+// to be meaningful (matches the TokenRateTracker contract).
+func (s *rpcServer) flushTokenRate() {
+	tokens, tps := s.genRate.Snapshot()
+	if tps <= 0 {
+		return
+	}
+	_ = s.write(rpcTokenRateMsg{Type: "token_rate", Tokens: tokens, Tps: tps})
 }
 
 func (s *rpcServer) write(msg any) error {
@@ -566,6 +640,9 @@ func buildReadyMsg(deps *sessionDeps, model string) rpcReadyMsg {
 // `images` is a list of data: or http(s) URLs to attach to the user message
 // as multimodal content (vision-capable models only).
 func runRPCTurn(ctx context.Context, deps *sessionDeps, srv *rpcServer, input string, images []string) {
+	srv.resetTokenRate()
+	defer srv.flushTokenRate()
+
 	if len(images) > 0 {
 		deps.mgr.Append(api.NewMultimodalMessage("user", input, images))
 	} else {
@@ -652,6 +729,7 @@ func runRPCSimpleTurn(ctx context.Context, deps *sessionDeps, srv *rpcServer, me
 
 	content, err := streamSimpleChat(events, chatStreamHooks{
 		OnContentDelta: func(delta string) {
+			srv.recordRateAndMaybeEmit()
 			_ = srv.write(rpcContentDeltaMsg{Type: "content_delta", Text: delta})
 		},
 	})
@@ -716,9 +794,11 @@ func buildRPCAgentConfig(deps *sessionDeps, srv *rpcServer) agent.PlanAgentConfi
 				})
 			},
 			OnContentDelta: func(delta string) {
+				srv.recordRateAndMaybeEmit()
 				_ = srv.write(rpcContentDeltaMsg{Type: "content_delta", Text: delta})
 			},
 			OnReasoningDelta: func(delta string) {
+				srv.recordRateAndMaybeEmit()
 				_ = srv.write(rpcContentDeltaMsg{Type: "reasoning_delta", Text: delta})
 			},
 			OnToolCallDelta: func(idx int, name, argsDelta string) {
@@ -789,9 +869,11 @@ func buildRPCSwarmConfig(deps *sessionDeps, srv *rpcServer) agent.SwarmConfig {
 				})
 			},
 			OnContentDelta: func(delta string) {
+				srv.recordRateAndMaybeEmit()
 				_ = srv.write(rpcContentDeltaMsg{Type: "content_delta", Text: delta})
 			},
 			OnReasoningDelta: func(delta string) {
+				srv.recordRateAndMaybeEmit()
 				_ = srv.write(rpcContentDeltaMsg{Type: "reasoning_delta", Text: delta})
 			},
 			OnToolCallDelta: func(idx int, name, argsDelta string) {

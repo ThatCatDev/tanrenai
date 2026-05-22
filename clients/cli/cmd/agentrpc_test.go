@@ -211,6 +211,81 @@ func TestRPCServer_AlwaysPersistsPermission(t *testing.T) {
 
 // ── ready message contents ─────────────────────────────────────────────
 
+// TestRPCServer_TokenRateThrottle pins the contract used by the agent
+// pathways: recordRateAndMaybeEmit fires at most one token_rate message
+// per tokenRateThrottle window during streaming, and flushTokenRate emits
+// one final value at turn end (excluding short windows that the tracker
+// suppresses).
+func TestRPCServer_TokenRateThrottle(t *testing.T) {
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
+
+	// Hammer recordRateAndMaybeEmit far faster than the throttle. Even
+	// though we record many tokens, only the FIRST eligible call emits —
+	// subsequent calls within the window are throttled.
+	for range 50 {
+		srv.recordRateAndMaybeEmit()
+		time.Sleep(5 * time.Millisecond) // stay well under tokenRateThrottle
+	}
+
+	bufMu.Lock()
+	mid := buf.String()
+	bufMu.Unlock()
+
+	// The tracker requires ≥2 tokens AND ≥100ms before reporting a rate,
+	// so the first ~20 records produce nothing, then one message lands.
+	// Anywhere from 0–2 token_rate events is fine — we only insist we
+	// haven't dumped 50.
+	midCount := strings.Count(mid, `"type":"token_rate"`)
+	if midCount > 2 {
+		t.Errorf("token_rate emitted %d times during throttled window, want ≤2", midCount)
+	}
+
+	// Final flush always emits when there's a meaningful rate, regardless
+	// of throttle. That's the value the webview lands on after turn_done.
+	srv.flushTokenRate()
+	bufMu.Lock()
+	full := buf.String()
+	bufMu.Unlock()
+	if strings.Count(full, `"type":"token_rate"`) < midCount+1 {
+		t.Errorf("flushTokenRate did not emit a final message; got %q", full)
+	}
+}
+
+// TestRPCServer_TokenRateResetBetweenTurns is the regression test for
+// per-turn isolation: after resetTokenRate, a subsequent stream's first
+// delta starts a fresh window, so back-to-back fast turns don't show the
+// previous turn's wall clock as elapsed.
+func TestRPCServer_TokenRateResetBetweenTurns(t *testing.T) {
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
+
+	srv.recordRateAndMaybeEmit()
+	srv.recordRateAndMaybeEmit()
+
+	// Force the lastRateEmit window to be in the past so the next call
+	// would otherwise emit. After reset, it should NOT emit until enough
+	// time AND tokens accrue post-reset.
+	srv.resetTokenRate()
+	if tokens, _ := srv.genRate.Snapshot(); tokens != 0 {
+		t.Errorf("after reset tokens = %d, want 0", tokens)
+	}
+
+	// flushTokenRate on a freshly-reset tracker must be a no-op (no
+	// recorded tokens means no rate to report).
+	bufMu.Lock()
+	before := buf.Len()
+	bufMu.Unlock()
+	srv.flushTokenRate()
+	bufMu.Lock()
+	if buf.Len() != before {
+		t.Errorf("flushTokenRate wrote %d bytes on empty tracker, want 0", buf.Len()-before)
+	}
+	bufMu.Unlock()
+}
+
 func TestBuildReadyMsg_IncludesToolsAndModel(t *testing.T) {
 	registry := tools.NewRegistry()
 	registry.Register(&tools.FileReadTool{})

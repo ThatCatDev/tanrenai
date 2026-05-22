@@ -80,4 +80,10 @@ export type WebviewOutbound =
   | { type: 'attach_selection'; selection: SelectionAttachment }
   /** Live preview of the active editor's selection (or null when there is none).
    *  Webview renders a faint hint above the composer; user clicks to attach. */
-  | { type: 'available_selection'; selection: SelectionAttachment | null };
+  | { type: 'available_selection'; selection: SelectionAttachment | null }
+  /** Streamed throughput readout for the current turn. The host throttles
+   *  these to one per ~500ms; `tps` is the rate over the window between
+   *  the first and last delta (excludes prompt-eval latency). Webview
+   *  surfaces it in the status panel during streaming and on the final
+   *  emitted value after the turn closes. */
+  | { type: 'token_rate'; tokens: number; tps: number };

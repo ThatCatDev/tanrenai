@@ -11,6 +11,7 @@ import {
   ToolCallMsg,
   ToolCallRequestMsg,
   ToolResultLocalMsg,
+  TokenRateMsg,
   TurnDoneMsg,
   ErrorMsg,
 } from './rpc/messages';
@@ -183,6 +184,7 @@ export class Controller implements ChatViewListener {
     );
     rpc.on('turn_done', (m: TurnDoneMsg) => this.handleTurnDone(m));
     rpc.on('iteration_start', () => this.handleIterationStart());
+    rpc.on('token_rate', (m: TokenRateMsg) => this.handleTokenRate(m));
     rpc.on('error', (m: ErrorMsg) => {
       this.log(`error: ${m.message}`);
       if (m.fatal) {
@@ -960,6 +962,16 @@ export class Controller implements ChatViewListener {
     this.closeOpenAssistantBubbles();
     this.turnRunning = false;
     this.view.send({ type: 'turn_end', ok: m.ok, reason: m.reason });
+  }
+
+  /**
+   * Forwards a throughput readout from the CLI to the webview. The CLI
+   * already throttles emission and applies the ≥2-token / ≥100ms guard,
+   * so we don't filter further here — the webview's reducer simply
+   * overwrites the displayed value on each event.
+   */
+  private handleTokenRate(m: TokenRateMsg): void {
+    this.view.send({ type: 'token_rate', tokens: m.tokens, tps: m.tps });
   }
 
   private log(line: string): void {

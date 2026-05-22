@@ -130,6 +130,33 @@ describe('reduce', () => {
     expect(assistantEntry(s.entries, 'a1')?.content).toBe('hi');
   });
 
+  it('updates tokenRate on token_rate', () => {
+    let s: AppState = seed({ turnRunning: true });
+    s = reduce(s, { type: 'token_rate', tokens: 42, tps: 18.7 });
+    expect(s.tokenRate).toEqual({ tokens: 42, tps: 18.7 });
+
+    // Subsequent updates overwrite — the panel always shows the latest.
+    s = reduce(s, { type: 'token_rate', tokens: 113, tps: 22.4 });
+    expect(s.tokenRate).toEqual({ tokens: 113, tps: 22.4 });
+  });
+
+  it('clears tokenRate on turn_start so a new turn does not show stale numbers', () => {
+    let s: AppState = seed();
+    s = reduce(s, { type: 'token_rate', tokens: 42, tps: 18.7 });
+    expect(s.tokenRate).not.toBeNull();
+    s = reduce(s, { type: 'turn_start' });
+    expect(s.tokenRate).toBeNull();
+  });
+
+  it('preserves tokenRate across turn_end so the final reading stays visible', () => {
+    let s: AppState = seed({ turnRunning: true });
+    s = reduce(s, { type: 'token_rate', tokens: 113, tps: 22.4 });
+    s = reduce(s, { type: 'turn_end', ok: true });
+    // After the turn closes the footer still shows the final t/s — it
+    // only resets on the next turn_start.
+    expect(s.tokenRate).toEqual({ tokens: 113, tps: 22.4 });
+  });
+
   it('ignores deltas for unknown ids on entries that already exist for other ids', () => {
     let s: AppState = seed();
     s = reduce(s, { type: 'message_start', role: 'user', id: 'u1' });

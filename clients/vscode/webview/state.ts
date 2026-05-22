@@ -55,6 +55,15 @@ export interface StreamingTool {
   argsLength: number;
 }
 
+/** Throughput readout for the current (or most recent) turn. Updated as
+ *  the CLI streams `token_rate` messages. `tokens` accumulates while the
+ *  turn is live; we keep both values around after `turn_end` so the panel
+ *  can show the final rate until the next turn starts. */
+export interface TokenRate {
+  tokens: number;
+  tps: number;
+}
+
 export interface AppState {
   connection: ConnectionState;
   mode: Mode;
@@ -69,6 +78,8 @@ export interface AppState {
   pendingImages: ImageAttachment[];
   /** Live preview of the active editor's selection (null = no selection). */
   availableSelection: SelectionAttachment | null;
+  /** Most recent throughput reading (null until the first delta). */
+  tokenRate: TokenRate | null;
 }
 
 export const initialState: AppState = {
@@ -82,6 +93,7 @@ export const initialState: AppState = {
   pendingAttachments: [],
   pendingImages: [],
   availableSelection: null,
+  tokenRate: null,
 };
 
 export type Activity =
@@ -166,6 +178,12 @@ export function reduce(state: AppState, msg: Action): AppState {
         iteration: 0,
         maxIterations: 0,
         streamingTools: [],
+        tokenRate: null,
+      };
+    case 'token_rate':
+      return {
+        ...state,
+        tokenRate: { tokens: msg.tokens, tps: msg.tps },
       };
     case 'turn_end': {
       const entries = msg.ok || !msg.reason
