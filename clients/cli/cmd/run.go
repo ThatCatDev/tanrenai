@@ -174,10 +174,20 @@ func parseRunParams(cmd *cobra.Command, model string) (runParams, error) {
 	cpuMoE, _ := cmd.Flags().GetBool("cpu-moe")
 	noKVOffload, _ := cmd.Flags().GetBool("no-kv-offload")
 	fitVRAM, _ := cmd.Flags().GetBool("fit")
+	pipeFormat, _ := cmd.Flags().GetString("format")
 
 	// Swarm mode implies agent mode.
 	if swarmMode {
 		agentMode = true
+	}
+
+	// Validate format value early so a typo errors out before we spin up
+	// llama-server and a backend connection.
+	switch pipeFormat {
+	case "", "text", "json":
+		// ok
+	default:
+		return runParams{}, fmt.Errorf("--format: must be 'text' or 'json', got %q", pipeFormat)
 	}
 
 	return runParams{
@@ -200,6 +210,7 @@ func parseRunParams(cmd *cobra.Command, model string) (runParams, error) {
 		cpuMoE:         cpuMoE,
 		noKVOffload:    noKVOffload,
 		fitVRAM:        fitVRAM,
+		pipeFormat:     pipeFormat,
 	}, nil
 }
 
@@ -785,6 +796,11 @@ type runParams struct {
 	cpuMoE         bool
 	noKVOffload    bool
 	fitVRAM        bool
+	// pipeFormat controls how pipe mode serialises output: "text" (default,
+	// human-friendly with ---END--- delimiters and bracketed stderr status)
+	// or "json" (JSONL events on stdout for programmatic consumers like
+	// editor integrations, IDE extensions, and agent hosts).
+	pipeFormat string
 }
 
 // sessionDeps holds the initialised resources for a chat/agent session.
@@ -805,6 +821,11 @@ type sessionDeps struct {
 	streamFn       agent.StreamingCompletionFunc
 	cleanupFn      func()
 	modelName      string
+	// pipeFormat propagates the --format flag into the pipe hook builders
+	// so they can route output to JSONL stdout (and stderr-only status)
+	// for programmatic consumers, instead of the default text-mode mix.
+	// Only consulted from pipe.go — TUI sessions ignore it.
+	pipeFormat string
 }
 
 // setupSession initialises the backend client, model, context manager,
@@ -965,6 +986,7 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 	deps.enableThinking = p.thinking
 	deps.agentMode = p.agentMode
 	deps.swarmMode = p.swarmMode
+	deps.pipeFormat = p.pipeFormat
 
 	model := p.model
 	deps.completeFn = func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
@@ -1076,6 +1098,7 @@ func addRunFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("no-scrolls", false, "disable automatic scroll injection")
 	cmd.Flags().Bool("thinking", true, "enable thinking/reasoning mode (for models that support it)")
 	cmd.Flags().Bool("pipe", false, "non-interactive pipe mode: read from stdin, write to stdout")
+	cmd.Flags().String("format", "text", "pipe output format: 'text' (default, with ---END--- delimiters and bracketed stderr status) or 'json' (JSONL events on stdout for programmatic consumers)")
 	cmd.Flags().Bool("swarm", false, "multi-agent swarm mode: orchestrator plans, workers execute with fresh contexts")
 }
 
