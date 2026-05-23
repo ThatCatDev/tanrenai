@@ -950,6 +950,14 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 		}
 		deps.registry = registry
 		deps.procMgr = procMgr
+
+		// External MCP servers (configured via .tanrenai/mcp.json
+		// and/or ~/.config/tanrenai/mcp.json) get connected here and
+		// their tools attached to the same registry the agent reads.
+		// Per-server failures don't block startup — a flaky MCP server
+		// shouldn't make `tanrenai run` unusable. The deps.cleanupFn
+		// chain disconnects everything when the session ends.
+		attachMCP(ctx, p, deps, log)
 	}
 
 	deps.maxIterations = p.maxIterations
