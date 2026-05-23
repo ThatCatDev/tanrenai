@@ -4,16 +4,136 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
 // Message represents a chat message.
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"`
+	Role       string     `json:"-"`
+	Content    string     `json:"-"`
+	// ContentParts, when non-empty, is sent as the message's `content`
+	// field as an array (OpenAI multimodal format). Otherwise Content is
+	// sent as a plain string. Use NewTextMessage / NewMultimodalMessage to
+	// build messages rather than touching these directly.
+	ContentParts []ContentPart `json:"-"`
+	ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID   string        `json:"tool_call_id,omitempty"`
+	Name         string        `json:"name,omitempty"`
+}
+
+// ContentPart is one piece of a multimodal message — currently either
+// text or an image URL (which may be a data: URL with base64 payload).
+type ContentPart struct {
+	Type     string    `json:"type"` // "text" | "image_url"
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+// ImageURL carries the actual image — usually a `data:image/<type>;base64,...`
+// URL but http(s) URLs work too for vision models that fetch them.
+type ImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"` // "low" | "high" | "auto"
+}
+
+// MarshalJSON emits the OpenAI-compatible shape: top-level `content`
+// is either a string (legacy / text-only) or an array (multimodal).
+func (m Message) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Role       string     `json:"role"`
+		Content    any        `json:"content,omitempty"`
+		ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+		ToolCallID string     `json:"tool_call_id,omitempty"`
+		Name       string     `json:"name,omitempty"`
+	}
+	w := wire{
+		Role:       m.Role,
+		ToolCalls:  m.ToolCalls,
+		ToolCallID: m.ToolCallID,
+		Name:       m.Name,
+	}
+	if len(m.ContentParts) > 0 {
+		w.Content = m.ContentParts
+	} else {
+		w.Content = m.Content
+	}
+
+	return json.Marshal(w)
+}
+
+// UnmarshalJSON accepts both string and array `content`.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
+		ToolCallID string          `json:"tool_call_id,omitempty"`
+		Name       string          `json:"name,omitempty"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	m.Role = w.Role
+	m.ToolCalls = w.ToolCalls
+	m.ToolCallID = w.ToolCallID
+	m.Name = w.Name
+
+	if len(w.Content) == 0 || string(w.Content) == "null" {
+		return nil
+	}
+	// Try string first — most common shape.
+	var s string
+	if err := json.Unmarshal(w.Content, &s); err == nil {
+		m.Content = s
+
+		return nil
+	}
+	// Fall back to array.
+	var parts []ContentPart
+	if err := json.Unmarshal(w.Content, &parts); err != nil {
+		return fmt.Errorf("message content was neither string nor array: %w", err)
+	}
+	m.ContentParts = parts
+	// Surface text portions through .Content so existing string-based
+	// consumers (token estimation, summary, scrolls) still see something
+	// meaningful even when they can't render the image bits.
+	var b []byte
+	for _, p := range parts {
+		if p.Type == "text" {
+			if len(b) > 0 {
+				b = append(b, '\n')
+			}
+			b = append(b, p.Text...)
+		}
+	}
+	m.Content = string(b)
+
+	return nil
+}
+
+// NewTextMessage builds a plain-text message — equivalent to the
+// pre-multimodal struct literal pattern.
+func NewTextMessage(role, content string) Message {
+	return Message{Role: role, Content: content}
+}
+
+// NewMultimodalMessage builds a message with both a text prompt and one
+// or more image URLs. URLs can be `data:image/<type>;base64,...` or http(s).
+func NewMultimodalMessage(role, text string, imageURLs []string) Message {
+	parts := make([]ContentPart, 0, 1+len(imageURLs))
+	if text != "" {
+		parts = append(parts, ContentPart{Type: "text", Text: text})
+	}
+	for _, u := range imageURLs {
+		parts = append(parts, ContentPart{
+			Type:     "image_url",
+			ImageURL: &ImageURL{URL: u},
+		})
+	}
+
+	return Message{Role: role, ContentParts: parts, Content: text}
 }
 
 // Tool represents a tool available for the model to call.

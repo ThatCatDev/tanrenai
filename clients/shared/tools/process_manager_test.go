@@ -82,7 +82,10 @@ func TestProcessManager_Kill(t *testing.T) {
 
 	select {
 	case <-pm.Done(p.ID):
-	case <-time.After(2 * time.Second):
+	case <-time.After(8 * time.Second):
+		// cmd.WaitDelay (set in process_manager.go) caps Wait at 5s
+		// after the kill — give the goroutine a few extra seconds of
+		// scheduler grace before declaring a real hang.
 		t.Fatal("process did not exit after kill")
 	}
 

@@ -73,10 +73,21 @@ func (c *Client) getAuthToken() string {
 	return c.authToken
 }
 
-// applyAuth adds the Authorization header if an auth token is set.
+// userAgent identifies the CLI to the platform. Go's default
+// "Go-http-client/1.1" is frequently challenged by Cloudflare and other
+// WAFs, which produces the "Just a moment..." HTML 403 response — looks
+// like an auth failure but is really bot detection. Setting an explicit,
+// non-generic UA defeats the heuristic.
+const userAgent = "tanrenai-cli/0.1"
+
+// applyAuth adds the Authorization header if an auth token is set, and
+// always sets a non-default User-Agent.
 func (c *Client) applyAuth(req *http.Request) {
 	if tok := c.getAuthToken(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", userAgent)
 	}
 }
 
@@ -508,6 +519,13 @@ func (c *Client) InstanceStart(ctx context.Context) error {
 // InstanceStop stops the GPU instance.
 func (c *Client) InstanceStop(ctx context.Context) error {
 	return c.postJSON(ctx, "/api/instance/stop", nil, nil)
+}
+
+// InstanceDestroy tears down the GPU instance entirely (vast.ai instance
+// is deleted, not just paused). Use this when runaway spawning is
+// observed — paused instances may still incur cost.
+func (c *Client) InstanceDestroy(ctx context.Context) error {
+	return c.postJSON(ctx, "/api/instance/destroy", nil, nil)
 }
 
 // --- Internal helpers ---

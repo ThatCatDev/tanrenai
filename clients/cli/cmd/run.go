@@ -28,20 +28,30 @@ import (
 // startupLog posts status lines to the TUI (or stdout if tui is nil).
 type startupLog struct {
 	tui *tuiApp
+	// emit, when set, replaces the default stdout/stderr behaviour. It's
+	// mutually exclusive with tui — used by agent-rpc to route progress
+	// through NDJSON instead of corrupting stdout.
+	emit func(level, msg string)
 }
 
 func (s *startupLog) Info(msg string) {
-	if s.tui != nil {
+	switch {
+	case s.tui != nil:
 		s.tui.appendLogLine("[gray::-]  " + tview.Escape(msg) + "[-:-:-]")
-	} else {
+	case s.emit != nil:
+		s.emit("info", msg)
+	default:
 		_, _ = fmt.Fprintf(os.Stdout, "%s\n", msg)
 	}
 }
 
 func (s *startupLog) Warn(msg string) {
-	if s.tui != nil {
+	switch {
+	case s.tui != nil:
 		s.tui.appendLogLine("[yellow::-]  " + tview.Escape(msg) + "[-:-:-]")
-	} else {
+	case s.emit != nil:
+		s.emit("warn", msg)
+	default:
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
 	}
 }
@@ -63,6 +73,19 @@ func tanrenaiDataDir() string {
 	home, _ := os.UserHomeDir()
 
 	return filepath.Join(home, ".local", "share", "tanrenai")
+}
+
+// projectDirName is the conventional folder name created in cwd for
+// project-local tanrenai state (architect spec, scrolls, permissions).
+const projectDirName = ".tanrenai"
+
+// ensureProjectDir creates `.tanrenai/` in the current working directory if
+// it doesn't already exist. Failures are logged but not fatal — a read-only
+// workspace should still be able to chat.
+func ensureProjectDir(log *startupLog) {
+	if err := os.MkdirAll(projectDirName, 0o755); err != nil {
+		log.Warn(fmt.Sprintf("could not create %s/ in current directory: %v", projectDirName, err))
+	}
 }
 
 // projectMemoryDir returns a project-scoped memory directory based on a hash of the working directory.
@@ -785,9 +808,14 @@ type sessionDeps struct {
 }
 
 // setupSession initialises the backend client, model, context manager,
-// tools, scrolls, and memory — everything both TUI and pipe mode need.
+// tools, scrolls, and memory — everything TUI, pipe, and agent-rpc need.
 func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDeps, error) {
 	deps := &sessionDeps{modelName: p.model}
+
+	// Ensure the project-local `.tanrenai/` exists in cwd. Home for
+	// architect.md (swarm), project-scoped scrolls, and permissions.json.
+	// Non-fatal — read-only workspaces still get chat.
+	ensureProjectDir(log)
 
 	mode := resolveSessionMode(p, log)
 
@@ -940,7 +968,63 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 		return client.StreamCompletion(ctx, req)
 	}
 
+	// In remote mode, wrap stream/complete so a transient provisioning
+	// error (GPU paused, model unloaded) waits for the platform to bring
+	// the GPU back and then retries — the conversation in deps.mgr is
+	// untouched, so the model gets the full prior context on retry.
+	if mode == sessionModeRemote {
+		deps.streamFn = withStreamGPURetry(deps.streamFn, client, model, log)
+		deps.completeFn = withCompleteGPURetry(deps.completeFn, client, model, log)
+	}
+
 	return deps, nil
+}
+
+// withStreamGPURetry wraps a StreamingCompletionFunc so that if the call
+// fails before streaming begins with an error indicating the platform is
+// provisioning / waking the GPU, it waits for the model to load and
+// retries. Once a stream has started successfully, errors mid-stream are
+// passed through to the caller — those are handled by the agent loop's
+// own retry-with-backoff.
+func withStreamGPURetry(
+	inner agent.StreamingCompletionFunc,
+	client *apiclient.Client,
+	model string,
+	log *startupLog,
+) agent.StreamingCompletionFunc {
+	return func(ctx context.Context, req *api.ChatCompletionRequest) (<-chan apiclient.StreamEvent, error) {
+		ch, err := inner(ctx, req)
+		if err == nil || !isProvisioningInProgress(err) {
+			return ch, err
+		}
+		log.Info("GPU is sleeping — waking it up...")
+		if _, lerr := loadModelWithProgress(ctx, client, sessionModeRemote, model, log); lerr != nil {
+			return nil, fmt.Errorf("backend did not come back: %w", lerr)
+		}
+
+		return inner(ctx, req)
+	}
+}
+
+// withCompleteGPURetry is the non-streaming equivalent.
+func withCompleteGPURetry(
+	inner agent.CompletionFunc,
+	client *apiclient.Client,
+	model string,
+	log *startupLog,
+) agent.CompletionFunc {
+	return func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
+		resp, err := inner(ctx, req)
+		if err == nil || !isProvisioningInProgress(err) {
+			return resp, err
+		}
+		log.Info("GPU is sleeping — waking it up...")
+		if _, lerr := loadModelWithProgress(ctx, client, sessionModeRemote, model, log); lerr != nil {
+			return nil, fmt.Errorf("backend did not come back: %w", lerr)
+		}
+
+		return inner(ctx, req)
+	}
 }
 
 // assignToTUI copies sessionDeps fields onto a tuiApp.

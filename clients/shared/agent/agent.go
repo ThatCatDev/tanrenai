@@ -78,6 +78,14 @@ type StreamingConfig struct {
 	OnThinkingDone   func()
 	OnContentDelta   func(delta string)
 	OnReasoningDelta func(delta string)
+	// OnToolCallDelta fires for each tool-call argument fragment as the
+	// model streams it. Without this, callers see dead air between the
+	// last content delta and OnToolCall (the tool args streaming can
+	// take many seconds for big inputs like file_write). `index` is the
+	// model's tool-call index in the array; `name` is the function name
+	// (may be empty in early deltas before the model has decided);
+	// `argsDelta` is the new chars in this delta.
+	OnToolCallDelta func(index int, name, argsDelta string)
 	// UserInput is checked between iterations for mid-turn injection.
 	// If a message is available, it's appended as a user message.
 	UserInput <-chan string
@@ -445,7 +453,7 @@ func (a *streamAccumulator) applyChoiceDelta(choice api.ChunkChoice, cfg *Stream
 
 	a.applyReasoningDelta(choice.Delta.ReasoningContent, cfg)
 	a.applyContentDelta(choice.Delta.Content, cfg)
-	a.applyToolCallDeltas(choice.Delta.ToolCalls)
+	a.applyToolCallDeltasWithHook(choice.Delta.ToolCalls, cfg.OnToolCallDelta)
 }
 
 // applyReasoningDelta handles the reasoning_content field from thinking models.
@@ -477,6 +485,14 @@ func (a *streamAccumulator) applyContentDelta(delta string, cfg *StreamingConfig
 
 // applyToolCallDeltas accumulates streamed tool-call fragments.
 func (a *streamAccumulator) applyToolCallDeltas(deltas []api.ToolCallDelta) {
+	a.applyToolCallDeltasWithHook(deltas, nil)
+}
+
+// applyToolCallDeltasWithHook is the streaming-aware variant. The hook is
+// called once per delta with the current accumulated function name (may be
+// empty in early deltas) and the argsDelta — useful for surfacing in-progress
+// tool calls to a UI.
+func (a *streamAccumulator) applyToolCallDeltasWithHook(deltas []api.ToolCallDelta, hook func(index int, name, argsDelta string)) {
 	for _, tcd := range deltas {
 		for len(a.toolCalls) <= tcd.Index {
 			a.toolCalls = append(a.toolCalls, api.ToolCall{})
@@ -487,6 +503,7 @@ func (a *streamAccumulator) applyToolCallDeltas(deltas []api.ToolCallDelta) {
 		if tcd.Type != "" {
 			a.toolCalls[tcd.Index].Type = tcd.Type
 		}
+		var argsDelta string
 		if tcd.Function != nil {
 			if tcd.Function.Name != "" {
 				a.toolCalls[tcd.Index].Function.Name = tcd.Function.Name
@@ -496,7 +513,11 @@ func (a *streamAccumulator) applyToolCallDeltas(deltas []api.ToolCallDelta) {
 					a.toolArgBuf[tcd.Index] = &strings.Builder{}
 				}
 				a.toolArgBuf[tcd.Index].WriteString(tcd.Function.Arguments)
+				argsDelta = tcd.Function.Arguments
 			}
+		}
+		if hook != nil && (tcd.Function != nil) && (tcd.Function.Name != "" || argsDelta != "") {
+			hook(tcd.Index, a.toolCalls[tcd.Index].Function.Name, argsDelta)
 		}
 	}
 }

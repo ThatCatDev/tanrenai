@@ -1,0 +1,1490 @@
+/* Tanrenai chat — editorial-forge aesthetic.
+ * Typography-led. Hairlines. One accent. No bubbles. */
+
+:root {
+  color-scheme: light dark;
+  --tn-rule: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  --tn-rule-strong: color-mix(in srgb, var(--vscode-foreground) 32%, transparent);
+  --tn-soft: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+  --tn-faint: color-mix(in srgb, var(--vscode-foreground) 38%, transparent);
+  --tn-accent: var(--vscode-textLink-activeForeground, var(--vscode-charts-blue));
+  --tn-accent-soft: color-mix(in srgb, var(--tn-accent) 22%, transparent);
+  --tn-warn: var(--vscode-charts-yellow);
+  --tn-warn-soft: color-mix(in srgb, var(--tn-warn) 14%, transparent);
+  --tn-err: var(--vscode-charts-red);
+  --tn-mono: var(--vscode-editor-font-family);
+  --tn-body: var(--vscode-font-family);
+  --tn-pad: 0.875rem;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  /* Important — prevents the whole document from scrolling, which would
+   * take the header with it. The inner .messages container is the only
+   * scrollable thing. */
+  overflow: hidden;
+}
+body {
+  font-family: var(--tn-body);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* Defensive: never let the root expand past the viewport. */
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* ── eyebrow / metadata typography ─────────────────────────── */
+
+.eyebrow,
+.role,
+.tool .name,
+.modes button,
+.activity-label,
+.approval-head,
+.approval-resolved-label,
+.tool details summary,
+.progress-log .line,
+.icon-btn,
+.tag {
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* ── header ────────────────────────────────────────────────── */
+
+.header {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem var(--tn-pad);
+  flex: 0 0 auto;
+  background: var(--vscode-sideBar-background);
+}
+.header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--tn-rule);
+}
+
+.header .mark {
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--vscode-foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.header .mark::before {
+  content: '';
+  width: 0.55em;
+  height: 0.55em;
+  background: var(--tn-accent);
+  display: inline-block;
+}
+
+.header .meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--tn-mono);
+  font-size: 10.5px;
+  color: var(--tn-soft);
+  letter-spacing: 0.04em;
+}
+.header .meta a {
+  color: var(--tn-soft);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--tn-faint);
+  padding-bottom: 1px;
+}
+.header .meta a:hover {
+  color: var(--vscode-foreground);
+  border-bottom-color: var(--tn-soft);
+}
+.header .meta .sep {
+  margin: 0 0.45em;
+  opacity: 0.6;
+}
+
+/* ── mode segmented control (not a pill — a typeset trio) ─── */
+
+.modes {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--tn-rule-strong);
+  background: transparent;
+  flex: 0 0 auto;
+}
+.modes button {
+  background: transparent;
+  color: var(--tn-soft);
+  border: none;
+  border-right: 1px solid var(--tn-rule);
+  padding: 0.28rem 0.55rem;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+.modes button:last-child {
+  border-right: none;
+}
+.modes button:hover {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+.modes button.active {
+  color: var(--vscode-button-foreground);
+  background: var(--tn-accent);
+}
+
+/* ── icon button (clear chat) ──────────────────────────────── */
+
+.icon-btn {
+  background: transparent;
+  border: 1px solid var(--tn-rule);
+  color: var(--tn-soft);
+  padding: 0.28rem 0.55rem;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+  font-size: 10px;
+}
+.icon-btn:hover {
+  color: var(--vscode-foreground);
+  border-color: var(--tn-rule-strong);
+}
+
+/* ── messages: editorial transcript layout ────────────────── */
+
+.messages-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-anchor: none;
+  padding: 0.5rem 0;
+  scrollbar-width: thin;
+}
+.messages::-webkit-scrollbar {
+  width: 8px;
+}
+.messages::-webkit-scrollbar-thumb {
+  background: var(--tn-rule);
+}
+.messages::-webkit-scrollbar-thumb:hover {
+  background: var(--tn-rule-strong);
+}
+
+.jump-to-latest {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 5;
+  font-family: var(--tn-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--vscode-sideBar-background);
+  color: var(--vscode-foreground);
+  border: 1px solid var(--tn-rule-strong);
+  padding: 0.32rem 0.65rem;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.jump-to-latest:hover {
+  border-color: var(--tn-accent);
+}
+
+.msg {
+  position: relative;
+  padding: 0.65rem var(--tn-pad);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.msg + .msg::before,
+.msg + .tool::before,
+.msg + .approval::before,
+.tool + .msg::before,
+.tool + .tool::before,
+.tool + .approval::before,
+.approval + .msg::before,
+.approval + .tool::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: var(--tn-pad);
+  right: var(--tn-pad);
+  height: 1px;
+  background: var(--tn-rule);
+  opacity: 0.6;
+}
+
+.role {
+  color: var(--tn-faint);
+  margin-bottom: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.msg.user .role {
+  color: var(--tn-accent);
+}
+.msg.user .body {
+  color: var(--vscode-foreground);
+}
+
+.msg.assistant {
+  /* identical structural treatment, only the role label distinguishes */
+}
+.msg.assistant .body {
+  color: var(--vscode-foreground);
+}
+
+.msg.reasoning {
+  /* "thinking" / reasoning trace — set quieter, italic */
+}
+.msg.reasoning .body {
+  color: var(--tn-soft);
+  font-style: italic;
+  font-size: 12.5px;
+}
+
+/* active streaming spine — animated 2px rule on the left */
+.msg.streaming::before {
+  content: '';
+  position: absolute;
+  top: 0.55rem;
+  bottom: 0.55rem;
+  left: calc(var(--tn-pad) - 0.55rem);
+  width: 2px;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--tn-accent) 30%,
+    var(--tn-accent) 70%,
+    transparent 100%
+  );
+  background-size: 100% 200%;
+  animation: tn-spine 1.6s ease-in-out infinite;
+}
+@keyframes tn-spine {
+  0%, 100% { background-position: 0 0; }
+  50% { background-position: 0 100%; }
+}
+
+/* caret at end of streaming content */
+.caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 1px;
+  background: currentColor;
+  vertical-align: -2px;
+  opacity: 0.6;
+  animation: tn-caret 1s steps(2) infinite;
+}
+@keyframes tn-caret {
+  to { opacity: 0; }
+}
+
+.pulse {
+  width: 5px;
+  height: 5px;
+  background: var(--tn-accent);
+  display: inline-block;
+  animation: tn-pulse 1.2s ease-in-out infinite;
+}
+@keyframes tn-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* ── tool entry: like a man page block ─────────────────────── */
+
+.tool {
+  position: relative;
+  margin: 0;
+  padding: 0.7rem var(--tn-pad) 0.7rem calc(var(--tn-pad) + 0.5rem);
+  font-family: var(--tn-body);
+  font-size: 12px;
+  border-left: 2px solid var(--tn-rule-strong);
+}
+.tool.running {
+  border-left-color: var(--tn-warn);
+}
+.tool.error {
+  border-left-color: var(--tn-err);
+}
+
+.tool .name {
+  color: var(--tn-faint);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.3rem;
+}
+.tool .name code {
+  font-family: var(--tn-mono);
+  font-size: 11.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--vscode-foreground);
+  background: transparent;
+  padding: 0;
+}
+.tool.running .name code {
+  color: var(--tn-warn);
+}
+.tool.error .name code {
+  color: var(--tn-err);
+}
+.tool .tag {
+  color: var(--tn-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+}
+
+.tool .args {
+  font-family: var(--tn-mono);
+  font-size: 11.5px;
+  color: var(--tn-soft);
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.tool details {
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--tn-rule);
+  padding-top: 0.4rem;
+}
+.tool details summary {
+  cursor: pointer;
+  color: var(--tn-faint);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.tool details summary::before {
+  content: '▸';
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 120ms ease;
+}
+.tool details[open] summary::before {
+  transform: rotate(90deg);
+}
+.tool details summary::-webkit-details-marker {
+  display: none;
+}
+.tool details .result {
+  margin-top: 0.4rem;
+  font-family: var(--tn-mono);
+  font-size: 11.5px;
+  color: var(--vscode-foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 0.4rem 0.55rem;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.tool-spinner {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: 0;
+  animation: tn-spin 0.9s linear infinite;
+  color: var(--tn-warn);
+}
+@keyframes tn-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── inline approval — typographic warning, no fill ────────── */
+
+.approval {
+  position: relative;
+  margin: 0;
+  padding: 0.85rem var(--tn-pad) 0.75rem calc(var(--tn-pad) + 0.5rem);
+  border-left: 2px solid var(--tn-warn);
+  background: var(--tn-warn-soft);
+}
+.approval.resolved {
+  border-left-color: var(--tn-rule-strong);
+  background: transparent;
+  opacity: 0.55;
+}
+.approval-head {
+  color: var(--tn-warn);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.45rem;
+}
+.approval-head .bracket {
+  opacity: 0.7;
+}
+.approval-title {
+  color: var(--vscode-foreground);
+  font-family: var(--tn-body);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  margin-left: 0.3rem;
+}
+.approval-title code {
+  font-family: var(--tn-mono);
+  font-size: 11.5px;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  padding: 0 0.35em;
+}
+.approval-args {
+  font-family: var(--tn-mono);
+  font-size: 11.5px;
+  color: var(--tn-soft);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 120px;
+  overflow-y: auto;
+  margin-bottom: 0.6rem;
+  line-height: 1.55;
+}
+.approval-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.approval-actions button {
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid;
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.approval-actions button:nth-child(1) {
+  /* allow once — primary */
+  color: var(--vscode-button-foreground);
+  background: var(--tn-accent);
+  border-color: var(--tn-accent);
+}
+.approval-actions button:nth-child(1):hover {
+  filter: brightness(1.1);
+}
+.approval-actions button:nth-child(2),
+.approval-actions button:nth-child(3) {
+  color: var(--tn-soft);
+  border-color: var(--tn-rule-strong);
+}
+.approval-actions button:nth-child(2):hover,
+.approval-actions button:nth-child(3):hover {
+  color: var(--vscode-foreground);
+  border-color: var(--tn-soft);
+}
+.approval-resolved-label {
+  color: var(--tn-faint);
+}
+
+/* ── activity bar: marching dashes, no rounded dots ────────── */
+
+.activity {
+  flex: 0 0 auto;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem var(--tn-pad);
+  background: var(--vscode-sideBar-background);
+  border-top: 1px solid var(--tn-rule);
+}
+.activity-dashes {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--tn-accent) 0,
+    var(--tn-accent) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  background-size: 16px 100%;
+  animation: tn-march 0.9s linear infinite;
+}
+@keyframes tn-march {
+  to { background-position: -16px 0; }
+}
+.activity-label {
+  color: var(--tn-soft);
+  letter-spacing: 0.1em;
+  font-size: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-iter {
+  color: var(--tn-faint);
+}
+
+/* ── selection attachments (chips above the textarea) ─────── */
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: stretch;
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--tn-rule-strong);
+  background: color-mix(in srgb, var(--tn-accent) 8%, transparent);
+  color: var(--vscode-foreground);
+  max-width: 100%;
+}
+.chip-label {
+  padding: 0.22rem 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.chip-glyph {
+  color: var(--tn-accent);
+  opacity: 0.7;
+}
+.chip-x {
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--tn-rule);
+  color: var(--tn-soft);
+  padding: 0 0.45rem;
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  font-family: var(--tn-mono);
+}
+.chip-x:hover {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.attach-btn {
+  font-size: 9.5px !important;
+  padding: 0.25rem 0.55rem !important;
+}
+
+.chip.image-chip {
+  padding: 0;
+  align-items: center;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+.chip-thumb {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  display: block;
+  border-right: 1px solid var(--tn-rule);
+}
+.chip.image-chip .chip-label {
+  padding: 0.22rem 0.5rem;
+}
+
+.input-row.drag-over {
+  outline: 1px dashed var(--tn-accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--tn-accent) 6%, transparent);
+}
+
+.selection-hint {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+  padding: 0.32rem 0.55rem;
+  background: transparent;
+  border: 1px dashed var(--tn-rule-strong);
+  color: var(--tn-soft);
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+.selection-hint:hover {
+  border-color: var(--tn-accent);
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--tn-accent) 8%, transparent);
+}
+.selection-hint-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--tn-accent);
+  flex: 0 0 auto;
+  animation: tn-pulse 1.6s ease-in-out infinite;
+}
+.selection-hint-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selection-hint-action {
+  flex: 0 0 auto;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tn-accent);
+}
+
+/* ── composer: integrated into the bottom rule ─────────────── */
+
+.input-row {
+  flex: 0 0 auto;
+  position: relative;
+  border-top: 1px solid var(--tn-rule);
+  padding: 0.65rem var(--tn-pad) 0.75rem;
+  background: var(--vscode-sideBar-background);
+}
+
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  border: 1px solid var(--tn-rule);
+  padding: 0.55rem 0.65rem;
+  font-family: var(--tn-body);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 2.6rem;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+textarea::placeholder {
+  color: var(--tn-faint);
+  font-style: italic;
+}
+textarea:focus {
+  border-color: var(--tn-accent);
+}
+
+.actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  align-items: center;
+}
+.actions .hint {
+  flex: 1 1 auto;
+  font-family: var(--tn-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tn-faint);
+  text-align: right;
+}
+
+button {
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--tn-accent);
+  color: var(--vscode-button-foreground);
+  border: 1px solid var(--tn-accent);
+  padding: 0.32rem 0.85rem;
+  cursor: pointer;
+  transition: filter 120ms ease, background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+button:hover {
+  filter: brightness(1.08);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  filter: none;
+}
+button.secondary {
+  background: transparent;
+  color: var(--tn-soft);
+  border-color: var(--tn-rule-strong);
+}
+button.secondary:hover {
+  color: var(--vscode-foreground);
+  border-color: var(--tn-soft);
+  filter: none;
+}
+
+/* ── status panel: for unconnected states ─────────────────── */
+
+.status-panel {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: 2.5rem 1.25rem;
+  text-align: center;
+}
+.status-panel .eyebrow {
+  color: var(--tn-faint);
+}
+.status-panel .label {
+  color: var(--vscode-foreground);
+  font-family: var(--tn-body);
+  font-size: 14px;
+  font-weight: normal;
+}
+.status-panel.error .label {
+  color: var(--tn-err);
+}
+.status-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.progress-log {
+  margin-top: 0.6rem;
+  width: 100%;
+  max-width: 28rem;
+  max-height: 220px;
+  overflow-y: auto;
+  text-align: left;
+  border-top: 1px solid var(--tn-rule);
+  border-bottom: 1px solid var(--tn-rule);
+  padding: 0.45rem 0;
+}
+.progress-log .line {
+  font-family: var(--tn-mono);
+  font-size: 10.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--tn-soft);
+  padding: 0.18rem 0.65rem;
+  white-space: pre-wrap;
+  border-left: 2px solid transparent;
+}
+.progress-log .line.warn {
+  color: var(--tn-warn);
+  border-left-color: var(--tn-warn);
+}
+.progress-log .line + .line {
+  border-top: 1px dotted var(--tn-rule);
+}
+
+/* spinner used in the connecting label */
+.spinner {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  margin-right: 0.45em;
+  animation: tn-spin 0.9s linear infinite;
+}
+
+/* ── footer rail (Copilot-style overflow menu) ────────────── */
+
+.footer {
+  flex: 0 0 auto;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem var(--tn-pad);
+  border-top: 1px solid var(--tn-rule);
+  background: var(--vscode-sideBar-background);
+}
+
+.footer-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--tn-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--tn-faint);
+}
+.footer-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--vscode-charts-green);
+  display: inline-block;
+}
+.footer-mode {
+  color: var(--tn-soft);
+}
+
+.footer-menu {
+  position: relative;
+}
+.footer-trigger {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--tn-soft);
+  padding: 0.1rem 0.55rem;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 0.2em;
+  text-transform: none;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+  font-family: var(--tn-mono);
+}
+.footer-trigger:hover {
+  color: var(--vscode-foreground);
+  border-color: var(--tn-rule);
+}
+
+.footer-menu-panel {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  right: 0;
+  min-width: 180px;
+  background: var(--vscode-menu-background, var(--vscode-sideBar-background));
+  border: 1px solid var(--tn-rule-strong);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem 0;
+}
+.footer-menu-panel button {
+  text-align: left;
+  font-family: var(--tn-body);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: none;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.footer-menu-panel button:hover {
+  background: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 6%, transparent));
+}
+.footer-menu-divider {
+  height: 1px;
+  background: var(--tn-rule);
+  margin: 0.25rem 0;
+}
+.footer-menu-panel button.menu-danger {
+  color: var(--tn-err);
+}
+.footer-menu-panel button.menu-danger:hover {
+  background: color-mix(in srgb, var(--tn-err) 12%, transparent);
+}
+
+/* ── narrow-sidebar adjustments ──────────────────────────── */
+
+@media (max-width: 320px) {
+  :root { --tn-pad: 0.65rem; }
+  .header {
+    grid-template-columns: auto 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 0.4rem 0.5rem;
+  }
+  .header .meta {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .modes {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+  }
+  .icon-btn {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .modes button {
+    padding: 0.25rem 0.4rem;
+  }
+}
+
+/* ── swarm activity card ─────────────────────────────────────────
+ *
+ * Mirrors the .approval / .tool aesthetic — left-accent rail + flat
+ * type, no boxed cards. Step list uses unicode glyphs for status so
+ * the colour layer is reserved for state (done = accent, error = err,
+ * running = warn) rather than decoration. */
+.swarm {
+  position: relative;
+  margin: 0;
+  padding: 0.75rem var(--tn-pad) 0.7rem calc(var(--tn-pad) + 0.5rem);
+  border-left: 2px solid var(--tn-accent);
+  background: color-mix(in srgb, var(--tn-accent) 6%, transparent);
+}
+.swarm-head {
+  color: var(--tn-accent);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.swarm-head .bracket {
+  opacity: 0.7;
+}
+.swarm-depth,
+.swarm-progress,
+.swarm-verify {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--tn-soft);
+  text-transform: none;
+}
+.swarm-verify {
+  color: var(--tn-warn);
+  margin-left: 0.4rem;
+}
+.swarm-architect {
+  margin-bottom: 0.5rem;
+  font-family: var(--tn-body);
+  font-size: 11.5px;
+}
+.swarm-architect summary {
+  cursor: pointer;
+  color: var(--tn-soft);
+  margin-bottom: 0.35rem;
+}
+.swarm-architect pre {
+  font-family: var(--tn-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  color: var(--tn-soft);
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  max-height: 140px;
+  overflow-y: auto;
+}
+.swarm-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.swarm-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-family: var(--tn-body);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.swarm-step-marker {
+  flex: 0 0 auto;
+  width: 1em;
+  font-family: var(--tn-mono);
+  color: var(--tn-faint);
+  text-align: center;
+}
+.swarm-step.running .swarm-step-marker {
+  color: var(--tn-warn);
+  /* Slow pulse so the user sees which step is "now" without it being
+   * a distracting flicker on long-running workers. */
+  animation: swarm-pulse 1.4s ease-in-out infinite;
+}
+.swarm-step.done .swarm-step-marker {
+  color: var(--tn-accent);
+}
+.swarm-step.error .swarm-step-marker {
+  color: var(--tn-err);
+}
+.swarm-step-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.swarm-step-desc {
+  color: var(--vscode-foreground);
+}
+.swarm-step.done .swarm-step-desc {
+  color: var(--tn-soft);
+}
+.swarm-step-result {
+  color: var(--tn-soft);
+  font-size: 11.5px;
+}
+.swarm-step-error {
+  color: var(--tn-err);
+  font-size: 11.5px;
+}
+
+@keyframes swarm-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+/* ── markdown rendering ──────────────────────────────────────────
+ *
+ * Assistant content + reasoning come through marked → HTML and land
+ * inside `.body.markdown`. Styles here keep the type rhythm consistent
+ * with the rest of the chat aesthetic — no boxed cards, tight vertical
+ * spacing, VS Code theme variables for code/quote backgrounds so
+ * dark/light themes both look right. */
+
+.body.markdown > *:first-child {
+  margin-top: 0;
+}
+.body.markdown > *:last-child {
+  margin-bottom: 0;
+}
+.body.markdown p {
+  margin: 0 0 0.55em;
+}
+.body.markdown h1,
+.body.markdown h2,
+.body.markdown h3,
+.body.markdown h4 {
+  margin: 0.9em 0 0.4em;
+  font-family: var(--tn-body);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.body.markdown h1 { font-size: 1.15em; }
+.body.markdown h2 { font-size: 1.08em; }
+.body.markdown h3 { font-size: 1.0em; color: var(--tn-soft); }
+.body.markdown h4 { font-size: 0.95em; color: var(--tn-soft); }
+
+.body.markdown ul,
+.body.markdown ol {
+  margin: 0.2em 0 0.45em;
+  padding-left: 1.4em;
+}
+.body.markdown li {
+  margin-bottom: 0;
+}
+/* Loose lists: `marked` wraps each <li>'s text in a <p>. Without
+ * resetting the <p> margins, the cumulative spacing (li + p + nested
+ * ul) produced the airy layout we kept hitting. Reset to zero and
+ * only keep inter-paragraph spacing when an <li> genuinely has
+ * multiple paragraphs (rare in chat). */
+.body.markdown li > p {
+  margin: 0;
+}
+.body.markdown li > p + p {
+  margin-top: 0.3em;
+}
+/* Nested lists inside a list item — tight against the parent item's
+ * paragraph; the indentation alone signals the hierarchy. */
+.body.markdown li > ul,
+.body.markdown li > ol {
+  margin: 0.1em 0 0.25em;
+}
+
+.body.markdown a {
+  color: var(--tn-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.body.markdown a:hover {
+  filter: brightness(1.15);
+}
+
+.body.markdown strong {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+.body.markdown em {
+  font-style: italic;
+}
+
+/* Inline code — same monospace family as code blocks, faint background
+ * so it stands out from prose without screaming. */
+.body.markdown code {
+  font-family: var(--tn-mono);
+  font-size: 0.92em;
+  padding: 0.05em 0.35em;
+  background: var(--vscode-textCodeBlock-background, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+  border-radius: 2px;
+  /* Don't let inline code break the line in weird places — long
+   * identifiers (file paths, urls) wrap as a unit. */
+  word-break: break-word;
+}
+
+/* Code blocks (fenced ``` or indented). marked wraps in <pre><code>;
+ * we style the <pre> so padding/scroll work even when code has no
+ * embedded newlines (one long line scrolls horizontally instead of
+ * forcing the chat column wider). */
+.body.markdown pre {
+  margin: 0.5em 0 0.7em;
+  padding: 0.7rem 0.85rem;
+  background: var(--vscode-textCodeBlock-background, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+  border-left: 2px solid var(--tn-rule-strong);
+  border-radius: 0;
+  overflow-x: auto;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.body.markdown pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+  /* Block-level code — no width clamp, no wrap, no break. The <pre>
+   * handles scrolling. */
+  word-break: normal;
+  white-space: pre;
+}
+
+.body.markdown blockquote {
+  margin: 0.5em 0;
+  padding: 0.1em 0.85em;
+  border-left: 2px solid var(--tn-rule-strong);
+  color: var(--tn-soft);
+  background: var(--vscode-textBlockQuote-background, transparent);
+}
+
+.body.markdown hr {
+  border: none;
+  border-top: 1px solid var(--tn-rule);
+  margin: 1em 0;
+}
+
+.body.markdown table {
+  border-collapse: collapse;
+  margin: 0.5em 0 0.7em;
+  font-size: 11.5px;
+}
+.body.markdown th,
+.body.markdown td {
+  border-bottom: 1px solid var(--tn-rule);
+  padding: 0.3em 0.7em;
+  text-align: left;
+}
+.body.markdown th {
+  font-weight: 600;
+  color: var(--tn-soft);
+}
+
+/* ── swarm dock ──────────────────────────────────────────────────
+ *
+ * Compact always-visible status pinned above the composer. Shows
+ * progress + current step in one row; click to expand the full step
+ * list overlay. The full SwarmActivityCard still lives in the chat
+ * as historical record. */
+
+.swarm-dock {
+  border-top: 1px solid var(--tn-rule);
+  border-bottom: 1px solid var(--tn-rule);
+  background: color-mix(in srgb, var(--tn-accent) 4%, transparent);
+  /* No outer padding — the inner button handles its own */
+}
+.swarm-dock.running {
+  background: color-mix(in srgb, var(--tn-warn) 7%, transparent);
+}
+.swarm-dock.done {
+  background: color-mix(in srgb, var(--tn-accent) 6%, transparent);
+}
+.swarm-dock-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.5rem var(--tn-pad);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font: 11.5px var(--tn-body);
+  color: var(--tn-soft);
+}
+.swarm-dock-summary:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+.swarm-dock-marker {
+  flex: 0 0 auto;
+  font-family: var(--tn-mono);
+  color: var(--tn-faint);
+}
+.swarm-dock.running .swarm-dock-marker {
+  color: var(--tn-warn);
+  animation: swarm-pulse 1.4s ease-in-out infinite;
+}
+.swarm-dock.done .swarm-dock-marker {
+  color: var(--tn-accent);
+}
+.swarm-dock-count {
+  font-family: var(--tn-mono);
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  /* Fixed-ish width so the rest of the row doesn't jump as numbers
+   * change. ch units track digit width nicely. */
+  min-width: 2.6ch;
+}
+.swarm-dock-depth {
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  color: var(--tn-faint);
+}
+.swarm-dock-current {
+  /* This is the biggest visual chunk; let it ellipsize so long step
+   * descriptions don't force horizontal scroll on a narrow sidebar. */
+  flex: 1 1 0;
+  display: flex;
+  gap: 0.4rem;
+  min-width: 0;
+  align-items: baseline;
+}
+.swarm-dock-verb {
+  font-family: var(--tn-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--tn-faint);
+}
+.swarm-dock.running .swarm-dock-verb {
+  color: var(--tn-warn);
+}
+.swarm-dock.done .swarm-dock-verb {
+  color: var(--tn-accent);
+}
+.swarm-dock-desc {
+  color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Slight nudge so the verb baseline reads naturally next to the
+   * smaller-caps verb text. */
+  font-size: 11.5px;
+}
+.swarm-dock-verify {
+  color: var(--tn-warn);
+  font-family: var(--tn-mono);
+  font-size: 10px;
+}
+.swarm-dock-toggle {
+  flex: 0 0 auto;
+  color: var(--tn-faint);
+  font-size: 10px;
+}
+
+.swarm-dock-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0.1rem var(--tn-pad) 0.55rem calc(var(--tn-pad) + 0.15rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border-top: 1px solid var(--tn-rule);
+  /* Cap the expanded list height so a 20-step plan doesn't push the
+   * composer off screen on a short sidebar. Internal scroll instead. */
+  max-height: 220px;
+  overflow-y: auto;
+}
+.swarm-dock-step {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-family: var(--tn-body);
+  font-size: 11.5px;
+  color: var(--tn-soft);
+  line-height: 1.4;
+}
+.swarm-dock-step.is-current {
+  color: var(--vscode-foreground);
+}
+.swarm-dock-step.done {
+  color: var(--tn-soft);
+}
+.swarm-dock-step.error {
+  color: var(--tn-err);
+}
+.swarm-dock-step-marker {
+  flex: 0 0 auto;
+  width: 1em;
+  font-family: var(--tn-mono);
+  color: var(--tn-faint);
+  text-align: center;
+}
+.swarm-dock-step.running .swarm-dock-step-marker {
+  color: var(--tn-warn);
+}
+.swarm-dock-step.done .swarm-dock-step-marker {
+  color: var(--tn-accent);
+}
+.swarm-dock-step.error .swarm-dock-step-marker {
+  color: var(--tn-err);
+}
+.swarm-dock-step-desc {
+  flex: 1 1 auto;
+  /* Wrap long step descriptions in the expanded list — the collapsed
+   * row ellipsizes, but the expanded one should let users read the
+   * full text. */
+  word-break: break-word;
+}
+
+/* ── swarm dock — ancestor breadcrumb ───────────────────────────
+ *
+ * When the active swarm is a sub-decomposition (depth > 0), surface
+ * the parent depths above the main summary so the user keeps the
+ * "outer plan" in view rather than losing context every time the
+ * agent drills into a step. */
+
+.swarm-dock-breadcrumb {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem var(--tn-pad) 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  border-bottom: 1px dashed var(--tn-rule);
+  font: 10.5px var(--tn-body);
+  color: var(--tn-soft);
+}
+.swarm-dock-crumb {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.swarm-dock-crumb-depth {
+  font-family: var(--tn-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tn-faint);
+  flex: 0 0 auto;
+}
+.swarm-dock-crumb-count {
+  font-family: var(--tn-mono);
+  font-size: 10px;
+  color: var(--vscode-foreground);
+  flex: 0 0 auto;
+  min-width: 2.6ch;
+}
+.swarm-dock-crumb-step {
+  /* The parent step description — truncate hard so the breadcrumb
+   * stays single-line even on a narrow sidebar. The title attribute
+   * keeps the full text accessible on hover. */
+  color: var(--tn-soft);
+  font-size: 11px;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── swarm dock — clickable breadcrumb ─────────────────────────── */
+
+.swarm-dock-crumb {
+  /* Wrapper resets — actual styling lives on the inner button so
+   * keyboard focus and click affordance are unambiguous. */
+  margin: 0;
+  padding: 0;
+}
+.swarm-dock-crumb-btn {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0.05rem 0;
+  text-align: left;
+  color: inherit;
+  /* Inherit the breadcrumb's font sizing rather than the user-agent
+   * button default. */
+  font: inherit;
+}
+.swarm-dock-crumb-btn:hover {
+  color: var(--vscode-foreground);
+}
+.swarm-dock-crumb-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.swarm-dock-crumb.is-focused .swarm-dock-crumb-btn {
+  /* Pinned ancestor — gets a visible left rail so users know which
+   * depth's steps the body is showing. */
+  background: color-mix(in srgb, var(--tn-accent) 10%, transparent);
+  box-shadow: inset 2px 0 0 var(--tn-accent);
+  padding-left: 0.35rem;
+}
+.swarm-dock-crumb.is-focused .swarm-dock-crumb-depth {
+  color: var(--tn-accent);
+}
+
+/* When the dock is pinned to an ancestor (rather than live-following
+ * the deepest swarm), tint the whole dock to make the state legible
+ * and the "return to live" affordance obvious. */
+.swarm-dock.pinned {
+  background: color-mix(in srgb, var(--tn-accent) 9%, transparent);
+}
+.swarm-dock.pinned .swarm-dock-verb {
+  color: var(--tn-accent);
+}
