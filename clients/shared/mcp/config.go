@@ -128,17 +128,67 @@ func loadProjectConfig(workspace string) (Config, error) {
 	if workspace == "" {
 		return Config{}, nil
 	}
-	return loadFile(filepath.Join(workspace, ".tanrenai", "mcp.json"))
+	return loadFile(ProjectConfigPath(workspace))
 }
 
 func loadUserConfig() (Config, error) {
-	dir, err := userConfigDir()
+	path, err := UserConfigPath()
 	if err != nil {
 		// No HOME → no user config. Not an error worth blocking start;
 		// the agent simply won't have user-scoped MCP servers.
 		return Config{}, nil
 	}
-	return loadFile(filepath.Join(dir, "tanrenai", "mcp.json"))
+	return loadFile(path)
+}
+
+// ProjectConfigPath returns the canonical project-scoped mcp.json path
+// for a given workspace root. Surface for the `tanrenai mcp` CLI
+// subcommands which need to read AND write the same file the agent
+// reads at session startup.
+func ProjectConfigPath(workspace string) string {
+	return filepath.Join(workspace, ".tanrenai", "mcp.json")
+}
+
+// UserConfigPath returns the per-user mcp.json path. Errors only when
+// the platform doesn't expose a user-config dir (rare; e.g. no HOME
+// set).
+func UserConfigPath() (string, error) {
+	dir, err := userConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "tanrenai", "mcp.json"), nil
+}
+
+// LoadFile reads + parses one config file at an explicit path. Exposed
+// for CLI subcommands that operate on a single scope (project OR user)
+// rather than the merged view Load returns. A missing file returns an
+// empty config without error so `tanrenai mcp add` works on a fresh
+// project where no file exists yet.
+func LoadFile(path string) (Config, error) {
+	return loadFile(path)
+}
+
+// SaveFile writes a config to disk, creating the parent directory if
+// needed. Uses 0o644 so committed project configs are readable to the
+// team; user config inherits the same mode (still under HOME, fine).
+func SaveFile(path string, cfg Config) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	// Marshal with two-space indent — these files are meant to be
+	// hand-editable and reviewable in git, not minified.
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	// Trailing newline so the file plays nicely with editors that
+	// auto-strip end-of-file whitespace.
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // userConfigDir returns the platform's per-user config directory.
