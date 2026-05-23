@@ -65,6 +65,25 @@ func (pm *ProcessManager) Start(command string) (*ManagedProcess, error) {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 	}
 
+	// Put the child in its own process group so Kill (via Cancel below)
+	// can SIGKILL the whole tree. Without this, `sh -c "sleep 60"` leaks
+	// `sleep` after `sh` is killed — and worse, `cmd.Wait` blocks
+	// forever because the grandchild still holds our stdout/stderr FDs.
+	// Configured in a per-OS file (procattr_unix.go / procattr_windows.go).
+	setProcessGroup(cmd)
+
+	// Override the default context-cancel behaviour (SIGKILL the immediate
+	// child) with one that signals the whole process group. Falls back
+	// silently when the platform doesn't expose a PGID.
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
+	// Belt and braces: if the kill races with pipe FD inheritance, give
+	// cmd.Wait a hard 5-second ceiling before it force-closes the
+	// stdio pipes. Without this, a stuck grandchild can hang Wait()
+	// indefinitely (the original "process did not exit after kill" CI
+	// flake had nothing to do with kill latency — it was Wait blocking
+	// on FDs the grandchild still held).
+	cmd.WaitDelay = 5 * time.Second
+
 	buf := NewRingBuffer(maxShellOutput) // 64KB
 	cmd.Stdout = buf
 	cmd.Stderr = buf

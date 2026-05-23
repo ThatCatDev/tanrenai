@@ -82,10 +82,10 @@ func TestProcessManager_Kill(t *testing.T) {
 
 	select {
 	case <-pm.Done(p.ID):
-	// On a contended CI runner the kernel can take several seconds to
-	// reap a killed process; 2s used to flake on shared/tools CI runs.
-	// Generous timeout — local runs finish in <50ms anyway.
-	case <-time.After(10 * time.Second):
+	case <-time.After(8 * time.Second):
+		// cmd.WaitDelay (set in process_manager.go) caps Wait at 5s
+		// after the kill — give the goroutine a few extra seconds of
+		// scheduler grace before declaring a real hang.
 		t.Fatal("process did not exit after kill")
 	}
 
