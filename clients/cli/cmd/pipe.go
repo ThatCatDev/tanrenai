@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,23 +23,221 @@ import (
 
 const pipeDelimiter = "---END---"
 
-// pipeStatus writes a bracketed status line to stderr.
-func pipeStatus(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(os.Stderr, "[%s]\n", msg)
+// pipeEmitter abstracts how a pipe-mode session reports turn events.
+// `textEmitter` reproduces the original human-friendly format
+// (assistant content on stdout, bracketed status on stderr, ---END--- between
+// turns); `jsonEmitter` writes one JSONL event per line on stdout and routes
+// every status/log line to stderr so stdout stays parseable. This is the seam
+// programmatic hosts (IDE plugins, agent runners, CI scripts) hook into to
+// consume turn output without parsing free-form text.
+type pipeEmitter interface {
+	TextDelta(text string)
+	ReasoningDelta(text string)
+	ToolCall(call api.ToolCall)
+	ToolResult(call api.ToolCall, result *tools.ToolResult)
+	Iteration(current, max int)
+	Status(format string, args ...any)
+	Error(err error)
+	GenRate(tokens int, tps float64)
+	TurnEnd(reason string)
 }
 
-// emitPipeGenRateSummary prints a one-line generation-rate summary to
-// stderr at the end of each turn, e.g. `[gen: 192 tokens, 42 t/s]`. Silent
-// when fewer than two tokens streamed — one sample can't yield a rate, and
-// the line would just be noise for non-generation turns (e.g. tool-only).
-func emitPipeGenRateSummary() {
-	tokens, tps := pipeGenRate.Snapshot()
+// newPipeEmitter selects an emitter based on the --format flag value.
+// Unknown values default to text mode (parseRunParams already rejects them at
+// flag-parse time, so this is just a defensive fallback).
+func newPipeEmitter(format string) pipeEmitter {
+	if format == "json" {
+		return &jsonEmitter{}
+	}
+	return &textEmitter{}
+}
+
+// ── text emitter (original behavior) ────────────────────────────────────
+
+// textEmitter is the human-facing pipe output: assistant content streams to
+// stdout, every other signal (tool calls, reasoning, status, errors) goes to
+// stderr inside `[bracketed]` tags, and turns are separated by `---END---`
+// on its own line in stdout.
+type textEmitter struct{}
+
+func (textEmitter) TextDelta(text string) {
+	os.Stdout.WriteString(text)
+}
+
+func (textEmitter) ReasoningDelta(text string) {
+	fmt.Fprintf(os.Stderr, "[reasoning] %s\n", text)
+}
+
+func (textEmitter) ToolCall(call api.ToolCall) {
+	args := call.Function.Arguments
+	if len(args) > 200 {
+		args = args[:200] + "..."
+	}
+	fmt.Fprintf(os.Stderr, "[tool_call: %s: %s]\n", call.Function.Name, args)
+}
+
+func (textEmitter) ToolResult(call api.ToolCall, result *tools.ToolResult) {
+	tag := "tool_result"
+	if result.IsError {
+		tag = "tool_result_error"
+	}
+	preview := strings.TrimSpace(result.Output)
+	if len(preview) > 200 {
+		preview = preview[:200] + "..."
+	}
+	fmt.Fprintf(os.Stderr, "[%s: %s: %s]\n", tag, call.Function.Name, preview)
+}
+
+func (textEmitter) Iteration(current, max int) {
+	if max > 0 {
+		fmt.Fprintf(os.Stderr, "[iteration %d/%d]\n", current, max)
+	} else {
+		fmt.Fprintf(os.Stderr, "[iteration %d]\n", current)
+	}
+}
+
+func (textEmitter) Status(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "[%s]\n", fmt.Sprintf(format, args...))
+}
+
+func (textEmitter) Error(err error) {
+	fmt.Fprintf(os.Stderr, "[error: %v]\n", err)
+}
+
+func (textEmitter) GenRate(tokens int, tps float64) {
 	if tps <= 0 {
 		return
 	}
-	pipeStatus("gen: %d tokens, %.1f t/s", tokens, tps)
+	fmt.Fprintf(os.Stderr, "[gen: %d tokens, %.1f t/s]\n", tokens, tps)
 }
+
+func (textEmitter) TurnEnd(_ string) {
+	fmt.Fprintln(os.Stdout, pipeDelimiter)
+}
+
+// ── json emitter ────────────────────────────────────────────────────────
+
+// jsonEmitter writes JSONL events to stdout (one event per line), keeping the
+// stream cleanly parseable for programmatic hosts. The protocol intentionally
+// mirrors the canonical events OD's `json-event-stream` parser already
+// translates for other adapters (Codex, Gemini, OpenCode, Cursor) so the
+// daemon-side translator stays small.
+//
+// Wire shape (all events have a `type` discriminator):
+//
+//	{"type":"text_delta","delta":"..."}
+//	{"type":"reasoning_delta","delta":"..."}
+//	{"type":"tool_call","id":"<id>","name":"<tool>","arguments":<any>}
+//	{"type":"tool_result","tool_call_id":"<id>","output":"...","is_error":false}
+//	{"type":"iteration","current":<n>,"max":<n|0 for unlimited>}
+//	{"type":"status","label":"thinking"}
+//	{"type":"gen_rate","tokens":<n>,"tps":<f>}
+//	{"type":"error","message":"..."}
+//	{"type":"turn_end","reason":"stop"}
+//
+// `turn_end` is the load-bearing signal: hosts treat it as the unambiguous
+// "this turn is complete, you may submit the next user message" boundary,
+// independent of process lifetime. (Text mode uses the `---END---` line
+// for the same purpose, but stdin closure / EOF is the only termination
+// signal the host can trust there.)
+type jsonEmitter struct{}
+
+// emit writes one JSONL line to stdout. Marshal failures fall back to a
+// stringified `error` event so the host always sees *something* parseable —
+// silently dropping events would let a malformed tool output stall the run.
+func (jsonEmitter) emit(event any) {
+	b, err := json.Marshal(event)
+	if err != nil {
+		fallback, _ := json.Marshal(map[string]any{
+			"type":    "error",
+			"message": fmt.Sprintf("json marshal failed: %v", err),
+		})
+		_, _ = os.Stdout.Write(fallback)
+		_, _ = os.Stdout.Write([]byte("\n"))
+		return
+	}
+	_, _ = os.Stdout.Write(b)
+	_, _ = os.Stdout.Write([]byte("\n"))
+}
+
+func (e jsonEmitter) TextDelta(text string) {
+	e.emit(map[string]any{"type": "text_delta", "delta": text})
+}
+
+func (e jsonEmitter) ReasoningDelta(text string) {
+	e.emit(map[string]any{"type": "reasoning_delta", "delta": text})
+}
+
+func (e jsonEmitter) ToolCall(call api.ToolCall) {
+	// Tanrenai's `api.ToolCall.Function.Arguments` is the raw JSON string the
+	// model emitted. Parse it so the host receives a structured value
+	// (matches Codex/OpenCode shapes); fall back to the raw string if the
+	// model emitted invalid JSON so the host still sees the attempt.
+	var args any
+	if call.Function.Arguments != "" {
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			args = call.Function.Arguments
+		}
+	}
+	e.emit(map[string]any{
+		"type":      "tool_call",
+		"id":        call.ID,
+		"name":      call.Function.Name,
+		"arguments": args,
+	})
+}
+
+func (e jsonEmitter) ToolResult(call api.ToolCall, result *tools.ToolResult) {
+	e.emit(map[string]any{
+		"type":         "tool_result",
+		"tool_call_id": call.ID,
+		"name":         call.Function.Name,
+		"output":       result.Output,
+		"is_error":     result.IsError,
+	})
+}
+
+func (e jsonEmitter) Iteration(current, max int) {
+	e.emit(map[string]any{
+		"type":    "iteration",
+		"current": current,
+		"max":     max,
+	})
+}
+
+func (e jsonEmitter) Status(format string, args ...any) {
+	e.emit(map[string]any{
+		"type":  "status",
+		"label": fmt.Sprintf(format, args...),
+	})
+}
+
+func (e jsonEmitter) Error(err error) {
+	e.emit(map[string]any{
+		"type":    "error",
+		"message": err.Error(),
+	})
+}
+
+func (e jsonEmitter) GenRate(tokens int, tps float64) {
+	if tps <= 0 {
+		return
+	}
+	e.emit(map[string]any{
+		"type":   "gen_rate",
+		"tokens": tokens,
+		"tps":    tps,
+	})
+}
+
+func (e jsonEmitter) TurnEnd(reason string) {
+	if reason == "" {
+		reason = "stop"
+	}
+	e.emit(map[string]any{"type": "turn_end", "reason": reason})
+}
+
+// ── pipe entry point ────────────────────────────────────────────────────
 
 // startPipe is the entry point for non-interactive pipe mode.
 func startPipe(ctx context.Context, p runParams) error {
@@ -54,7 +253,19 @@ func startPipe(ctx context.Context, p runParams) error {
 		slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	}
 
-	log := &startupLog{tui: nil} // prints to stdout/stderr
+	// In JSON mode, startupLog's default behaviour (Info → stdout) would
+	// corrupt the JSONL stream with "Loading model X...", "Local GPU server
+	// ready", etc. Route every startup line to stderr instead so stdout
+	// remains pure JSON from the very first byte.
+	var log *startupLog
+	if p.pipeFormat == "json" {
+		log = &startupLog{emit: func(level, msg string) {
+			fmt.Fprintf(os.Stderr, "%s\n", msg)
+		}}
+	} else {
+		log = &startupLog{tui: nil} // text-mode default: stdout/stderr
+	}
+
 	deps, err := setupSession(ctx, p, log)
 	if err != nil {
 		return err
@@ -70,6 +281,7 @@ func startPipe(ctx context.Context, p runParams) error {
 func runPipeLoop(ctx context.Context, deps *sessionDeps) error {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+	em := newPipeEmitter(deps.pipeFormat)
 
 	for {
 		input, eof := readPipeMessage(scanner)
@@ -84,12 +296,19 @@ func runPipeLoop(ctx context.Context, deps *sessionDeps) error {
 			continue
 		}
 
-		if err := runPipeTurn(ctx, deps, input); err != nil {
-			pipeStatus("error: %v", err)
+		turnErr := runPipeTurn(ctx, deps, em, input)
+		if turnErr != nil {
+			em.Error(turnErr)
 		}
 
-		// Signal turn complete.
-		fmt.Fprintln(os.Stdout, pipeDelimiter)
+		// Signal turn complete — text mode prints ---END---, json mode
+		// emits {"type":"turn_end"}. Either way the host gets an
+		// unambiguous boundary it can wait on.
+		reason := "stop"
+		if turnErr != nil {
+			reason = "error"
+		}
+		em.TurnEnd(reason)
 
 		if eof {
 			return nil
@@ -114,14 +333,17 @@ func readPipeMessage(scanner *bufio.Scanner) (string, bool) {
 
 // pipeGenRate is the per-process generation-rate tracker for pipe mode.
 // Shared by both runPipeSimpleTurn and the agent/swarm configs so the
-// summary line at the end of each turn covers whichever path ran. Reset
-// per turn in runPipeTurn before dispatching to the path.
+// summary emission at the end of each turn covers whichever path ran.
+// Reset per turn in runPipeTurn before dispatching to the path.
 var pipeGenRate = &apiclient.TokenRateTracker{}
 
 // runPipeTurn executes a single user turn through the agent or chat path.
-func runPipeTurn(ctx context.Context, deps *sessionDeps, input string) error {
+func runPipeTurn(ctx context.Context, deps *sessionDeps, em pipeEmitter, input string) error {
 	pipeGenRate.Reset()
-	defer emitPipeGenRateSummary()
+	defer func() {
+		tokens, tps := pipeGenRate.Snapshot()
+		em.GenRate(tokens, tps)
+	}()
 
 	deps.mgr.Append(api.Message{Role: "user", Content: input})
 
@@ -137,7 +359,7 @@ func runPipeTurn(ctx context.Context, deps *sessionDeps, input string) error {
 				names = append(names, s.Name)
 			}
 			deps.mgr.SetScrolls(scrollMsgs)
-			fmt.Fprintf(os.Stderr, "[scrolls] matched: %s\n", strings.Join(names, ", "))
+			em.Status("scrolls matched: %s", strings.Join(names, ", "))
 		} else {
 			deps.mgr.ClearScrolls()
 		}
@@ -169,16 +391,16 @@ func runPipeTurn(ctx context.Context, deps *sessionDeps, input string) error {
 	windowedMsgs := deps.mgr.Messages()
 
 	if !deps.agentMode {
-		return runPipeSimpleTurn(ctx, deps, windowedMsgs)
+		return runPipeSimpleTurn(ctx, deps, em, windowedMsgs)
 	}
 
 	var result []api.Message
 	var err error
 	if deps.swarmMode {
-		cfg := buildPipeSwarmConfig(deps)
+		cfg := buildPipeSwarmConfig(deps, em)
 		result, err = agent.RunSwarm(ctx, deps.streamFn, windowedMsgs, cfg)
 	} else {
-		cfg := buildPipeAgentConfig(deps)
+		cfg := buildPipeAgentConfig(deps, em)
 		result, err = agent.RunPlannedStreaming(ctx, deps.streamFn, windowedMsgs, cfg)
 	}
 	if err != nil {
@@ -195,22 +417,41 @@ func runPipeTurn(ctx context.Context, deps *sessionDeps, input string) error {
 	return nil
 }
 
-// buildPipeAgentConfig wires agent hooks to stdout/stderr for pipe mode.
-func buildPipeAgentConfig(deps *sessionDeps) agent.PlanAgentConfig {
+// buildPipeAgentConfig wires agent hooks to the supplied emitter.
+//
+// In text mode the emitter is `textEmitter`, which reproduces the original
+// stdout/stderr split (assistant content → stdout, everything else → stderr,
+// XML-filtered through `contentFilt`, reasoning buffered until sentence
+// boundaries). In JSON mode the emitter is `jsonEmitter`, which flushes
+// every delta directly as a JSONL event with no buffering — programmatic
+// consumers want raw token-level events and will assemble their own UX.
+func buildPipeAgentConfig(deps *sessionDeps, em pipeEmitter) agent.PlanAgentConfig {
+	jsonMode := deps.pipeFormat == "json"
+
+	// Text mode keeps an XML filter on assistant content and buffers
+	// reasoning until a sentence boundary so the stderr output reads as
+	// prose rather than per-token spam. JSON consumers expect raw deltas,
+	// so those buffers are skipped entirely there.
 	var contentFilt xmlFilter
 	var reasoningBuf strings.Builder
 
 	flushReasoning := func() {
+		if jsonMode {
+			return
+		}
 		if reasoningBuf.Len() > 0 {
-			fmt.Fprintf(os.Stderr, "[reasoning] %s\n", strings.TrimSpace(reasoningBuf.String()))
+			em.ReasoningDelta(strings.TrimSpace(reasoningBuf.String()))
 			reasoningBuf.Reset()
 		}
 	}
 
 	flushContent := func() {
 		flushReasoning()
+		if jsonMode {
+			return
+		}
 		if contentFilt.len() > 0 {
-			os.Stdout.WriteString(contentFilt.string())
+			em.TextDelta(contentFilt.string())
 		}
 	}
 
@@ -224,22 +465,10 @@ func buildPipeAgentConfig(deps *sessionDeps) agent.PlanAgentConfig {
 				Hooks: agent.Hooks{
 					OnToolCall: func(call api.ToolCall) {
 						flushContent()
-						args := call.Function.Arguments
-						if len(args) > 200 {
-							args = args[:200] + "..."
-						}
-						pipeStatus("tool_call: %s: %s", call.Function.Name, args)
+						em.ToolCall(call)
 					},
 					OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
-						tag := "tool_result"
-						if result.IsError {
-							tag = "tool_result_error"
-						}
-						preview := strings.TrimSpace(result.Output)
-						if len(preview) > 200 {
-							preview = preview[:200] + "..."
-						}
-						pipeStatus("%s: %s: %s", tag, call.Function.Name, preview)
+						em.ToolResult(call, result)
 					},
 					OnToolApproval: func(call api.ToolCall) agent.ApprovalAction {
 						return agent.ApprovalAllow
@@ -249,67 +478,71 @@ func buildPipeAgentConfig(deps *sessionDeps) agent.PlanAgentConfig {
 			},
 			OnIterationStart: func(iteration, maxIter int, messages []api.Message) {
 				flushContent()
-				if maxIter > 0 {
-					pipeStatus("iteration %d/%d", iteration+1, maxIter)
-				} else {
-					pipeStatus("iteration %d", iteration+1)
-				}
+				em.Iteration(iteration+1, maxIter)
 			},
 			OnContentDelta: func(delta string) {
 				pipeGenRate.Record()
+				if jsonMode {
+					em.TextDelta(delta)
+					return
+				}
 				contentFilt.write(delta)
 				if text := contentFilt.string(); text != "" {
-					os.Stdout.WriteString(text)
+					em.TextDelta(text)
 				}
 			},
 			OnReasoningDelta: func(delta string) {
 				pipeGenRate.Record()
-				// Accumulate reasoning tokens; flush on sentence boundaries.
+				if jsonMode {
+					em.ReasoningDelta(delta)
+					return
+				}
 				reasoningBuf.WriteString(delta)
 				if strings.ContainsAny(delta, ".\n") && reasoningBuf.Len() > 40 {
-					fmt.Fprintf(os.Stderr, "[reasoning] %s\n", strings.TrimSpace(reasoningBuf.String()))
+					em.ReasoningDelta(strings.TrimSpace(reasoningBuf.String()))
 					reasoningBuf.Reset()
 				}
 			},
 			OnThinking: func() {
-				pipeStatus("thinking")
+				em.Status("thinking")
 			},
 			OnThinkingDone: func() {
 				flushReasoning()
-				pipeStatus("generating")
+				em.Status("generating")
 			},
 		},
 		OnPlanningStart: func() {
-			pipeStatus("planning")
+			em.Status("planning")
 		},
 		OnPlanGenerated: func(plan *agent.Plan) {
 			for _, step := range plan.Steps {
-				pipeStatus("plan_step %d: %s", step.Index, step.Description)
+				em.Status("plan_step %d: %s", step.Index, step.Description)
 			}
 		},
 		OnStepStart: func(stepIdx int, step *agent.PlanStep) {
 			flushContent()
-			pipeStatus("step_start %d: %s", step.Index, step.Description)
+			em.Status("step_start %d: %s", step.Index, step.Description)
 		},
 		OnStepDone: func(stepIdx int, step *agent.PlanStep) {
 			flushContent()
-			pipeStatus("step_done %d: %s", step.Index, step.Status.String())
+			em.Status("step_done %d: %s", step.Index, step.Status.String())
 		},
 		OnReplan: func(reason string, newPlan *agent.Plan) {
-			pipeStatus("replan: %s", reason)
+			em.Status("replan: %s", reason)
 			for _, step := range newPlan.Steps {
-				pipeStatus("plan_step %d: %s", step.Index, step.Description)
+				em.Status("plan_step %d: %s", step.Index, step.Description)
 			}
 		},
 		OnSynthesize: func() {
 			flushContent()
-			pipeStatus("synthesizing")
+			em.Status("synthesizing")
 		},
 	}
 }
 
 // runPipeSimpleTurn handles a non-agent (plain chat) streaming turn.
-func runPipeSimpleTurn(ctx context.Context, deps *sessionDeps, messages []api.Message) error {
+func runPipeSimpleTurn(ctx context.Context, deps *sessionDeps, em pipeEmitter, messages []api.Message) error {
+	jsonMode := deps.pipeFormat == "json"
 	req := &api.ChatCompletionRequest{
 		Model:    deps.modelName,
 		Messages: messages,
@@ -321,11 +554,11 @@ func runPipeSimpleTurn(ctx context.Context, deps *sessionDeps, messages []api.Me
 	}
 
 	content, err := streamSimpleChat(events, chatStreamHooks{
-		OnThinking:     func() { pipeStatus("thinking") },
-		OnThinkingDone: func() { pipeStatus("generating") },
+		OnThinking:     func() { em.Status("thinking") },
+		OnThinkingDone: func() { em.Status("generating") },
 		OnContentDelta: func(delta string) {
 			pipeGenRate.Record()
-			os.Stdout.WriteString(delta)
+			em.TextDelta(delta)
 		},
 	})
 	if err != nil {
@@ -334,7 +567,10 @@ func runPipeSimpleTurn(ctx context.Context, deps *sessionDeps, messages []api.Me
 
 	if content != "" {
 		deps.mgr.Append(api.Message{Role: "assistant", Content: content})
-		if !strings.HasSuffix(content, "\n") {
+		if !jsonMode && !strings.HasSuffix(content, "\n") {
+			// Text mode: ensure the assistant message ends with a newline so
+			// the next ---END--- delimiter line stands on its own. JSON mode
+			// has no such requirement — turn_end is its own event.
 			fmt.Fprintln(os.Stdout)
 		}
 	}
@@ -380,22 +616,32 @@ func persistPipeMemory(ctx context.Context, deps *sessionDeps, newMsgs []api.Mes
 	}
 }
 
-// buildPipeSwarmConfig wires swarm hooks to stderr for pipe mode.
-func buildPipeSwarmConfig(deps *sessionDeps) agent.SwarmConfig {
+// buildPipeSwarmConfig wires swarm hooks to the supplied emitter, mirroring
+// `buildPipeAgentConfig` for the orchestrator/worker swarm path. The same
+// jsonMode branches apply: text mode buffers reasoning + filters content,
+// JSON mode flushes deltas raw.
+func buildPipeSwarmConfig(deps *sessionDeps, em pipeEmitter) agent.SwarmConfig {
+	jsonMode := deps.pipeFormat == "json"
 	var contentFilt xmlFilter
 	var reasoningBuf strings.Builder
 
 	flushReasoning := func() {
+		if jsonMode {
+			return
+		}
 		if reasoningBuf.Len() > 0 {
-			fmt.Fprintf(os.Stderr, "[reasoning] %s\n", strings.TrimSpace(reasoningBuf.String()))
+			em.ReasoningDelta(strings.TrimSpace(reasoningBuf.String()))
 			reasoningBuf.Reset()
 		}
 	}
 
 	flushContent := func() {
 		flushReasoning()
+		if jsonMode {
+			return
+		}
 		if contentFilt.len() > 0 {
-			os.Stdout.WriteString(contentFilt.string())
+			em.TextDelta(contentFilt.string())
 		}
 	}
 
@@ -418,22 +664,10 @@ func buildPipeSwarmConfig(deps *sessionDeps) agent.SwarmConfig {
 				Hooks: agent.Hooks{
 					OnToolCall: func(call api.ToolCall) {
 						flushContent()
-						args := call.Function.Arguments
-						if len(args) > 200 {
-							args = args[:200] + "..."
-						}
-						pipeStatus("tool_call: %s: %s", call.Function.Name, args)
+						em.ToolCall(call)
 					},
 					OnToolResult: func(call api.ToolCall, result *tools.ToolResult) {
-						tag := "tool_result"
-						if result.IsError {
-							tag = "tool_result_error"
-						}
-						preview := strings.TrimSpace(result.Output)
-						if len(preview) > 200 {
-							preview = preview[:200] + "..."
-						}
-						pipeStatus("%s: %s: %s", tag, call.Function.Name, preview)
+						em.ToolResult(call, result)
 					},
 					OnToolApproval: func(call api.ToolCall) agent.ApprovalAction {
 						return agent.ApprovalAllow
@@ -446,48 +680,56 @@ func buildPipeSwarmConfig(deps *sessionDeps) agent.SwarmConfig {
 			},
 			OnContentDelta: func(delta string) {
 				pipeGenRate.Record()
+				if jsonMode {
+					em.TextDelta(delta)
+					return
+				}
 				contentFilt.write(delta)
 				if text := contentFilt.string(); text != "" {
-					os.Stdout.WriteString(text)
+					em.TextDelta(text)
 				}
 			},
 			OnReasoningDelta: func(delta string) {
 				pipeGenRate.Record()
+				if jsonMode {
+					em.ReasoningDelta(delta)
+					return
+				}
 				reasoningBuf.WriteString(delta)
 				if strings.ContainsAny(delta, ".\n") && reasoningBuf.Len() > 40 {
-					fmt.Fprintf(os.Stderr, "[reasoning] %s\n", strings.TrimSpace(reasoningBuf.String()))
+					em.ReasoningDelta(strings.TrimSpace(reasoningBuf.String()))
 					reasoningBuf.Reset()
 				}
 			},
 			OnThinking: func() {
-				pipeStatus("thinking")
+				em.Status("thinking")
 			},
 			OnThinkingDone: func() {
 				flushReasoning()
-				pipeStatus("generating")
+				em.Status("generating")
 			},
 		},
 		WorkerTools:   workerTools,
 		ArchitectFile: filepath.Join(".tanrenai", "architect.md"),
 		OnArchitectSpec: func(depth int, spec string) {
-			pipeStatus("swarm_architect d=%d: %s", depth, strings.ReplaceAll(strings.TrimSpace(spec), "\n", " | "))
+			em.Status("swarm_architect d=%d: %s", depth, strings.ReplaceAll(strings.TrimSpace(spec), "\n", " | "))
 		},
 		OnPlanGenerated: func(depth int, plan *agent.Plan) {
 			for _, step := range plan.Steps {
-				pipeStatus("swarm_plan d=%d: %d. %s", depth, step.Index, step.Description)
+				em.Status("swarm_plan d=%d: %d. %s", depth, step.Index, step.Description)
 			}
 		},
 		OnWorkerStart: func(depth, stepIdx int, step *agent.PlanStep) {
 			flushContent()
-			pipeStatus("swarm_worker_start d=%d %d: %s", depth, step.Index, step.Description)
+			em.Status("swarm_worker_start d=%d %d: %s", depth, step.Index, step.Description)
 		},
 		OnWorkerDone: func(depth, stepIdx int, step *agent.PlanStep) {
 			flushContent()
-			pipeStatus("swarm_worker_done d=%d %d: %s", depth, step.Index, step.Status.String())
+			em.Status("swarm_worker_done d=%d %d: %s", depth, step.Index, step.Status.String())
 		},
 		OnVerifyStart: func() {
 			flushContent()
-			pipeStatus("swarm_verify")
+			em.Status("swarm_verify")
 		},
 	}
 }
