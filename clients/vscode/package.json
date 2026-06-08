@@ -4,6 +4,24 @@
   "description": "Agentic coding assistant — runs the Tanrenai agent inside VS Code",
   "version": "0.1.0",
   "publisher": "ThatCatDev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ThatCatDev/tanrenai.git",
+    "directory": "clients/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/ThatCatDev/tanrenai/issues"
+  },
+  "homepage": "https://github.com/ThatCatDev/tanrenai/tree/main/clients/vscode#readme",
+  "keywords": [
+    "ai",
+    "agent",
+    "coding assistant",
+    "llm",
+    "chat",
+    "copilot",
+    "tanrenai"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
