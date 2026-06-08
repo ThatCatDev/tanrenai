@@ -27,8 +27,6 @@ import { dispatchTool, interceptedToolNames } from './tools/registry';
 import { ApproveEditOpts } from './tools/types';
 import { showModelPicker } from './ui/modelPicker';
 
-const DEFAULT_MODEL = 'Qwen3.6-35B-A3B-UD-Q4_K_M';
-
 type Mode = 'chat' | 'agent' | 'swarm';
 
 type TranscriptEntry =
@@ -226,7 +224,10 @@ export class Controller implements ChatViewListener {
 
     try {
       const ready = await rpc.start({
-        model: settings.model,
+        // Hosted deployments serve their own configured model (GPU_MODEL).
+        // Send empty so the platform supplies it; the real model name comes
+        // back in `ready.model`. Clients no longer choose the model.
+        model: '',
         agentMode: this.mode !== 'chat',
         swarmMode: this.mode === 'swarm',
         interceptedTools: INTERCEPTED_TOOLS,
@@ -668,30 +669,9 @@ export class Controller implements ChatViewListener {
    * Stored in globalState so we never ask twice.
    */
   private async maybeShowFirstRunModelPicker(): Promise<void> {
-    const KEY = 'tanrenai.firstRunModelPickerShown';
-    if (this.context.globalState.get<boolean>(KEY)) {
-      return;
-    }
-    const cfg = vscode.workspace.getConfiguration('tanrenai');
-    const inspected = cfg.inspect<string>('model');
-    const userOverridden =
-      (inspected?.globalValue !== undefined && inspected.globalValue !== '') ||
-      (inspected?.workspaceValue !== undefined && inspected.workspaceValue !== '') ||
-      (inspected?.workspaceFolderValue !== undefined && inspected.workspaceFolderValue !== '');
-    if (userOverridden) {
-      await this.context.globalState.update(KEY, true);
-
-      return;
-    }
-    const choice = await vscode.window.showInformationMessage(
-      `Tanrenai: about to load ${DEFAULT_MODEL}. Pick a different model first?`,
-      'Pick Model',
-      'Use Default',
-    );
-    await this.context.globalState.update(KEY, true);
-    if (choice === 'Pick Model') {
-      await this.pickModel();
-    }
+    // No-op: hosted deployments serve a fixed model (GPU_MODEL), so the user
+    // doesn't pick one. Kept (rather than removing the call site) so the
+    // activation flow and tests stay stable.
   }
 
   /**

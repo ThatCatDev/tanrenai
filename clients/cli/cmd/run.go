@@ -212,19 +212,44 @@ func parseRunParams(cmd *cobra.Command, model string) (runParams, error) {
 }
 
 var runCmd = &cobra.Command{
-	Use:   "run <model>",
-	Short: "Load a model and start an interactive chat",
-	Args:  cobra.ExactArgs(1),
+	Use:   "run [model]",
+	Short: "Start an interactive chat",
+	Long: "Start an interactive chat.\n\n" +
+		"Hosted (default when logged in): the model is the service's — just run `tanrenai run`.\n" +
+		"Local (--local): pass a model to run on your own machine, e.g. `tanrenai run <model> --local`.",
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		p, err := parseRunParams(cmd, args[0])
+		model := ""
+		if len(args) > 0 {
+			model = args[0]
+		}
+		p, err := parseRunParams(cmd, model)
 		if err != nil {
 			return err
 		}
+
+		// Hosted sessions use the service's configured model; local sessions
+		// need one. Treat as remote when logged in and not forced local.
+		_, credErr := loadCredentials()
+		remote := !p.local && credErr == nil
+		if remote && p.model != "" {
+			fmt.Fprintf(os.Stderr, "Note: the hosted service runs its own model — ignoring %q. Just run `tanrenai run`.\n", p.model)
+			p.model = ""
+		}
+		if !remote && p.model == "" {
+			return fmt.Errorf("a model is required to run locally:\n  tanrenai run <model> --local")
+		}
+
+		display := p.model
+		if display == "" {
+			display = "hosted model"
+		}
+
 		pipeMode, _ := cmd.Flags().GetBool("pipe")
 		if pipeMode {
 			return startPipe(cmd.Context(), p)
 		}
-		return startTUI(p.model, func(t *tuiApp, log *startupLog) error {
+		return startTUI(display, func(t *tuiApp, log *startupLog) error {
 			deps, err := setupSession(cmd.Context(), p, log)
 			if err != nil {
 				return err
