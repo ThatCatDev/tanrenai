@@ -45,3 +45,4 @@ __pycache__/
 coverage.out
 *.test
 platform/docker/.env
+.tanrenai/

@@ -91,9 +91,27 @@ func platformGet(path string) (map[string]any, error) {
 	_ = json.Unmarshal(body, &result)
 
 	if resp.StatusCode != http.StatusOK {
-		return result, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+		return result, platformError(resp.StatusCode, result, body)
 	}
 	return result, nil
+}
+
+// platformError turns a non-2xx API response into a human-readable error. It
+// surfaces the server's "message" field and special-cases the plan gate so the
+// user is pointed at activation instead of seeing a raw 403.
+func platformError(status int, result map[string]any, raw []byte) error {
+	code, _ := result["error"].(string)
+	msg, _ := result["message"].(string)
+	if code == "no_plan" {
+		if msg == "" {
+			msg = "You don't have an active plan."
+		}
+		return fmt.Errorf("%s\nRedeem an invite code with:  tanrenai activate <code>", msg)
+	}
+	if msg != "" {
+		return fmt.Errorf("%s (status %d)", msg, status)
+	}
+	return fmt.Errorf("server returned %d: %s", status, string(raw))
 }
 
 func platformPost(path string, body io.Reader) (map[string]any, error) {
@@ -123,7 +141,7 @@ func platformPost(path string, body io.Reader) (map[string]any, error) {
 	_ = json.Unmarshal(respBody, &result)
 
 	if resp.StatusCode != http.StatusOK {
-		return result, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
+		return result, platformError(resp.StatusCode, result, respBody)
 	}
 	return result, nil
 }
