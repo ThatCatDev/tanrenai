@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -64,14 +65,19 @@ var loginCmd = &cobra.Command{
 
 			if errParam := q.Get("error"); errParam != "" {
 				desc := q.Get("error_description")
-				http.Error(w, "login failed: "+errParam+" "+desc, http.StatusBadRequest)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(cliAuthPage("Sign-in failed", strings.TrimSpace(errParam+" "+desc), true)))
 				resultCh <- result{err: fmt.Errorf("login failed: %s %s", errParam, desc)}
 				return
 			}
 
 			access := q.Get("access_token")
 			if access == "" {
-				http.Error(w, "missing access_token", http.StatusBadRequest)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(cliAuthPage("Sign-in failed",
+					"The callback didn't include an access token. Please run the login again.", true)))
 				resultCh <- result{err: fmt.Errorf("callback missing access_token")}
 				return
 			}
@@ -91,10 +97,8 @@ var loginCmd = &cobra.Command{
 			}
 
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(`<!doctype html><meta charset=utf-8>
-<title>tanrenai CLI login</title>
-<body style="font-family:system-ui;padding:3rem;background:#0f1419;color:#e6e6e6">
-<h2>Signed in.</h2><p>You can close this tab.</p></body>`))
+			_, _ = w.Write([]byte(cliAuthPage("Signed in",
+				"Your CLI session is ready — you can close this tab and return to the terminal.", false)))
 
 			resultCh <- result{
 				accessToken:  access,
@@ -184,3 +188,55 @@ func openBrowser(u string) error {
 	}
 	return nil
 }
+
+// cliAuthPage renders the standalone page the browser lands on after the CLI
+// auth handoff, styled to match the web app's design system (same palette,
+// Inter, card on a dark surface). Self-contained — no network assets required.
+func cliAuthPage(title, message string, isError bool) string {
+	badgeBG, badgeFG, icon := "rgba(0,180,160,.12)", "#00b4a0", cliCheckIcon
+	if isError {
+		badgeBG, badgeFG, icon = "rgba(255,71,87,.12)", "#ff4757", cliXIcon
+	}
+	return strings.NewReplacer(
+		"{{BADGE_BG}}", badgeBG,
+		"{{BADGE_FG}}", badgeFG,
+		"{{ICON}}", icon,
+		"{{TITLE}}", html.EscapeString(title),
+		"{{MESSAGE}}", html.EscapeString(message),
+	).Replace(cliAuthPageTmpl)
+}
+
+const (
+	cliCheckIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`
+	cliXIcon     = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>`
+)
+
+const cliAuthPageTmpl = `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tanrenai CLI</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{display:grid;place-items:center;min-height:100vh;background:#0e0f11;color:#e4e5e7;
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .card{max-width:420px;margin:1.5rem;padding:2.5rem 2rem;text-align:center;
+    background:#16171a;border:1px solid #252830;border-radius:8px}
+  .badge{width:56px;height:56px;margin:0 auto 1.25rem;border-radius:50%;
+    display:grid;place-items:center;background:{{BADGE_BG}};color:{{BADGE_FG}}}
+  .badge svg{width:28px;height:28px}
+  h1{margin:0 0 .5rem;font-size:1.25rem;font-weight:600;letter-spacing:-.01em}
+  p{margin:0;color:#717780;font-size:.875rem;line-height:1.55}
+  .mark{margin-top:1.5rem;font-family:'JetBrains Mono',ui-monospace,monospace;
+    font-size:.75rem;letter-spacing:.12em;color:#00b4a0}
+</style></head>
+<body>
+  <div class="card">
+    <div class="badge">{{ICON}}</div>
+    <h1>{{TITLE}}</h1>
+    <p>{{MESSAGE}}</p>
+    <div class="mark">tanrenai</div>
+  </div>
+</body></html>`
