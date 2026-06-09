@@ -23,6 +23,12 @@ const midTurnHighWater = 0.85
 // everything older as a summary.
 const midTurnTargetRatio = 0.35
 
+// manualKeepHistory is the number of trailing history messages that
+// SummarizeNow leaves untouched — the user clicked "Compact now" because
+// they want to keep working, so the most recent few exchanges stay in
+// plain view and only the older portion folds into the summary.
+const manualKeepHistory = 4
+
 // CompletionFunc sends a chat completion request and returns the response.
 type CompletionFunc func(ctx context.Context, req *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error)
 
@@ -142,6 +148,87 @@ func (m *Manager) Summarize(ctx context.Context, complete CompletionFunc) error 
 	m.history = m.history[cutoff:]
 
 	return nil
+}
+
+// SummarizeNow is the manual-compaction entry point. Unlike Summarize() it
+// does NOT gate on NeedsSummary() — the user clicked "Compact now"
+// deliberately and expects a fold to happen even when the context window
+// has plenty of headroom. It keeps the last manualKeepHistory messages
+// intact (so the immediate exchange the user is still working on stays
+// visible to the model) and folds everything older into m.summary. Returns
+// (folded, err) where folded is 0 when there isn't enough history to fold
+// — the caller can use that to render "Nothing to compact" instead of a
+// misleading "Compacted 0 messages".
+func (m *Manager) SummarizeNow(ctx context.Context, complete CompletionFunc) (int, error) {
+	if len(m.history) <= manualKeepHistory {
+		return 0, nil
+	}
+
+	cutoff := len(m.history) - manualKeepHistory
+	// Don't sever a tool_call/tool-result pair: walk the cutoff forward
+	// past any tool messages so the kept history still has its matching
+	// assistant tool_calls at the front.
+	for cutoff < len(m.history) && m.history[cutoff].Role == "tool" {
+		cutoff++
+	}
+	if cutoff >= len(m.history) {
+		return 0, nil
+	}
+
+	toSummarize := m.history[:cutoff]
+
+	// Cap summarization input at half the context window, same as
+	// Summarize(), so a very long history doesn't blow the per-request
+	// budget while building the summary prompt itself.
+	maxSummarizeTokens := m.cfg.CtxSize / 2
+	summarizeTokens := 0
+	startIdx := 0
+	for i := len(toSummarize) - 1; i >= 0; i-- {
+		t := m.estimator.EstimateMessages([]api.Message{toSummarize[i]})
+		if summarizeTokens+t > maxSummarizeTokens {
+			startIdx = i + 1
+
+			break
+		}
+		summarizeTokens += t
+	}
+	toSummarize = toSummarize[startIdx:]
+	if len(toSummarize) == 0 {
+		return 0, nil
+	}
+
+	summaryMsgs := []api.Message{{Role: "system", Content: summarizationPrompt}}
+	if m.summary != "" {
+		summaryMsgs = append(summaryMsgs, api.Message{
+			Role:    "user",
+			Content: fmt.Sprintf("Previous summary:\n%s", m.summary),
+		})
+	}
+	var msgText string
+	for _, sm := range toSummarize {
+		msgText += fmt.Sprintf("[%s", sm.Role)
+		if sm.Name != "" {
+			msgText += fmt.Sprintf("/%s", sm.Name)
+		}
+		msgText += fmt.Sprintf("] %s\n", sm.Content)
+	}
+	summaryMsgs = append(summaryMsgs, api.Message{
+		Role:    "user",
+		Content: fmt.Sprintf("Conversation to summarize:\n%s", msgText),
+	})
+
+	resp, err := complete(ctx, &api.ChatCompletionRequest{Messages: summaryMsgs, Stream: false})
+	if err != nil {
+		return 0, fmt.Errorf("manual summarization failed: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return 0, fmt.Errorf("empty manual summarization response")
+	}
+
+	m.summary = resp.Choices[0].Message.Content
+	m.history = m.history[cutoff:]
+
+	return len(toSummarize), nil
 }
 
 // NeedsMidTurnCompact returns true when an in-flight agent-loop messages

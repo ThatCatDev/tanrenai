@@ -411,7 +411,7 @@ func TestRPCServer_SummariseWithEvents_EmitsStartAndDone(t *testing.T) {
 	if !mgr.NeedsSummary() {
 		t.Fatal("test setup didn't fill the budget; adjust the seed messages")
 	}
-	if err := srv.summariseWithEvents(context.Background(), mgr, complete); err != nil {
+	if err := srv.summariseWithEvents(context.Background(), mgr, complete, false); err != nil {
 		t.Fatalf("summariseWithEvents: %v", err)
 	}
 
@@ -465,7 +465,7 @@ func TestRPCServer_SummariseWithEvents_EmitsNoopWhenNothingToCompact(t *testing.
 		return &api.ChatCompletionResponse{}, nil
 	})
 
-	if err := srv.summariseWithEvents(context.Background(), mgr, complete); err != nil {
+	if err := srv.summariseWithEvents(context.Background(), mgr, complete, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if called {
@@ -501,7 +501,7 @@ func TestRPCServer_SummariseWithEvents_EmitsErrorPhase(t *testing.T) {
 		return nil, errors.New("backend down")
 	})
 
-	err := srv.summariseWithEvents(context.Background(), mgr, complete)
+	err := srv.summariseWithEvents(context.Background(), mgr, complete, false)
 	if err == nil {
 		t.Fatal("expected error to propagate")
 	}

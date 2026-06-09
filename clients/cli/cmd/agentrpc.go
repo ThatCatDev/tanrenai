@@ -569,21 +569,43 @@ func (s *rpcServer) maybeCompactInFlight(ctx context.Context, mgr *chatctx.Manag
 	return rewritten
 }
 
-// summariseWithEvents runs mgr.Summarize() bracketed by compaction events
-// so the extension can show a banner + an inline transcript row. Returns
-// the underlying error from Summarize (already reported via "error" phase).
+// summariseWithEvents runs a compaction bracketed by compaction events so
+// the extension can show a banner + an inline transcript row. `force`
+// controls which compaction path runs:
 //
-// If Summarize is a no-op — either NeedsSummary() returned false or the
-// inner cutoff calculation found nothing to evict — we emit phase="noop"
-// instead of "done" so the UI can say "Nothing to compact" rather than
-// the misleading "Compacted 0 messages into summary".
-func (s *rpcServer) summariseWithEvents(ctx context.Context, mgr *chatctx.Manager, complete agent.CompletionFunc) error {
+//   - force=false (the pre-turn auto-call): gates on NeedsSummary() — if
+//     there's nothing pressing against the budget, we emit "noop" and
+//     skip the LLM round-trip entirely.
+//   - force=true (the manual "Compact now" button): always attempts to
+//     fold via SummarizeNow, which keeps the last few messages intact
+//     but doesn't require the context to be near its limit. Only emits
+//     "noop" when history is too short to fold (≤ manualKeepHistory
+//     messages), so clicking the button on a brand-new session still
+//     gives an honest "nothing to compact" instead of doing nothing.
+func (s *rpcServer) summariseWithEvents(ctx context.Context, mgr *chatctx.Manager, complete agent.CompletionFunc, force bool) error {
 	if mgr == nil {
 		return nil
 	}
-	// Skip the start banner when there's plainly nothing to do — clicking
-	// "Compact now" on an empty session should be instant-feedback "nope"
-	// instead of a flash of banner/spinner.
+	if force {
+		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "start"})
+		folded, err := mgr.SummarizeNow(ctx, chatctx.CompletionFunc(complete))
+		if err != nil {
+			_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "error", Error: err.Error()})
+
+			return err
+		}
+		if folded == 0 {
+			_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "noop"})
+
+			return nil
+		}
+		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "done", Messages: folded})
+
+		return nil
+	}
+	// Skip the start banner when there's plainly nothing to do — the
+	// pre-turn auto-call shouldn't flash a banner that immediately
+	// resolves to "noop" on every turn.
 	if !mgr.NeedsSummary() {
 		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "noop"})
 
@@ -1112,7 +1134,7 @@ func runRPCTurn(ctx context.Context, deps *sessionDeps, srv *rpcServer, input st
 	}
 
 	if deps.mgr.NeedsSummary() {
-		_ = srv.summariseWithEvents(ctx, deps.mgr, deps.completeFn)
+		_ = srv.summariseWithEvents(ctx, deps.mgr, deps.completeFn, false)
 	}
 
 	windowedMsgs := deps.mgr.Messages()
@@ -1470,7 +1492,7 @@ func handleCompactRequest(ctx context.Context, srv *rpcServer, deps *sessionDeps
 
 		return
 	}
-	if err := srv.summariseWithEvents(ctx, deps.mgr, deps.completeFn); err != nil {
+	if err := srv.summariseWithEvents(ctx, deps.mgr, deps.completeFn, true); err != nil {
 		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "compact", OK: false, Error: err.Error()})
 
 		return
