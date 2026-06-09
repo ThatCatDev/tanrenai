@@ -784,9 +784,9 @@ func runAgentRPC(ctx context.Context) error {
 	if init.ProtocolVersion != AgentRPCProtocolVersion {
 		return fmt.Errorf("agent-rpc: protocol version mismatch (extension=%d, cli=%d) — update both", init.ProtocolVersion, AgentRPCProtocolVersion)
 	}
-	if init.Model == "" {
-		return errors.New("agent-rpc: init.model is required")
-	}
+	// init.Model may be empty — the hosted platform picks GPU_MODEL and
+	// returns the resolved name on /api/load. deps.modelName below carries
+	// the resolved name back into the ready handshake.
 
 	// Honour workspaceRoot so relative paths in tool args resolve correctly.
 	// `setupSession` will create `.tanrenai/` in the resulting cwd.
@@ -845,8 +845,14 @@ func runAgentRPC(ctx context.Context) error {
 		}
 	}
 
-	// Send ready with the tool catalogue.
-	if err := srv.write(buildReadyMsg(deps, init.Model)); err != nil {
+	// Send ready with the tool catalogue. Use the model name resolved by
+	// setupSession — for hosted sessions init.Model is empty and the real
+	// name only lands once /api/load returns the platform-picked GPU_MODEL.
+	readyModel := deps.modelName
+	if readyModel == "" {
+		readyModel = init.Model
+	}
+	if err := srv.write(buildReadyMsg(deps, readyModel)); err != nil {
 		return err
 	}
 
