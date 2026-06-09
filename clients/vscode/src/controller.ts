@@ -19,6 +19,16 @@ import {
   SwarmWorkerStartMsg,
   SwarmWorkerDoneMsg,
   SwarmVerifyMsg,
+  ContextUsageMsg,
+  CompactionMsg,
+  ContextFilesMsg,
+  MemoryListReplyMsg,
+  MemorySearchReplyMsg,
+  ScrollsListReplyMsg,
+  ScrollReplyMsg,
+  AckMsg,
+  InboundMsg,
+  OutboundMsg,
 } from './rpc/messages';
 import { ProposedContentProvider } from './diff/proposedProvider';
 import * as platform from './platform';
@@ -87,6 +97,11 @@ export class Controller implements ChatViewListener {
   // the inline approval card for a proposed file change.
   private pendingEditApprovals = new Map<string, () => void>();
   private pendingEditDenials = new Map<string, () => void>();
+  // Pending GUI-op replies, keyed by the requestId we sent. Resolved
+  // when the matching reply envelope (or ack) lands. Cleaned up on
+  // disconnect to keep the map from leaking across reconnects.
+  private pendingReplies = new Map<string, (msg: InboundMsg) => void>();
+  private nextRequestId = 1;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -188,6 +203,17 @@ export class Controller implements ChatViewListener {
     rpc.on('turn_done', (m: TurnDoneMsg) => this.handleTurnDone(m));
     rpc.on('iteration_start', () => this.handleIterationStart());
     rpc.on('token_rate', (m: TokenRateMsg) => this.handleTokenRate(m));
+    rpc.on('context_usage', (m: ContextUsageMsg) => this.handleContextUsage(m));
+    rpc.on('compaction', (m: CompactionMsg) => this.handleCompaction(m));
+    // Reply envelopes for GUI ops — dispatched to pending requests.
+    rpc.on('context_files', (m: ContextFilesMsg) => this.resolveReply(m.requestId, m));
+    rpc.on('memory_list_reply', (m: MemoryListReplyMsg) => this.resolveReply(m.requestId, m));
+    rpc.on('memory_search_reply', (m: MemorySearchReplyMsg) =>
+      this.resolveReply(m.requestId, m),
+    );
+    rpc.on('scrolls_list_reply', (m: ScrollsListReplyMsg) => this.resolveReply(m.requestId, m));
+    rpc.on('scroll_reply', (m: ScrollReplyMsg) => this.resolveReply(m.requestId, m));
+    rpc.on('ack', (m: AckMsg) => this.resolveReply(m.requestId, m));
     rpc.on('swarm_architect', (m: SwarmArchitectMsg) =>
       this.view.send({ type: 'swarm_architect', depth: m.depth, spec: m.spec }),
     );
@@ -282,6 +308,9 @@ export class Controller implements ChatViewListener {
     this.openReasoningId = undefined;
     this.progressLines = [];
     this.transcript = [];
+    // Drop pending GUI-op promises — letting them hang past a disconnect
+    // would leave QuickPicks spinning forever.
+    this.pendingReplies.clear();
   }
 
   // ── ChatViewListener ──────────────────────────────────────────────
@@ -561,6 +590,239 @@ export class Controller implements ChatViewListener {
     } catch (err) {
       const message = (err as Error).message;
       void vscode.window.showErrorMessage(`Tanrenai: status failed — ${message}`);
+    }
+  }
+
+  // ── GUI parity for /compact, /context, /memory, /scrolls ──────────
+  // Each opens a native VS Code quick-pick / input-box flow on the
+  // extension host. We deliberately avoid building React panels for these
+  // — the user wanted "GUI somehow", and native chrome both feels at home
+  // in VS Code and is far less code to maintain than custom webview UI.
+
+  async onCompactNow(): Promise<void> {
+    if (!this.rpc) {
+      void vscode.window.showWarningMessage('Tanrenai: not connected.');
+
+      return;
+    }
+    if (this.turnRunning) {
+      void vscode.window.showWarningMessage(
+        'Tanrenai: wait for the current turn to finish before compacting.',
+      );
+
+      return;
+    }
+    try {
+      const requestId = this.newRequestId('compact');
+      const ack = await this.requestReply<AckMsg>({ type: 'compact_request', requestId });
+      if (!ack.ok) {
+        void vscode.window.showErrorMessage(`Tanrenai: compact failed — ${ack.error ?? 'unknown'}`);
+      }
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Tanrenai: compact failed — ${(err as Error).message}`);
+    }
+  }
+
+  async onContextFilesOpen(): Promise<void> {
+    if (!this.rpc) {
+      void vscode.window.showWarningMessage('Tanrenai: not connected.');
+
+      return;
+    }
+    try {
+      const requestId = this.newRequestId('ctx_list');
+      const reply = await this.requestReply<ContextFilesMsg>({
+        type: 'context_list',
+        requestId,
+      });
+      const items: vscode.QuickPickItem[] = [
+        { label: '$(add) Add file…', description: 'Pin a file into the context window' },
+      ];
+      if (reply.files.length > 0) {
+        items.push(
+          { label: 'Loaded files', kind: vscode.QuickPickItemKind.Separator },
+          ...reply.files.map((f) => ({ label: f, description: 'pinned' })),
+          { label: '', kind: vscode.QuickPickItemKind.Separator },
+          { label: '$(trash) Clear all', description: 'Remove every pinned context file' },
+        );
+      }
+      const picked = await vscode.window.showQuickPick(items, {
+        title: `Tanrenai context files (${reply.files.length})`,
+        matchOnDescription: true,
+      });
+      if (!picked) return;
+      if (picked.label === '$(add) Add file…') {
+        const uri = await vscode.window.showOpenDialog({
+          canSelectFiles: true,
+          canSelectFolders: false,
+          canSelectMany: false,
+          openLabel: 'Pin into context',
+        });
+        if (!uri || uri.length === 0) return;
+        const reqId = this.newRequestId('ctx_add');
+        const ack = await this.requestReply<AckMsg>({
+          type: 'context_add',
+          requestId: reqId,
+          path: uri[0].fsPath,
+        });
+        if (!ack.ok) {
+          void vscode.window.showErrorMessage(`Tanrenai: add failed — ${ack.error ?? 'unknown'}`);
+        }
+      } else if (picked.label === '$(trash) Clear all') {
+        const reqId = this.newRequestId('ctx_clear');
+        await this.requestReply<AckMsg>({ type: 'context_clear', requestId: reqId });
+      }
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Tanrenai: ${(err as Error).message}`);
+    }
+  }
+
+  async onMemoriesOpen(): Promise<void> {
+    if (!this.rpc) {
+      void vscode.window.showWarningMessage('Tanrenai: not connected.');
+
+      return;
+    }
+    try {
+      const action = await vscode.window.showQuickPick(
+        [
+          { label: '$(list-unordered) List recent', description: 'Show the latest stored memories' },
+          { label: '$(search) Search…', description: 'Semantic + keyword search across memories' },
+          {
+            label: '$(trash) Clear all',
+            description: 'Permanently delete every stored memory',
+          },
+        ],
+        { title: 'Tanrenai memory' },
+      );
+      if (!action) return;
+      if (action.label.includes('Search')) {
+        const query = await vscode.window.showInputBox({
+          prompt: 'Search memories',
+          placeHolder: 'e.g. how does the agent loop handle stuck detection',
+        });
+        if (!query) return;
+        const reqId = this.newRequestId('mem_search');
+        const reply = await this.requestReply<MemorySearchReplyMsg>({
+          type: 'memory_search',
+          requestId: reqId,
+          query,
+          limit: 10,
+        });
+        await this.showMemoryRows(
+          reply.results.map((r) => ({
+            ...r.entry,
+            score: r.combinedScore,
+          })),
+          `Search "${query}" — ${reply.results.length} result(s)`,
+        );
+      } else if (action.label.includes('Clear')) {
+        const ok = await vscode.window.showWarningMessage(
+          'Delete all stored memories? This cannot be undone.',
+          { modal: true },
+          'Delete all',
+        );
+        if (ok !== 'Delete all') return;
+        const reqId = this.newRequestId('mem_clear');
+        const ack = await this.requestReply<AckMsg>({
+          type: 'memory_clear',
+          requestId: reqId,
+        });
+        if (!ack.ok) {
+          void vscode.window.showErrorMessage(
+            `Tanrenai: clear failed — ${ack.error ?? 'unknown'}`,
+          );
+        } else {
+          void vscode.window.showInformationMessage('Tanrenai: memories cleared.');
+        }
+      } else {
+        const reqId = this.newRequestId('mem_list');
+        const reply = await this.requestReply<MemoryListReplyMsg>({
+          type: 'memory_list',
+          requestId: reqId,
+          limit: 25,
+        });
+        await this.showMemoryRows(reply.entries, `Recent memories (${reply.total})`);
+      }
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Tanrenai: ${(err as Error).message}`);
+    }
+  }
+
+  /** Render a memory list as a QuickPick; selecting an entry offers "Forget". */
+  private async showMemoryRows(
+    rows: { id: string; userMsg: string; assistMsg: string; timestamp: string; score?: number }[],
+    title: string,
+  ): Promise<void> {
+    if (rows.length === 0) {
+      void vscode.window.showInformationMessage(`Tanrenai: ${title} (empty).`);
+
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      rows.map((r) => ({
+        label: truncate(r.userMsg, 80) || '(no user msg)',
+        description: r.score !== undefined ? `score ${r.score.toFixed(2)}` : r.timestamp,
+        detail: truncate(r.assistMsg, 240),
+        id: r.id,
+      })),
+      { title, matchOnDescription: true, matchOnDetail: true },
+    );
+    if (!picked) return;
+    const choice = await vscode.window.showQuickPick(['Forget this memory', 'Cancel'], {
+      title: 'What now?',
+    });
+    if (choice !== 'Forget this memory') return;
+    const reqId = this.newRequestId('mem_forget');
+    const ack = await this.requestReply<AckMsg>({
+      type: 'memory_forget',
+      requestId: reqId,
+      id: (picked as unknown as { id: string }).id,
+    });
+    if (!ack.ok) {
+      void vscode.window.showErrorMessage(`Tanrenai: forget failed — ${ack.error ?? 'unknown'}`);
+    }
+  }
+
+  async onScrollsOpen(): Promise<void> {
+    if (!this.rpc) {
+      void vscode.window.showWarningMessage('Tanrenai: not connected.');
+
+      return;
+    }
+    try {
+      const reqId = this.newRequestId('scrolls_list');
+      const reply = await this.requestReply<ScrollsListReplyMsg>({
+        type: 'scrolls_list',
+        requestId: reqId,
+      });
+      if (reply.scrolls.length === 0) {
+        void vscode.window.showInformationMessage('Tanrenai: no scrolls loaded.');
+
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        reply.scrolls.map((s) => ({
+          label: s.name,
+          description: s.source,
+          detail: s.description,
+        })),
+        { title: `Tanrenai scrolls (${reply.scrolls.length})`, matchOnDetail: true },
+      );
+      if (!picked) return;
+      const showReqId = this.newRequestId('scroll_show');
+      const scroll = await this.requestReply<ScrollReplyMsg>({
+        type: 'scrolls_show',
+        requestId: showReqId,
+        name: picked.label,
+      });
+      const doc = await vscode.workspace.openTextDocument({
+        content: scroll.content,
+        language: 'markdown',
+      });
+      await vscode.window.showTextDocument(doc, { preview: true });
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Tanrenai: ${(err as Error).message}`);
     }
   }
 
@@ -984,6 +1246,78 @@ export class Controller implements ChatViewListener {
    */
   private handleTokenRate(m: TokenRateMsg): void {
     this.view.send({ type: 'token_rate', tokens: m.tokens, tps: m.tps });
+  }
+
+  private handleContextUsage(m: ContextUsageMsg): void {
+    this.view.send({
+      type: 'context_usage',
+      total: m.total,
+      system: m.system,
+      scrolls: m.scrolls,
+      memory: m.memory,
+      summary: m.summary,
+      history: m.history,
+      available: m.available,
+      historyCount: m.historyCount,
+      totalHistory: m.totalHistory,
+    });
+  }
+
+  private handleCompaction(m: CompactionMsg): void {
+    this.view.send({
+      type: 'compaction',
+      phase: m.phase,
+      messages: m.messages,
+      error: m.error,
+    });
+  }
+
+  /**
+   * Resolve a pending GUI-op request by its requestId. No-op if no caller
+   * is waiting — useful so a late reply after a disconnect just drops
+   * silently rather than blowing up.
+   */
+  private resolveReply(requestId: string, msg: InboundMsg): void {
+    const resolve = this.pendingReplies.get(requestId);
+    if (!resolve) return;
+    this.pendingReplies.delete(requestId);
+    resolve(msg);
+  }
+
+  /**
+   * Send a request and await the matching reply by requestId. Times out
+   * after 10s so the QuickPick can show a friendly error rather than hang.
+   * `op` is logged for diagnostics — it's the inbound message `type`.
+   */
+  private async requestReply<T extends InboundMsg>(
+    op: OutboundMsg & { requestId: string },
+  ): Promise<T> {
+    if (!this.rpc) {
+      throw new Error('not connected');
+    }
+    const requestId = op.requestId;
+
+    return await new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingReplies.delete(requestId);
+        reject(new Error(`${op.type} timed out`));
+      }, 10_000);
+      this.pendingReplies.set(requestId, (msg) => {
+        clearTimeout(timer);
+        resolve(msg as T);
+      });
+      try {
+        this.rpc!.send(op);
+      } catch (err) {
+        clearTimeout(timer);
+        this.pendingReplies.delete(requestId);
+        reject(err);
+      }
+    });
+  }
+
+  private newRequestId(prefix: string): string {
+    return `${prefix}_${this.nextRequestId++}_${Date.now()}`;
   }
 
   private log(line: string): void {

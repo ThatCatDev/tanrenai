@@ -86,6 +86,13 @@ type StreamingConfig struct {
 	// (may be empty in early deltas before the model has decided);
 	// `argsDelta` is the new chars in this delta.
 	OnToolCallDelta func(index int, name, argsDelta string)
+	// OnBeforeRequest fires after OnIterationStart and after any token-budget
+	// truncation, just before the model request is built. Callers that need
+	// to rewrite messages mid-turn — for example, to fold older messages
+	// into a summary when the conversation is approaching the context
+	// window — return the rewritten slice; returning nil leaves messages
+	// unchanged. Run on every iteration including the first.
+	OnBeforeRequest func(messages []api.Message) []api.Message
 	// UserInput is checked between iterations for mid-turn injection.
 	// If a message is available, it's appended as a user message.
 	UserInput <-chan string
@@ -299,6 +306,12 @@ func RunStreaming(ctx context.Context, complete StreamingCompletionFunc, message
 
 		if cfg.MaxTokens > 0 && cfg.TokenEstimator != nil {
 			messages = truncateToolResults(messages, cfg.MaxTokens, cfg.TokenEstimator)
+		}
+
+		if cfg.OnBeforeRequest != nil {
+			if rewritten := cfg.OnBeforeRequest(messages); rewritten != nil {
+				messages = rewritten
+			}
 		}
 
 		// Merge all system messages into a single one at position 0.

@@ -1094,6 +1094,16 @@ button.secondary:hover {
  * spacing, VS Code theme variables for code/quote backgrounds so
  * dark/light themes both look right. */
 
+.body.markdown {
+  /* The parent `.msg` sets `white-space: pre-wrap` so user-typed text
+   * preserves its newlines. Inside a marked-rendered body that turns
+   * every `\n` between `<p>`, `<li>`, and `<h*>` tags into a real line
+   * break on top of the CSS margins — the airy "fragmented bubble"
+   * look. Markdown owns its own block layout, so reset back to normal
+   * whitespace collapsing here. `<pre>` keeps its own `white-space: pre`
+   * via the rule below. */
+  white-space: normal;
+}
 .body.markdown > *:first-child {
   margin-top: 0;
 }
@@ -1487,4 +1497,132 @@ button.secondary:hover {
 }
 .swarm-dock.pinned .swarm-dock-verb {
   color: var(--tn-accent);
+}
+
+/* ── Context usage indicator ──────────────────────────────────────── */
+
+.footer-usage {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.footer-usage-trigger {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--tn-soft);
+  font-family: var(--tn-mono);
+  font-size: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  padding: 0 0.25rem;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.footer-usage-trigger:hover {
+  color: var(--vscode-foreground);
+  border-color: var(--tn-rule);
+}
+.footer-usage-panel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  background: var(--vscode-menu-background, var(--vscode-sideBar-background));
+  border: 1px solid var(--tn-rule);
+  padding: 0.5rem 0.625rem;
+  font-family: var(--tn-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: none;
+  color: var(--tn-soft);
+  z-index: 20;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.2);
+}
+.footer-usage-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+.footer-usage-pct {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+.footer-usage-tokens {
+  color: var(--tn-faint);
+}
+.footer-usage-bar {
+  height: 4px;
+  background: var(--tn-rule);
+  margin-bottom: 0.45rem;
+  position: relative;
+}
+.footer-usage-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--tn-accent);
+  max-width: 100%;
+}
+.footer-usage-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.footer-usage-table td {
+  padding: 0.1rem 0;
+}
+.footer-usage-table td:last-child {
+  text-align: right;
+  color: var(--vscode-foreground);
+}
+.footer-usage-available td {
+  border-top: 1px solid var(--tn-rule);
+  padding-top: 0.25rem;
+  color: var(--vscode-foreground);
+}
+.footer-usage-foot {
+  margin-top: 0.35rem;
+  color: var(--tn-faint);
+  font-size: 9.5px;
+}
+
+/* ── Compaction divider + banner ──────────────────────────────────── */
+
+.compaction-banner {
+  padding: 0.35rem 0.875rem;
+  background: var(--tn-warn-soft);
+  border-bottom: 1px solid var(--tn-rule);
+  color: var(--tn-soft);
+  font-family: var(--tn-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+.compaction {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  color: var(--tn-faint);
+  font-family: var(--tn-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+.compaction-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--tn-rule);
+}
+.compaction-label {
+  white-space: nowrap;
+}
+.compaction-running .compaction-label::after {
+  content: '';
+  display: inline-block;
+  width: 0.4em;
+  margin-left: 0.35em;
+  border-right: 1.5px solid currentColor;
+  animation: tn-caret 1s steps(1) infinite;
+  height: 0.9em;
+  vertical-align: -0.1em;
+}
+.compaction-error {
+  color: var(--tn-err);
 }

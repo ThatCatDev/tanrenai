@@ -46,6 +46,20 @@ export interface ErrorMsg {
   text: string;
 }
 
+/** A compaction divider in the transcript. Starts as `phase:'start'`
+ *  (banner + "Compacting…" row) and is mutated in place to `'done'`,
+ *  `'error'`, or `'noop'` when the matching event lands. `noop` is
+ *  emitted standalone (no preceding `start`) when the user invokes
+ *  "Compact now" but the context isn't full enough to need it.
+ *  Persists in scrollback so users can see *what happened* later. */
+export interface CompactionEntry {
+  kind: 'compaction';
+  id: string;
+  phase: 'start' | 'done' | 'error' | 'noop';
+  messages?: number;
+  error?: string;
+}
+
 /** A single step within a swarm plan. Status transitions:
  *  `pending` (after swarm_plan) → `running` (after swarm_worker_start) →
  *  `done` | `error` (after swarm_worker_done). */
@@ -78,7 +92,8 @@ export type Entry =
   | ToolMsg
   | ApprovalMsg
   | ErrorMsg
-  | SwarmActivityMsg;
+  | SwarmActivityMsg
+  | CompactionEntry;
 
 /** A tool call still being streamed by the model — not yet finalised. */
 export interface StreamingTool {
@@ -94,6 +109,22 @@ export interface StreamingTool {
 export interface TokenRate {
   tokens: number;
   tps: number;
+}
+
+/** Snapshot of the prompt budget, mirroring the CLI's chatctx.BudgetInfo.
+ *  All values are token counts. `historyCount` is the number of history
+ *  messages currently in the window; `totalHistory` includes ones already
+ *  folded into the summary. */
+export interface ContextUsage {
+  total: number;
+  system: number;
+  scrolls: number;
+  memory: number;
+  summary: number;
+  history: number;
+  available: number;
+  historyCount: number;
+  totalHistory: number;
 }
 
 export interface AppState {
@@ -112,6 +143,13 @@ export interface AppState {
   availableSelection: SelectionAttachment | null;
   /** Most recent throughput reading (null until the first delta). */
   tokenRate: TokenRate | null;
+  /** Latest prompt-budget snapshot from the CLI. Null until the first
+   *  `context_usage` lands (right after `ready`). */
+  contextUsage: ContextUsage | null;
+  /** ID of the currently-active compaction entry, if any — used to drive
+   *  a transient banner above the transcript. Cleared by `compaction`
+   *  events with phase done|error and a short timer in the component. */
+  activeCompactionId: string | null;
 }
 
 export const initialState: AppState = {
@@ -126,6 +164,8 @@ export const initialState: AppState = {
   pendingImages: [],
   availableSelection: null,
   tokenRate: null,
+  contextUsage: null,
+  activeCompactionId: null,
 };
 
 /** Return the swarm activity that should pin to the dock, or null if
@@ -262,6 +302,65 @@ export function reduce(state: AppState, msg: Action): AppState {
         ...state,
         tokenRate: { tokens: msg.tokens, tps: msg.tps },
       };
+    case 'context_usage':
+      return {
+        ...state,
+        contextUsage: {
+          total: msg.total,
+          system: msg.system,
+          scrolls: msg.scrolls,
+          memory: msg.memory,
+          summary: msg.summary,
+          history: msg.history,
+          available: msg.available,
+          historyCount: msg.historyCount,
+          totalHistory: msg.totalHistory,
+        },
+      };
+    case 'compaction': {
+      if (msg.phase === 'start') {
+        const id = `c_${Date.now()}`;
+        const entry: CompactionEntry = { kind: 'compaction', id, phase: 'start' };
+
+        return {
+          ...state,
+          entries: [...state.entries, entry],
+          activeCompactionId: id,
+        };
+      }
+      // done | error → mutate the most-recent open entry in place. If no
+      // start was ever seen (e.g. extension joined mid-compaction), append
+      // a one-shot entry so the user still sees what happened.
+      const idx = [...state.entries]
+        .reverse()
+        .findIndex((e) => e.kind === 'compaction' && e.phase === 'start');
+      if (idx === -1) {
+        const id = `c_${Date.now()}`;
+        const entry: CompactionEntry = {
+          kind: 'compaction',
+          id,
+          phase: msg.phase,
+          messages: msg.messages,
+          error: msg.error,
+        };
+
+        return {
+          ...state,
+          entries: [...state.entries, entry],
+          activeCompactionId: null,
+        };
+      }
+      const realIdx = state.entries.length - 1 - idx;
+      const entries = state.entries.slice();
+      entries[realIdx] = {
+        ...(entries[realIdx] as CompactionEntry),
+        phase: msg.phase,
+        messages: msg.messages,
+        error: msg.error,
+      };
+
+      return { ...state, entries, activeCompactionId: null };
+    }
     case 'turn_end': {
       const entries = msg.ok || !msg.reason
         ? closeOpenAssistants(state.entries)
@@ -393,7 +492,7 @@ export function reduce(state: AppState, msg: Action): AppState {
       return { ...state, entries };
     }
     case 'clear_chat':
-      return { ...state, entries: [], streamingTools: [] };
+      return { ...state, entries: [], streamingTools: [], activeCompactionId: null };
     case 'attach_selection':
       // Don't add an exact duplicate of an existing pending attachment.
       if (

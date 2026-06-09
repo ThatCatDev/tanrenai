@@ -157,6 +157,99 @@ describe('reduce', () => {
     expect(s.tokenRate).toEqual({ tokens: 113, tps: 22.4 });
   });
 
+  it('stores context_usage and overwrites on subsequent emits', () => {
+    let s: AppState = seed();
+    s = reduce(s, {
+      type: 'context_usage',
+      total: 8192,
+      system: 200,
+      scrolls: 0,
+      memory: 0,
+      summary: 0,
+      history: 1200,
+      available: 6792,
+      historyCount: 4,
+      totalHistory: 4,
+    });
+    expect(s.contextUsage?.history).toBe(1200);
+    expect(s.contextUsage?.available).toBe(6792);
+
+    s = reduce(s, {
+      type: 'context_usage',
+      total: 8192,
+      system: 200,
+      scrolls: 0,
+      memory: 0,
+      summary: 400,
+      history: 800,
+      available: 6792,
+      historyCount: 2,
+      totalHistory: 6,
+    });
+    // Latest snapshot wins — the footer should always reflect the most
+    // recent emit, never an accumulation.
+    expect(s.contextUsage?.summary).toBe(400);
+    expect(s.contextUsage?.totalHistory).toBe(6);
+  });
+
+  it('appends a compaction entry on compaction start and mutates it on done', () => {
+    let s: AppState = seed();
+    s = reduce(s, { type: 'compaction', phase: 'start' });
+    expect(s.entries).toHaveLength(1);
+    expect(s.entries[0].kind).toBe('compaction');
+    expect(s.activeCompactionId).not.toBeNull();
+
+    s = reduce(s, { type: 'compaction', phase: 'done', messages: 8 });
+    // Still one entry — it was mutated in place rather than appended.
+    expect(s.entries).toHaveLength(1);
+    const e = s.entries[0] as Extract<Entry, { kind: 'compaction' }>;
+    expect(e.phase).toBe('done');
+    expect(e.messages).toBe(8);
+    // Banner closes once the lifecycle ends.
+    expect(s.activeCompactionId).toBeNull();
+  });
+
+  it('falls back to a synthetic compaction entry when done arrives without start', () => {
+    // The extension can join a session mid-flight (reconnect) and miss
+    // the start event — we still want a divider in the transcript.
+    let s: AppState = seed();
+    s = reduce(s, { type: 'compaction', phase: 'done', messages: 3 });
+    expect(s.entries).toHaveLength(1);
+    const e = s.entries[0] as Extract<Entry, { kind: 'compaction' }>;
+    expect(e.phase).toBe('done');
+    expect(e.messages).toBe(3);
+  });
+
+  it('appends a one-shot compaction entry on noop without an open banner', () => {
+    // "Compact now" on a session that doesn't need compaction should
+    // surface a standalone noop divider — no preceding start, no
+    // lingering activeCompactionId.
+    let s: AppState = seed();
+    s = reduce(s, { type: 'compaction', phase: 'noop' });
+    expect(s.entries).toHaveLength(1);
+    const e = s.entries[0] as Extract<Entry, { kind: 'compaction' }>;
+    expect(e.phase).toBe('noop');
+    expect(s.activeCompactionId).toBeNull();
+  });
+
+  it('records compaction error with reason', () => {
+    let s: AppState = seed();
+    s = reduce(s, { type: 'compaction', phase: 'start' });
+    s = reduce(s, { type: 'compaction', phase: 'error', error: 'nothing to summarise' });
+    const e = s.entries[0] as Extract<Entry, { kind: 'compaction' }>;
+    expect(e.phase).toBe('error');
+    expect(e.error).toBe('nothing to summarise');
+    expect(s.activeCompactionId).toBeNull();
+  });
+
+  it('clear_chat drops compaction entries and any active banner', () => {
+    let s: AppState = seed();
+    s = reduce(s, { type: 'compaction', phase: 'start' });
+    s = reduce(s, { type: 'clear_chat' });
+    expect(s.entries).toHaveLength(0);
+    expect(s.activeCompactionId).toBeNull();
+  });
+
   it('ignores deltas for unknown ids on entries that already exist for other ids', () => {
     let s: AppState = seed();
     s = reduce(s, { type: 'message_start', role: 'user', id: 'u1' });

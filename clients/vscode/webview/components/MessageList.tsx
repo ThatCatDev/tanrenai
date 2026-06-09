@@ -31,6 +31,8 @@ function contentSignature(entries: Entry[]): string {
       // Swarm activity grows when steps transition status — encode each
       // step's status so auto-scroll fires when a worker_done arrives.
       sig += `|s${e.depth}.${e.verifying ? 'v' : ''}.` + e.steps.map((s) => s.status[0]).join('');
+    } else if (e.kind === 'compaction') {
+      sig += `|c${e.phase[0]}`;
     }
   }
 
@@ -194,7 +196,32 @@ function EntryView({ entry, activity }: { entry: Entry; activity: Activity }) {
           <div class="body">{entry.text}</div>
         </div>
       );
+    case 'compaction':
+      return <CompactionRow entry={entry} />;
   }
+}
+
+function CompactionRow({ entry }: { entry: Extract<Entry, { kind: 'compaction' }> }) {
+  let label: string;
+  let cls = 'compaction';
+  if (entry.phase === 'start') {
+    label = 'Compacting older messages…';
+    cls += ' compaction-running';
+  } else if (entry.phase === 'done') {
+    label = `Compacted ${entry.messages ?? 0} message${entry.messages === 1 ? '' : 's'} into summary`;
+  } else if (entry.phase === 'noop') {
+    label = 'Nothing to compact — context not full enough yet';
+  } else {
+    label = `Compact failed${entry.error ? `: ${entry.error}` : ''}`;
+    cls += ' compaction-error';
+  }
+  return (
+    <div class={cls} role="status">
+      <span class="compaction-rule" aria-hidden="true" />
+      <span class="compaction-label">{label}</span>
+      <span class="compaction-rule" aria-hidden="true" />
+    </div>
+  );
 }
 
 function SwarmActivityCard({ entry }: { entry: Extract<Entry, { kind: 'swarm' }> }) {

@@ -120,6 +120,17 @@ func (m *Manager) AppendMany(msgs []api.Message) {
 	m.history = append(m.history, msgs...)
 }
 
+// SetHistory replaces the stored history wholesale. Used by the agent
+// path's turn-end reconciliation after a mid-flight compaction folded
+// older history into the summary — the post-fold tail of the agent loop's
+// result slice IS the new history, and trying to diff against pre-turn
+// windowedMsgs would either drop or double-append messages.
+func (m *Manager) SetHistory(msgs []api.Message) {
+	clone := make([]api.Message, len(msgs))
+	copy(clone, msgs)
+	m.history = clone
+}
+
 // Messages returns the windowed message list suitable for sending to the LLM.
 // All system content (prompt, context files, memories, summary) is merged into
 // a single system message at position 0 to satisfy models like Qwen 3.5 that
@@ -154,7 +165,7 @@ func (m *Manager) Messages() []api.Message {
 	// Reserve space for summary if present
 	var summaryText string
 	if m.summary != "" {
-		summaryText = fmt.Sprintf("[Conversation summary] %s", m.summary)
+		summaryText = summarySectionMarker + m.summary
 		sm := api.Message{Role: "system", Content: summaryText}
 		summaryTokens := m.estimator.EstimateMessages([]api.Message{sm})
 		available -= summaryTokens
@@ -326,6 +337,49 @@ func (m *Manager) Budget() BudgetInfo {
 		Available:    available,
 		HistoryCount: len(historyMsgs),
 		TotalHistory: len(m.history),
+	}
+}
+
+// LiveBudgetFromMessages returns a budget snapshot computed purely from an
+// in-flight agent-loop messages slice plus the Manager's Config. Used to
+// drive the footer percentage between iterations of a single turn for any
+// agent — including swarm workers whose pinned context is a step-specific
+// preamble that has nothing to do with the Manager's stored
+// system/scrolls/memories/summary.
+//
+// Leading consecutive system messages are reported under the System bucket
+// (this is what Manager.Messages() merges into msgs[0], or what a swarm
+// worker installs as its preamble). Everything after is the History bucket.
+// Scrolls/Memory/Summary are reported as zero mid-turn — the live snapshot
+// can't disentangle them from whatever was baked into msgs[0]. The footer's
+// percentage uses (Total-Available)/Total, which only needs accurate
+// System+History+Available, so the per-bucket breakdown panel just shows
+// the lumped value under System.
+func (m *Manager) LiveBudgetFromMessages(msgs []api.Message) BudgetInfo {
+	systemStart := 0
+	for systemStart < len(msgs) && msgs[systemStart].Role == "system" {
+		systemStart++
+	}
+	systemTokens := m.estimator.EstimateMessages(msgs[:systemStart])
+	history := msgs[systemStart:]
+	historyTokens := m.estimator.EstimateMessages(history)
+
+	used := systemTokens + historyTokens + m.cfg.ResponseBudget + m.cfg.ToolsBudget
+	available := m.cfg.CtxSize - used
+	if available < 0 {
+		available = 0
+	}
+
+	return BudgetInfo{
+		Total:        m.cfg.CtxSize,
+		System:       systemTokens,
+		Scrolls:      0,
+		Memory:       0,
+		Summary:      0,
+		History:      historyTokens,
+		Available:    available,
+		HistoryCount: len(history),
+		TotalHistory: len(history),
 	}
 }
 

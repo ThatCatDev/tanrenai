@@ -56,6 +56,65 @@ export interface ShutdownMsg {
   type: 'shutdown';
 }
 
+/** Manual compact request from the VS Code Footer menu. CLI runs the same
+ *  Summarize path the auto-compactor uses and emits matching compaction
+ *  events; the ack lets the GUI know success/failure for a toast. */
+export interface CompactRequestMsg {
+  type: 'compact_request';
+  requestId: string;
+}
+
+export interface ContextListReqMsg {
+  type: 'context_list';
+  requestId: string;
+}
+
+export interface ContextAddReqMsg {
+  type: 'context_add';
+  requestId: string;
+  path: string;
+}
+
+export interface ContextClearReqMsg {
+  type: 'context_clear';
+  requestId: string;
+}
+
+export interface MemoryListReqMsg {
+  type: 'memory_list';
+  requestId: string;
+  limit: number;
+}
+
+export interface MemorySearchReqMsg {
+  type: 'memory_search';
+  requestId: string;
+  query: string;
+  limit: number;
+}
+
+export interface MemoryForgetReqMsg {
+  type: 'memory_forget';
+  requestId: string;
+  id: string;
+}
+
+export interface MemoryClearReqMsg {
+  type: 'memory_clear';
+  requestId: string;
+}
+
+export interface ScrollsListReqMsg {
+  type: 'scrolls_list';
+  requestId: string;
+}
+
+export interface ScrollsShowReqMsg {
+  type: 'scrolls_show';
+  requestId: string;
+  name: string;
+}
+
 export type OutboundMsg =
   | InitMsg
   | UserMessageMsg
@@ -63,7 +122,17 @@ export type OutboundMsg =
   | ApprovalResponseMsg
   | CancelMsg
   | ShutdownMsg
-  | ClearHistoryMsg;
+  | ClearHistoryMsg
+  | CompactRequestMsg
+  | ContextListReqMsg
+  | ContextAddReqMsg
+  | ContextClearReqMsg
+  | MemoryListReqMsg
+  | MemorySearchReqMsg
+  | MemoryForgetReqMsg
+  | MemoryClearReqMsg
+  | ScrollsListReqMsg
+  | ScrollsShowReqMsg;
 
 // ── Inbound (CLI → extension) ─────────────────────────────────────────
 
@@ -207,6 +276,105 @@ export interface ErrorMsg {
   fatal: boolean;
 }
 
+/**
+ * Snapshot of the prompt budget. CLI emits one on `ready`, after every
+ * `turn_done`, after `clear_history`, and after any GUI op that mutates
+ * pinned context. Mirrors chatctx.BudgetInfo on the Go side. The webview
+ * footer shows `used / total` plus a popover with the full breakdown.
+ */
+export interface ContextUsageMsg {
+  type: 'context_usage';
+  total: number;
+  system: number;
+  scrolls: number;
+  memory: number;
+  summary: number;
+  history: number;
+  available: number;
+  historyCount: number;
+  totalHistory: number;
+}
+
+/**
+ * Auto-compaction lifecycle event. Phase progresses `start` → `done` |
+ * `error`. The webview shows a transient banner while a `start` is open
+ * and inserts a persistent transcript divider at each phase.
+ */
+export interface CompactionMsg {
+  type: 'compaction';
+  /** `noop` means there was nothing to compact (NeedsSummary was false
+   *  or the eviction cutoff found no candidates). Distinct from `done`
+   *  so the UI doesn't say "Compacted 0 messages into summary". */
+  phase: 'start' | 'done' | 'error' | 'noop';
+  messages?: number;
+  error?: string;
+}
+
+// ── Reply envelopes for GUI ops ───────────────────────────────────────
+// Each reply carries the `requestId` from the original request so the
+// extension can resolve the right pending promise.
+
+export interface ContextFilesMsg {
+  type: 'context_files';
+  requestId: string;
+  files: string[];
+}
+
+export interface MemoryRow {
+  id: string;
+  userMsg: string;
+  assistMsg: string;
+  timestamp: string;
+}
+
+export interface MemoryListReplyMsg {
+  type: 'memory_list_reply';
+  requestId: string;
+  entries: MemoryRow[];
+  total: number;
+}
+
+export interface MemorySearchResult {
+  entry: MemoryRow;
+  combinedScore: number;
+}
+
+export interface MemorySearchReplyMsg {
+  type: 'memory_search_reply';
+  requestId: string;
+  results: MemorySearchResult[];
+}
+
+export interface ScrollRow {
+  name: string;
+  description: string;
+  source: string;
+}
+
+export interface ScrollsListReplyMsg {
+  type: 'scrolls_list_reply';
+  requestId: string;
+  scrolls: ScrollRow[];
+}
+
+export interface ScrollReplyMsg {
+  type: 'scroll_reply';
+  requestId: string;
+  name: string;
+  description: string;
+  content: string;
+  source?: string;
+}
+
+/** Generic ack for ops that don't return data (clear, forget, compact). */
+export interface AckMsg {
+  type: 'ack';
+  requestId: string;
+  op: string;
+  ok: boolean;
+  error?: string;
+}
+
 export type InboundMsg =
   | ReadyMsg
   | ConnectingProgressMsg
@@ -220,9 +388,17 @@ export type InboundMsg =
   | ApprovalRequiredMsg
   | TurnDoneMsg
   | TokenRateMsg
+  | ContextUsageMsg
+  | CompactionMsg
   | SwarmArchitectMsg
   | SwarmPlanMsg
   | SwarmWorkerStartMsg
   | SwarmWorkerDoneMsg
   | SwarmVerifyMsg
-  | ErrorMsg;
+  | ErrorMsg
+  | ContextFilesMsg
+  | MemoryListReplyMsg
+  | MemorySearchReplyMsg
+  | ScrollsListReplyMsg
+  | ScrollReplyMsg
+  | AckMsg;

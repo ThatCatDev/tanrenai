@@ -50,7 +50,7 @@ function renderRoot(state: AppState, dispatch: (a: Action) => void) {
     return (
       <div class="root">
         <StatusPanel connection={state.connection} />
-        <Footer signedIn={signedIn} mode={state.mode} tokenRate={null} />
+        <Footer signedIn={signedIn} mode={state.mode} tokenRate={null} contextUsage={null} />
       </div>
     );
   }
@@ -63,6 +63,11 @@ function renderRoot(state: AppState, dispatch: (a: Action) => void) {
         toolCount={state.connection.toolCount}
         mode={state.mode}
       />
+      {state.activeCompactionId && (
+        <div class="compaction-banner" role="status">
+          Compacting older messages to free context…
+        </div>
+      )}
       <MessageList entries={state.entries} activity={activity} />
       {(() => {
         const swarm = activeSwarm(state);
@@ -83,7 +88,12 @@ function renderRoot(state: AppState, dispatch: (a: Action) => void) {
         availableSelection={state.availableSelection}
         dispatch={dispatch}
       />
-      <Footer signedIn={true} mode={state.mode} tokenRate={state.tokenRate} />
+      <Footer
+        signedIn={true}
+        mode={state.mode}
+        tokenRate={state.tokenRate}
+        contextUsage={state.contextUsage}
+      />
     </div>
   );
 }
