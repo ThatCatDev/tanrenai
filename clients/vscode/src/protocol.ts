@@ -35,7 +35,16 @@ export type WebviewInbound =
   | { type: 'reconnect' }
   | { type: 'stop_gpu' }
   | { type: 'destroy_gpu' }
-  | { type: 'show_gpu_status' };
+  | { type: 'show_gpu_status' }
+  /** GUI parity for /compact — Footer menu "Compact now". */
+  | { type: 'compact_now' }
+  /** Footer menu entries that open a native VS Code quick-pick flow on
+   *  the extension host. The webview just signals intent; no UI state
+   *  changes locally until the host pushes back a refreshed
+   *  context_usage (after add/clear). */
+  | { type: 'context_files_open' }
+  | { type: 'memories_open' }
+  | { type: 'scrolls_open' };
 
 export interface SelectionAttachment {
   /** Display label, e.g. "src/foo.ts:12-34". */
@@ -87,6 +96,30 @@ export type WebviewOutbound =
    *  surfaces it in the status panel during streaming and on the final
    *  emitted value after the turn closes. */
   | { type: 'token_rate'; tokens: number; tps: number }
+  /** Snapshot of the prompt budget — emitted by the CLI on ready, after
+   *  every turn, and after history/context mutations. Powers the Footer
+   *  percentage indicator and its breakdown popover. */
+  | {
+      type: 'context_usage';
+      total: number;
+      system: number;
+      scrolls: number;
+      memory: number;
+      summary: number;
+      history: number;
+      available: number;
+      historyCount: number;
+      totalHistory: number;
+    }
+  /** Compaction lifecycle event. `start` opens a transient banner and
+   *  appends a transcript divider; `done`/`error` close out the same
+   *  entry and the banner. */
+  | {
+      type: 'compaction';
+      phase: 'start' | 'done' | 'error' | 'noop';
+      messages?: number;
+      error?: string;
+    }
   /** Swarm orchestrator lifecycle events. Forwarded as-is from the CLI;
    *  the webview reducer turns them into a per-depth SwarmActivity entry
    *  rendered as a step list with live status updates. */

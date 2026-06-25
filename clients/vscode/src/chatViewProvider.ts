@@ -32,6 +32,10 @@ export interface ChatViewListener {
   onStopGpu(): void;
   onDestroyGpu(): void;
   onShowGpuStatus(): void;
+  onCompactNow(): void;
+  onContextFilesOpen(): void;
+  onMemoriesOpen(): void;
+  onScrollsOpen(): void;
   /** Called after the webview has finished mounting (or remounting). */
   onMounted(): void;
 }
@@ -113,6 +117,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'show_gpu_status':
           this.listener?.onShowGpuStatus();
+          break;
+        case 'compact_now':
+          this.listener?.onCompactNow();
+          break;
+        case 'context_files_open':
+          this.listener?.onContextFilesOpen();
+          break;
+        case 'memories_open':
+          this.listener?.onMemoriesOpen();
+          break;
+        case 'scrolls_open':
+          this.listener?.onScrollsOpen();
           break;
       }
     });

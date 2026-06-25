@@ -213,6 +213,157 @@ type rpcErrorMsg struct {
 	Fatal   bool   `json:"fatal"`
 }
 
+// rpcContextUsageMsg reports current prompt-budget usage. Emitted on ready,
+// after every turn, and after any input that mutates pinned context (clear
+// history, context add/clear, compact). Mirrors chatctx.BudgetInfo.
+type rpcContextUsageMsg struct {
+	Type         string `json:"type"`
+	Total        int    `json:"total"`
+	System       int    `json:"system"`
+	Scrolls      int    `json:"scrolls"`
+	Memory       int    `json:"memory"`
+	Summary      int    `json:"summary"`
+	History      int    `json:"history"`
+	Available    int    `json:"available"`
+	HistoryCount int    `json:"historyCount"`
+	TotalHistory int    `json:"totalHistory"`
+}
+
+// rpcCompactionMsg reports a context-compaction (summarisation) lifecycle
+// event. Phase is "start" → "done" | "error". Messages is the number of
+// history messages folded into the summary on success.
+type rpcCompactionMsg struct {
+	Type     string `json:"type"`
+	Phase    string `json:"phase"`
+	Messages int    `json:"messages,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// Reply envelopes for GUI-triggered ops. Each carries the requestId from
+// the inbound message so the extension can match the reply back to its
+// pending promise.
+
+type rpcContextFilesMsg struct {
+	Type      string   `json:"type"`
+	RequestID string   `json:"requestId"`
+	Files     []string `json:"files"`
+}
+
+type rpcMemoryListReplyMsg struct {
+	Type      string         `json:"type"`
+	RequestID string         `json:"requestId"`
+	Entries   []rpcMemoryRow `json:"entries"`
+	Total     int            `json:"total"`
+}
+
+type rpcMemorySearchReplyMsg struct {
+	Type      string             `json:"type"`
+	RequestID string             `json:"requestId"`
+	Results   []rpcMemorySearchR `json:"results"`
+}
+
+type rpcMemoryRow struct {
+	ID        string `json:"id"`
+	UserMsg   string `json:"userMsg"`
+	AssistMsg string `json:"assistMsg"`
+	Timestamp string `json:"timestamp"`
+}
+
+type rpcMemorySearchR struct {
+	Entry         rpcMemoryRow `json:"entry"`
+	CombinedScore float32      `json:"combinedScore"`
+}
+
+type rpcScrollsListMsg struct {
+	Type      string      `json:"type"`
+	RequestID string      `json:"requestId"`
+	Scrolls   []rpcScroll `json:"scrolls"`
+}
+
+type rpcScrollMsg struct {
+	Type        string `json:"type"`
+	RequestID   string `json:"requestId"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Content     string `json:"content"`
+	Source      string `json:"source,omitempty"`
+}
+
+type rpcScroll struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+}
+
+// rpcAckMsg is the generic reply for actions that don't return data (clear
+// context, forget memory, clear memories, compact-now). OK=false carries
+// an Error string.
+type rpcAckMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+	Op        string `json:"op"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
+}
+
+// ── Inbound op messages (extension → CLI) ─────────────────────────────
+
+type rpcCompactRequestMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+}
+
+type rpcContextListReqMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+}
+
+type rpcContextAddReqMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+	Path      string `json:"path"`
+}
+
+type rpcContextClearReqMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+}
+
+type rpcMemoryListReqMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+	Limit     int    `json:"limit"`
+}
+
+type rpcMemorySearchReqMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+	Query     string `json:"query"`
+	Limit     int    `json:"limit"`
+}
+
+type rpcMemoryForgetReqMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+	ID        string `json:"id"`
+}
+
+type rpcMemoryClearReqMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+}
+
+type rpcScrollsListReqMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+}
+
+type rpcScrollsShowReqMsg struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId"`
+	Name      string `json:"name"`
+}
+
 // ── RPC server ────────────────────────────────────────────────────────
 
 // rpcServer owns stdout writes (serialized) and the pending-tool-call map.
@@ -236,6 +387,15 @@ type rpcServer struct {
 	genRate      *apiclient.TokenRateTracker
 	rateMu       sync.Mutex
 	lastRateEmit time.Time
+
+	// midTurnCompacted flips true when maybeCompactInFlight has
+	// reconciled Manager state during the current turn. runRPCTurn reads
+	// it at turn-end to decide whether to use its windowedMsgs-based diff
+	// (the normal path) or skip the diff entirely (the post-compaction
+	// path — Manager state was already updated mid-flight, the result
+	// slice is no longer an extension of the original windowedMsgs).
+	// Reset by resetMidTurnCompacted() at the top of each turn.
+	midTurnCompacted atomic.Bool
 }
 
 // tokenRateThrottle bounds how often token_rate messages go out during
@@ -265,6 +425,13 @@ func (s *rpcServer) resetTokenRate() {
 	s.rateMu.Lock()
 	s.lastRateEmit = time.Time{}
 	s.rateMu.Unlock()
+}
+
+// resetMidTurnCompacted clears the per-turn "compaction reconciled" flag.
+// Pair with resetTokenRate at the top of each turn so a prior turn's
+// mid-flight fold doesn't make this turn skip its normal diff.
+func (s *rpcServer) resetMidTurnCompacted() {
+	s.midTurnCompacted.Store(false)
 }
 
 // recordRateAndMaybeEmit counts one streamed delta and, if more than
@@ -311,6 +478,161 @@ func (s *rpcServer) write(msg any) error {
 
 func (s *rpcServer) writeError(message string, fatal bool) {
 	_ = s.write(rpcErrorMsg{Type: "error", Message: message, Fatal: fatal})
+}
+
+// emitContextUsage snapshots the current chatctx budget and pushes it to
+// the extension. No-op if mgr is nil. Safe to call from any goroutine.
+func (s *rpcServer) emitContextUsage(mgr *chatctx.Manager) {
+	if mgr == nil {
+		return
+	}
+	b := mgr.Budget()
+	_ = s.write(rpcContextUsageMsg{
+		Type:         "context_usage",
+		Total:        b.Total,
+		System:       b.System,
+		Scrolls:      b.Scrolls,
+		Memory:       b.Memory,
+		Summary:      b.Summary,
+		History:      b.History,
+		Available:    b.Available,
+		HistoryCount: b.HistoryCount,
+		TotalHistory: b.TotalHistory,
+	})
+}
+
+// emitLiveContextUsage pushes a mid-turn context_usage snapshot derived from
+// the agent loop's in-flight messages slice (rather than the Manager's
+// stored history) so the footer percentage tracks real-time growth from
+// tool calls and assistant turns. No-op if mgr is nil.
+func (s *rpcServer) emitLiveContextUsage(mgr *chatctx.Manager, msgs []api.Message) {
+	if mgr == nil {
+		return
+	}
+	b := mgr.LiveBudgetFromMessages(msgs)
+	_ = s.write(rpcContextUsageMsg{
+		Type:         "context_usage",
+		Total:        b.Total,
+		System:       b.System,
+		Scrolls:      b.Scrolls,
+		Memory:       b.Memory,
+		Summary:      b.Summary,
+		History:      b.History,
+		Available:    b.Available,
+		HistoryCount: b.HistoryCount,
+		TotalHistory: b.TotalHistory,
+	})
+}
+
+// maybeCompactInFlight is the OnBeforeRequest hook for the in-flight agent
+// loop. CompactInFlight itself is pure on the msgs slice (doesn't touch
+// Manager state), so this same wiring is safe for any subagent context —
+// swarm workers, the verifier, sub-planning at depth — without one
+// subagent's fold leaking into another's view.
+//
+// persistToManager controls whether a successful fold reconciles back to
+// the Manager. The main agent path passes true so the new summary
+// persists across turns and m.history is replaced with the post-fold tail
+// (otherwise the turn-end diff at runRPCTurn would lose mid-fold messages
+// or duplicate pre-fold ones). Swarm workers / verifier pass false:
+// their msgs are throwaway and the fold's only job is to keep the
+// subagent's own next-iteration request under the model's context limit.
+func (s *rpcServer) maybeCompactInFlight(ctx context.Context, mgr *chatctx.Manager, complete agent.CompletionFunc, msgs []api.Message, persistToManager bool) []api.Message {
+	if mgr == nil || complete == nil {
+		return nil
+	}
+	if !mgr.NeedsMidTurnCompact(msgs) {
+		return nil
+	}
+	_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "start"})
+	rewritten, newSummary, folded, err := mgr.CompactInFlight(ctx, msgs, chatctx.CompletionFunc(complete))
+	if err != nil {
+		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "error", Error: err.Error()})
+
+		return nil
+	}
+	if folded == 0 {
+		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "noop"})
+
+		return nil
+	}
+	if persistToManager {
+		mgr.AbsorbMidTurnCompaction(rewritten, newSummary)
+		// Mark that this turn has already reconciled the Manager
+		// mid-flight, so runRPCTurn skips its windowedMsgs-based diff
+		// (which would either drop messages or double-append).
+		s.midTurnCompacted.Store(true)
+	}
+	_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "done", Messages: folded})
+	s.emitLiveContextUsage(mgr, rewritten)
+
+	return rewritten
+}
+
+// summariseWithEvents runs a compaction bracketed by compaction events so
+// the extension can show a banner + an inline transcript row. `force`
+// controls which compaction path runs:
+//
+//   - force=false (the pre-turn auto-call): gates on NeedsSummary() — if
+//     there's nothing pressing against the budget, we emit "noop" and
+//     skip the LLM round-trip entirely.
+//   - force=true (the manual "Compact now" button): always attempts to
+//     fold via SummarizeNow, which keeps the last few messages intact
+//     but doesn't require the context to be near its limit. Only emits
+//     "noop" when history is too short to fold (≤ manualKeepHistory
+//     messages), so clicking the button on a brand-new session still
+//     gives an honest "nothing to compact" instead of doing nothing.
+func (s *rpcServer) summariseWithEvents(ctx context.Context, mgr *chatctx.Manager, complete agent.CompletionFunc, force bool) error {
+	if mgr == nil {
+		return nil
+	}
+	if force {
+		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "start"})
+		folded, err := mgr.SummarizeNow(ctx, chatctx.CompletionFunc(complete))
+		if err != nil {
+			_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "error", Error: err.Error()})
+
+			return err
+		}
+		if folded == 0 {
+			_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "noop"})
+
+			return nil
+		}
+		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "done", Messages: folded})
+
+		return nil
+	}
+	// Skip the start banner when there's plainly nothing to do — the
+	// pre-turn auto-call shouldn't flash a banner that immediately
+	// resolves to "noop" on every turn.
+	if !mgr.NeedsSummary() {
+		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "noop"})
+
+		return nil
+	}
+	before := mgr.Budget().TotalHistory
+	_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "start"})
+	if err := mgr.Summarize(ctx, chatctx.CompletionFunc(complete)); err != nil {
+		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "error", Error: err.Error()})
+
+		return err
+	}
+	after := mgr.Budget().TotalHistory
+	folded := before - after
+	if folded < 0 {
+		folded = 0
+	}
+	if folded == 0 {
+		// Summarize accepted the precondition but its inner cutoff found
+		// nothing — race between NeedsSummary() and the eviction math.
+		_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "noop"})
+
+		return nil
+	}
+	_ = s.write(rpcCompactionMsg{Type: "compaction", Phase: "done", Messages: folded})
+
+	return nil
 }
 
 // RequestTool implements tools.RPCRequester for intercepted tools.
@@ -484,9 +806,9 @@ func runAgentRPC(ctx context.Context) error {
 	if init.ProtocolVersion != AgentRPCProtocolVersion {
 		return fmt.Errorf("agent-rpc: protocol version mismatch (extension=%d, cli=%d) — update both", init.ProtocolVersion, AgentRPCProtocolVersion)
 	}
-	if init.Model == "" {
-		return errors.New("agent-rpc: init.model is required")
-	}
+	// init.Model may be empty — the hosted platform picks GPU_MODEL and
+	// returns the resolved name on /api/load. deps.modelName below carries
+	// the resolved name back into the ready handshake.
 
 	// Honour workspaceRoot so relative paths in tool args resolve correctly.
 	// `setupSession` will create `.tanrenai/` in the resulting cwd.
@@ -545,10 +867,21 @@ func runAgentRPC(ctx context.Context) error {
 		}
 	}
 
-	// Send ready with the tool catalogue.
-	if err := srv.write(buildReadyMsg(deps, init.Model)); err != nil {
+	// Send ready with the tool catalogue. Use the model name resolved by
+	// setupSession — for hosted sessions init.Model is empty and the real
+	// name only lands once /api/load returns the platform-picked GPU_MODEL.
+	readyModel := deps.modelName
+	if readyModel == "" {
+		readyModel = init.Model
+	}
+	if err := srv.write(buildReadyMsg(deps, readyModel)); err != nil {
 		return err
 	}
+
+	// First context-usage snapshot so the footer shows a percentage right
+	// away — without this the indicator stays blank until the user sends
+	// their first turn.
+	srv.emitContextUsage(deps.mgr)
 
 	// Phase 2: message loop.
 	type turnState struct {
@@ -607,6 +940,7 @@ func runAgentRPC(ctx context.Context) error {
 				deps.mgr.Clear()
 			}
 			_ = srv.write(rpcHistoryClearedMsg{Type: "history_cleared"})
+			srv.emitContextUsage(deps.mgr)
 
 		case "tool_result":
 			var msg rpcToolResultMsg
@@ -637,6 +971,76 @@ func runAgentRPC(ctx context.Context) error {
 			}
 
 			return nil
+
+		case "compact_request":
+			var msg rpcCompactRequestMsg
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				srv.writeError(fmt.Sprintf("invalid compact_request: %v", err), false)
+
+				continue
+			}
+			go handleCompactRequest(ctx, srv, deps, msg)
+
+		case "context_list":
+			var msg rpcContextListReqMsg
+			_ = json.Unmarshal(raw, &msg)
+			handleContextList(srv, deps, msg)
+
+		case "context_add":
+			var msg rpcContextAddReqMsg
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				srv.writeError(fmt.Sprintf("invalid context_add: %v", err), false)
+
+				continue
+			}
+			handleContextAdd(srv, deps, msg)
+
+		case "context_clear":
+			var msg rpcContextClearReqMsg
+			_ = json.Unmarshal(raw, &msg)
+			handleContextClear(srv, deps, msg)
+
+		case "memory_list":
+			var msg rpcMemoryListReqMsg
+			_ = json.Unmarshal(raw, &msg)
+			go handleMemoryList(ctx, srv, deps, msg)
+
+		case "memory_search":
+			var msg rpcMemorySearchReqMsg
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				srv.writeError(fmt.Sprintf("invalid memory_search: %v", err), false)
+
+				continue
+			}
+			go handleMemorySearch(ctx, srv, deps, msg)
+
+		case "memory_forget":
+			var msg rpcMemoryForgetReqMsg
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				srv.writeError(fmt.Sprintf("invalid memory_forget: %v", err), false)
+
+				continue
+			}
+			go handleMemoryForget(ctx, srv, deps, msg)
+
+		case "memory_clear":
+			var msg rpcMemoryClearReqMsg
+			_ = json.Unmarshal(raw, &msg)
+			go handleMemoryClear(ctx, srv, deps, msg)
+
+		case "scrolls_list":
+			var msg rpcScrollsListReqMsg
+			_ = json.Unmarshal(raw, &msg)
+			handleScrollsList(srv, deps, msg)
+
+		case "scrolls_show":
+			var msg rpcScrollsShowReqMsg
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				srv.writeError(fmt.Sprintf("invalid scrolls_show: %v", err), false)
+
+				continue
+			}
+			handleScrollsShow(srv, deps, msg)
 
 		default:
 			srv.writeError(fmt.Sprintf("unknown message type %q", env.Type), false)
@@ -690,6 +1094,7 @@ func buildReadyMsg(deps *sessionDeps, model string) rpcReadyMsg {
 // as multimodal content (vision-capable models only).
 func runRPCTurn(ctx context.Context, deps *sessionDeps, srv *rpcServer, input string, images []string) {
 	srv.resetTokenRate()
+	srv.resetMidTurnCompacted()
 	defer srv.flushTokenRate()
 
 	if len(images) > 0 {
@@ -729,7 +1134,7 @@ func runRPCTurn(ctx context.Context, deps *sessionDeps, srv *rpcServer, input st
 	}
 
 	if deps.mgr.NeedsSummary() {
-		_ = deps.mgr.Summarize(ctx, chatctx.CompletionFunc(deps.completeFn))
+		_ = srv.summariseWithEvents(ctx, deps.mgr, deps.completeFn, false)
 	}
 
 	windowedMsgs := deps.mgr.Messages()
@@ -741,26 +1146,52 @@ func runRPCTurn(ctx context.Context, deps *sessionDeps, srv *rpcServer, input st
 		// Plain streaming chat — no agent, no tools.
 		result, err = runRPCSimpleTurn(ctx, deps, srv, windowedMsgs)
 	case deps.swarmMode:
-		cfg := buildRPCSwarmConfig(deps, srv)
+		cfg := buildRPCSwarmConfig(ctx, deps, srv)
 		result, err = agent.RunSwarm(ctx, deps.streamFn, windowedMsgs, cfg)
 	default:
-		cfg := buildRPCAgentConfig(deps, srv)
+		cfg := buildRPCAgentConfig(ctx, deps, srv)
 		result, err = agent.RunPlannedStreaming(ctx, deps.streamFn, windowedMsgs, cfg)
 	}
 
 	if err != nil {
 		_ = srv.write(rpcTurnDoneMsg{Type: "turn_done", OK: false, Reason: err.Error()})
+		srv.emitContextUsage(deps.mgr)
 
 		return
 	}
 
-	if len(result) > len(windowedMsgs) {
+	if srv.midTurnCompacted.Load() {
+		// Mid-turn compaction reconciled the Manager mid-flight, so the
+		// post-windowedMsgs diff doesn't represent "new messages this
+		// turn" anymore — the result slice is the new authoritative
+		// history. Replace m.history with the post-system tail and let
+		// persistRPCMemory pick the latest exchange out of it.
+		tail := historyTailOf(result)
+		deps.mgr.SetHistory(tail)
+		persistRPCMemory(ctx, deps, tail)
+	} else if len(result) > len(windowedMsgs) {
 		newMsgs := result[len(windowedMsgs):]
 		deps.mgr.AppendMany(newMsgs)
 		persistRPCMemory(ctx, deps, newMsgs)
 	}
 
 	_ = srv.write(rpcTurnDoneMsg{Type: "turn_done", OK: true})
+	srv.emitContextUsage(deps.mgr)
+}
+
+// historyTailOf returns the post-system-block portion of an agent-loop
+// result slice. Used at turn-end after a mid-flight compaction has
+// reconciled Manager state — the rewritten slice's tail is the new
+// authoritative history.
+func historyTailOf(msgs []api.Message) []api.Message {
+	start := 0
+	for start < len(msgs) && msgs[start].Role == "system" {
+		start++
+	}
+	tail := make([]api.Message, len(msgs)-start)
+	copy(tail, msgs[start:])
+
+	return tail
 }
 
 // runRPCSimpleTurn is the non-agent path: one streaming completion, content
@@ -795,7 +1226,10 @@ func runRPCSimpleTurn(ctx context.Context, deps *sessionDeps, srv *rpcServer, me
 
 // buildRPCAgentConfig wires the streaming agent's hooks to IPC events.
 // Mirror of buildPipeAgentConfig but emitting NDJSON instead of stderr lines.
-func buildRPCAgentConfig(deps *sessionDeps, srv *rpcServer) agent.PlanAgentConfig {
+// ctx is the per-turn context — used by hooks that may need to fire
+// downstream completion requests (mid-turn compaction) so they cancel
+// when the user aborts the turn.
+func buildRPCAgentConfig(ctx context.Context, deps *sessionDeps, srv *rpcServer) agent.PlanAgentConfig {
 	return agent.PlanAgentConfig{
 		StreamingConfig: agent.StreamingConfig{
 			Config: agent.Config{
@@ -835,12 +1269,21 @@ func buildRPCAgentConfig(deps *sessionDeps, srv *rpcServer) agent.PlanAgentConfi
 					OnAssistantMessage: func(content string) {},
 				},
 			},
-			OnIterationStart: func(iteration, maxIter int, _ []api.Message) {
+			OnIterationStart: func(iteration, maxIter int, msgs []api.Message) {
 				_ = srv.write(rpcIterationStartMsg{
 					Type:          "iteration_start",
 					Iteration:     iteration + 1,
 					MaxIterations: maxIter,
 				})
+				// Push a live budget snapshot so the footer percentage
+				// tracks growth from tool results during the turn instead
+				// of staying frozen at the pre-turn value.
+				srv.emitLiveContextUsage(deps.mgr, msgs)
+			},
+			OnBeforeRequest: func(msgs []api.Message) []api.Message {
+				// Main agent path: persist the fold's new summary onto
+				// the Manager so it survives across turns.
+				return srv.maybeCompactInFlight(ctx, deps.mgr, deps.completeFn, msgs, true)
 			},
 			OnContentDelta: func(delta string) {
 				srv.recordRateAndMaybeEmit()
@@ -867,8 +1310,10 @@ func buildRPCAgentConfig(deps *sessionDeps, srv *rpcServer) agent.PlanAgentConfi
 // typed messages so the webview can render a structured activity card
 // per depth with per-step status that updates as workers progress —
 // replaces the v1 approach of folding everything into content_delta
-// strings, which left no rendering hook on the UI side.
-func buildRPCSwarmConfig(deps *sessionDeps, srv *rpcServer) agent.SwarmConfig {
+// strings, which left no rendering hook on the UI side. ctx is the
+// per-turn context, threaded through for the same reason as in
+// buildRPCAgentConfig.
+func buildRPCSwarmConfig(ctx context.Context, deps *sessionDeps, srv *rpcServer) agent.SwarmConfig {
 	var workerTools *tools.Registry
 	if deps.registry != nil {
 		workerTools = deps.registry.Subset(
@@ -913,12 +1358,25 @@ func buildRPCSwarmConfig(deps *sessionDeps, srv *rpcServer) agent.SwarmConfig {
 					OnAssistantMessage: func(content string) {},
 				},
 			},
-			OnIterationStart: func(iteration, maxIter int, _ []api.Message) {
+			OnIterationStart: func(iteration, maxIter int, msgs []api.Message) {
 				_ = srv.write(rpcIterationStartMsg{
 					Type:          "iteration_start",
 					Iteration:     iteration + 1,
 					MaxIterations: maxIter,
 				})
+				srv.emitLiveContextUsage(deps.mgr, msgs)
+			},
+			OnBeforeRequest: func(msgs []api.Message) []api.Message {
+				// Swarm path: this hook fires inside every subagent —
+				// the orchestrator's degrade-to-RunStreaming branches,
+				// per-step workers, sub-planned children, and the
+				// verifier — each with their own msgs slice. Fold the
+				// subagent's own context only; do NOT persist back to
+				// the Manager. Each subagent's preamble (and any
+				// transient summary it accumulated) evaporates when its
+				// msgs are discarded, which keeps each subagent's
+				// compaction isolated from every other.
+				return srv.maybeCompactInFlight(ctx, deps.mgr, deps.completeFn, msgs, false)
 			},
 			OnContentDelta: func(delta string) {
 				srv.recordRateAndMaybeEmit()
@@ -1021,4 +1479,180 @@ func persistRPCMemory(ctx context.Context, deps *sessionDeps, newMsgs []api.Mess
 	if _, err := deps.client.MemoryStore(storeCtx, userInput, assistContent); err != nil {
 		slog.Error("agent-rpc: failed to store memory", "error", err)
 	}
+}
+
+// ── GUI op handlers ───────────────────────────────────────────────────
+// Synchronous request/reply ops triggered by the VS Code Footer menu.
+// Each replies with a typed message that carries the same requestId so
+// the extension can resolve the right pending promise.
+
+func handleCompactRequest(ctx context.Context, srv *rpcServer, deps *sessionDeps, msg rpcCompactRequestMsg) {
+	if deps.mgr == nil || deps.completeFn == nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "compact", OK: false, Error: "compaction unavailable"})
+
+		return
+	}
+	if err := srv.summariseWithEvents(ctx, deps.mgr, deps.completeFn, true); err != nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "compact", OK: false, Error: err.Error()})
+
+		return
+	}
+	_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "compact", OK: true})
+	srv.emitContextUsage(deps.mgr)
+}
+
+func handleContextList(srv *rpcServer, deps *sessionDeps, msg rpcContextListReqMsg) {
+	files := []string{}
+	if deps.mgr != nil {
+		files = deps.mgr.ContextFiles()
+	}
+	_ = srv.write(rpcContextFilesMsg{Type: "context_files", RequestID: msg.RequestID, Files: files})
+}
+
+func handleContextAdd(srv *rpcServer, deps *sessionDeps, msg rpcContextAddReqMsg) {
+	if deps.mgr == nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "context_add", OK: false, Error: "context manager unavailable"})
+
+		return
+	}
+	if _, err := loadContextFile(deps.mgr, msg.Path); err != nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "context_add", OK: false, Error: err.Error()})
+
+		return
+	}
+	_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "context_add", OK: true})
+	srv.emitContextUsage(deps.mgr)
+}
+
+func handleContextClear(srv *rpcServer, deps *sessionDeps, msg rpcContextClearReqMsg) {
+	if deps.mgr != nil {
+		deps.mgr.ClearContextFiles()
+	}
+	_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "context_clear", OK: true})
+	srv.emitContextUsage(deps.mgr)
+}
+
+func handleMemoryList(ctx context.Context, srv *rpcServer, deps *sessionDeps, msg rpcMemoryListReqMsg) {
+	if !deps.memoryEnabled || deps.client == nil {
+		_ = srv.write(rpcMemoryListReplyMsg{Type: "memory_list_reply", RequestID: msg.RequestID, Entries: []rpcMemoryRow{}})
+
+		return
+	}
+	limit := msg.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	resp, err := deps.client.MemoryList(reqCtx, limit)
+	if err != nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "memory_list", OK: false, Error: err.Error()})
+
+		return
+	}
+	rows := make([]rpcMemoryRow, 0, len(resp.Entries))
+	for _, e := range resp.Entries {
+		rows = append(rows, rpcMemoryRow{
+			ID:        e.ID,
+			UserMsg:   e.UserMsg,
+			AssistMsg: e.AssistMsg,
+			Timestamp: e.Timestamp.Format(time.RFC3339),
+		})
+	}
+	_ = srv.write(rpcMemoryListReplyMsg{Type: "memory_list_reply", RequestID: msg.RequestID, Entries: rows, Total: resp.Total})
+}
+
+func handleMemorySearch(ctx context.Context, srv *rpcServer, deps *sessionDeps, msg rpcMemorySearchReqMsg) {
+	if !deps.memoryEnabled || deps.client == nil {
+		_ = srv.write(rpcMemorySearchReplyMsg{Type: "memory_search_reply", RequestID: msg.RequestID, Results: []rpcMemorySearchR{}})
+
+		return
+	}
+	limit := msg.Limit
+	if limit <= 0 {
+		limit = 5
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	resp, err := deps.client.MemorySearch(reqCtx, msg.Query, limit)
+	if err != nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "memory_search", OK: false, Error: err.Error()})
+
+		return
+	}
+	results := make([]rpcMemorySearchR, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		results = append(results, rpcMemorySearchR{
+			Entry: rpcMemoryRow{
+				ID:        r.Entry.ID,
+				UserMsg:   r.Entry.UserMsg,
+				AssistMsg: r.Entry.AssistMsg,
+				Timestamp: r.Entry.Timestamp.Format(time.RFC3339),
+			},
+			CombinedScore: r.CombinedScore,
+		})
+	}
+	_ = srv.write(rpcMemorySearchReplyMsg{Type: "memory_search_reply", RequestID: msg.RequestID, Results: results})
+}
+
+func handleMemoryForget(ctx context.Context, srv *rpcServer, deps *sessionDeps, msg rpcMemoryForgetReqMsg) {
+	if !deps.memoryEnabled || deps.client == nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "memory_forget", OK: false, Error: "memory disabled"})
+
+		return
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := deps.client.MemoryDelete(reqCtx, msg.ID); err != nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "memory_forget", OK: false, Error: err.Error()})
+
+		return
+	}
+	_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "memory_forget", OK: true})
+}
+
+func handleMemoryClear(ctx context.Context, srv *rpcServer, deps *sessionDeps, msg rpcMemoryClearReqMsg) {
+	if !deps.memoryEnabled || deps.client == nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "memory_clear", OK: false, Error: "memory disabled"})
+
+		return
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := deps.client.MemoryClear(reqCtx); err != nil {
+		_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "memory_clear", OK: false, Error: err.Error()})
+
+		return
+	}
+	_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "memory_clear", OK: true})
+}
+
+func handleScrollsList(srv *rpcServer, deps *sessionDeps, msg rpcScrollsListReqMsg) {
+	out := make([]rpcScroll, 0, len(deps.allScrolls))
+	for _, s := range deps.allScrolls {
+		out = append(out, rpcScroll{
+			Name:        s.Name,
+			Description: s.Description,
+			Source:      s.Source,
+		})
+	}
+	_ = srv.write(rpcScrollsListMsg{Type: "scrolls_list_reply", RequestID: msg.RequestID, Scrolls: out})
+}
+
+func handleScrollsShow(srv *rpcServer, deps *sessionDeps, msg rpcScrollsShowReqMsg) {
+	for _, s := range deps.allScrolls {
+		if s.Name == msg.Name {
+			_ = srv.write(rpcScrollMsg{
+				Type:        "scroll_reply",
+				RequestID:   msg.RequestID,
+				Name:        s.Name,
+				Description: s.Description,
+				Content:     s.Content,
+				Source:      s.Source,
+			})
+
+			return
+		}
+	}
+	_ = srv.write(rpcAckMsg{Type: "ack", RequestID: msg.RequestID, Op: "scrolls_show", OK: false, Error: fmt.Sprintf("scroll %q not found", msg.Name)})
 }

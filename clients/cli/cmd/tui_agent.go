@@ -329,7 +329,7 @@ func (t *tuiApp) startPlannedAgentTurn(input string) {
 	}
 
 	if t.mgr.NeedsSummary() {
-		_ = t.mgr.Summarize(context.Background(), chatctx.CompletionFunc(t.completeFn))
+		t.summarizeWithStatus()
 	}
 
 	windowedMsgs := t.mgr.Messages()
@@ -609,7 +609,7 @@ func (t *tuiApp) startSwarmAgentTurn(input string) {
 	}
 
 	if t.mgr.NeedsSummary() {
-		_ = t.mgr.Summarize(context.Background(), chatctx.CompletionFunc(t.completeFn))
+		t.summarizeWithStatus()
 	}
 
 	windowedMsgs := t.mgr.Messages()
@@ -1075,4 +1075,31 @@ func (f *xmlFilter) string() string {
 // len returns the length of accumulated clean content.
 func (f *xmlFilter) len() int {
 	return f.out.Len()
+}
+
+// summarizeWithStatus runs Manager.Summarize with a faint TUI status line
+// so auto-compaction stops being silent. Called from the planned/swarm
+// agent turns when NeedsSummary() trips at the top of a turn — but it
+// also handles the "nothing to compact" case for parity with how the
+// VS Code extension renders the same lifecycle.
+func (t *tuiApp) summarizeWithStatus() {
+	if !t.mgr.NeedsSummary() {
+		t.addLine("[gray::-]  [nothing to compact][-:-:-]")
+
+		return
+	}
+	t.addLine("[gray::-]  [compacting older messages…][-:-:-]")
+	before := t.mgr.Budget().TotalHistory
+	if err := t.mgr.Summarize(context.Background(), chatctx.CompletionFunc(t.completeFn)); err != nil {
+		t.addLine(fmt.Sprintf("[gray::-]  [compact failed: %v][-:-:-]", err))
+
+		return
+	}
+	folded := before - t.mgr.Budget().TotalHistory
+	if folded <= 0 {
+		t.addLine("[gray::-]  [nothing to compact][-:-:-]")
+
+		return
+	}
+	t.addLine(fmt.Sprintf("[gray::-]  [compacted %d messages][-:-:-]", folded))
 }

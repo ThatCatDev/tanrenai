@@ -913,6 +913,13 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 	if err != nil {
 		return nil, fmt.Errorf("failed to load model (is the backend running?): %w", err)
 	}
+	// In hosted mode the user may have passed an empty model so the platform
+	// picks GPU_MODEL — /api/load reports the actual name back. Carry it onto
+	// deps so the TUI footer and the agent-rpc ready handshake both show
+	// what's really loaded instead of a blank.
+	if loadResp.Model != "" {
+		deps.modelName = loadResp.Model
+	}
 
 	ctxSize := p.ctxSize
 	if !p.ctxSizeChanged && loadResp.CtxSize > 0 {

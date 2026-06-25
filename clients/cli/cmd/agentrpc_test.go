@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ThatCatDev/tanrenai/client/internal/chatctx"
 	"github.com/ThatCatDev/tanrenai/shared/agent"
 	"github.com/ThatCatDev/tanrenai/shared/pkg/api"
 	"github.com/ThatCatDev/tanrenai/shared/tools"
@@ -325,6 +327,202 @@ func TestBuildReadyMsg_IncludesToolsAndModel(t *testing.T) {
 		if len(tool.Schema) == 0 {
 			t.Errorf("tool %q has empty schema", tool.Name)
 		}
+	}
+}
+
+// ── context_usage + compaction ────────────────────────────────────────
+
+func TestRPCServer_EmitContextUsage(t *testing.T) {
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
+
+	mgr := chatctx.NewManager(chatctx.Config{CtxSize: 4096, ResponseBudget: 256}, chatctx.NewTokenEstimator())
+	mgr.SetSystemPrompt("you are helpful")
+	mgr.Append(api.Message{Role: "user", Content: "hi"})
+	mgr.Append(api.Message{Role: "assistant", Content: "hello!"})
+
+	srv.emitContextUsage(mgr)
+
+	bufMu.Lock()
+	out := buf.String()
+	bufMu.Unlock()
+
+	var msg rpcContextUsageMsg
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &msg); err != nil {
+		t.Fatalf("decode: %v\nraw=%q", err, out)
+	}
+	if msg.Type != "context_usage" {
+		t.Errorf("Type = %q", msg.Type)
+	}
+	if msg.Total != 4096 {
+		t.Errorf("Total = %d, want 4096", msg.Total)
+	}
+	if msg.System <= 0 {
+		t.Errorf("System should reflect the system prompt, got %d", msg.System)
+	}
+	if msg.HistoryCount != 2 {
+		t.Errorf("HistoryCount = %d, want 2", msg.HistoryCount)
+	}
+	if msg.Available <= 0 {
+		t.Errorf("Available should be positive, got %d", msg.Available)
+	}
+}
+
+func TestRPCServer_EmitContextUsage_NilManagerIsSafe(t *testing.T) {
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
+
+	// Must not panic, and must not emit anything when there's no manager.
+	srv.emitContextUsage(nil)
+
+	bufMu.Lock()
+	out := buf.String()
+	bufMu.Unlock()
+	if out != "" {
+		t.Errorf("expected no output with nil manager, got %q", out)
+	}
+}
+
+func TestRPCServer_SummariseWithEvents_EmitsStartAndDone(t *testing.T) {
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
+
+	// Tiny window — every Append forces Summarize to actually do work.
+	mgr := chatctx.NewManager(chatctx.Config{CtxSize: 200, ResponseBudget: 20}, chatctx.NewTokenEstimator())
+	mgr.SetSystemPrompt("system")
+	for i := 0; i < 10; i++ {
+		mgr.Append(api.Message{Role: "user", Content: strings.Repeat("aaaa ", 20)})
+		mgr.Append(api.Message{Role: "assistant", Content: strings.Repeat("bbbb ", 20)})
+	}
+
+	complete := agent.CompletionFunc(func(_ context.Context, _ *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
+		return &api.ChatCompletionResponse{
+			Choices: []api.Choice{{
+				Message: api.Message{Role: "assistant", Content: "summary of older turns"},
+			}},
+		}, nil
+	})
+
+	// NeedsSummary should be true given the small window — sanity-check
+	// the precondition rather than asserting Summarize did nothing.
+	if !mgr.NeedsSummary() {
+		t.Fatal("test setup didn't fill the budget; adjust the seed messages")
+	}
+	if err := srv.summariseWithEvents(context.Background(), mgr, complete, false); err != nil {
+		t.Fatalf("summariseWithEvents: %v", err)
+	}
+
+	bufMu.Lock()
+	out := buf.String()
+	bufMu.Unlock()
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 compaction events, got %d: %q", len(lines), out)
+	}
+	var phases []string
+	for _, ln := range lines {
+		var ev rpcCompactionMsg
+		if err := json.Unmarshal([]byte(ln), &ev); err != nil {
+			t.Fatalf("decode %q: %v", ln, err)
+		}
+		if ev.Type != "compaction" {
+			t.Errorf("Type = %q", ev.Type)
+		}
+		phases = append(phases, ev.Phase)
+	}
+	if phases[0] != "start" {
+		t.Errorf("first phase = %q, want start", phases[0])
+	}
+	if phases[len(phases)-1] != "done" {
+		t.Errorf("last phase = %q, want done", phases[len(phases)-1])
+	}
+}
+
+func TestRPCServer_SummariseWithEvents_EmitsNoopWhenNothingToCompact(t *testing.T) {
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
+
+	// Large window + tiny history → NeedsSummary() returns false, so
+	// "Compact now" should report nothing-to-do, not a misleading
+	// "Compacted 0 messages into summary".
+	mgr := chatctx.NewManager(chatctx.Config{CtxSize: 8192, ResponseBudget: 256}, chatctx.NewTokenEstimator())
+	mgr.SetSystemPrompt("system")
+	mgr.Append(api.Message{Role: "user", Content: "hi"})
+	mgr.Append(api.Message{Role: "assistant", Content: "hello"})
+
+	if mgr.NeedsSummary() {
+		t.Fatal("test setup is wrong — Manager already wants to compact")
+	}
+
+	called := false
+	complete := agent.CompletionFunc(func(_ context.Context, _ *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
+		called = true
+		return &api.ChatCompletionResponse{}, nil
+	})
+
+	if err := srv.summariseWithEvents(context.Background(), mgr, complete, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called {
+		t.Error("complete() should not be called when NeedsSummary is false")
+	}
+
+	bufMu.Lock()
+	out := strings.TrimSpace(buf.String())
+	bufMu.Unlock()
+
+	var ev rpcCompactionMsg
+	if err := json.Unmarshal([]byte(out), &ev); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if ev.Phase != "noop" {
+		t.Errorf("Phase = %q, want noop", ev.Phase)
+	}
+}
+
+func TestRPCServer_SummariseWithEvents_EmitsErrorPhase(t *testing.T) {
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	srv := newRPCServer(&lockedWriter{w: &buf, mu: &bufMu}, nil, nil)
+
+	mgr := chatctx.NewManager(chatctx.Config{CtxSize: 200, ResponseBudget: 20}, chatctx.NewTokenEstimator())
+	mgr.SetSystemPrompt("system")
+	for i := 0; i < 10; i++ {
+		mgr.Append(api.Message{Role: "user", Content: strings.Repeat("aaaa ", 20)})
+		mgr.Append(api.Message{Role: "assistant", Content: strings.Repeat("bbbb ", 20)})
+	}
+
+	complete := agent.CompletionFunc(func(_ context.Context, _ *api.ChatCompletionRequest) (*api.ChatCompletionResponse, error) {
+		return nil, errors.New("backend down")
+	})
+
+	err := srv.summariseWithEvents(context.Background(), mgr, complete, false)
+	if err == nil {
+		t.Fatal("expected error to propagate")
+	}
+
+	bufMu.Lock()
+	out := buf.String()
+	bufMu.Unlock()
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	var lastPhase, lastErr string
+	for _, ln := range lines {
+		var ev rpcCompactionMsg
+		if jerr := json.Unmarshal([]byte(ln), &ev); jerr == nil {
+			lastPhase = ev.Phase
+			lastErr = ev.Error
+		}
+	}
+	if lastPhase != "error" {
+		t.Errorf("last phase = %q, want error", lastPhase)
+	}
+	if !strings.Contains(lastErr, "backend down") {
+		t.Errorf("expected error string to include reason, got %q", lastErr)
 	}
 }
 
