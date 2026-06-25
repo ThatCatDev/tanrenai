@@ -3,7 +3,9 @@
   "displayName": "Tanrenai",
   "description": "Agentic coding assistant — runs the Tanrenai agent inside VS Code",
   "version": "0.1.0",
-  "publisher": "ThatCatDev",
+  "publisher": "tanrenai",
+  "icon": "media/icon.png",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/ThatCatDev/tanrenai.git",
