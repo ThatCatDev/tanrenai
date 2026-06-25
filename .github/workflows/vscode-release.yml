@@ -1,0 +1,48 @@
+name: VS Code Extension Release
+
+# Independent of the repo's semantic-release (release.yml). This versions and
+# publishes ONLY the VS Code extension, from conventional commits that touch
+# clients/vscode/** (scoped via semantic-release-monorepo), on its own tag line
+# vscode-v<semver>. feat(vscode): -> minor, fix(vscode): -> patch, ! -> major.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # push the version-bump commit + tag
+  issues: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # semantic-release needs full history
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Install + build so `vsce publish` (run from semantic-release's exec
+      # step) has the bundled dist/ and the local @vscode/vsce binary.
+      - name: Install & build extension
+        working-directory: clients/vscode
+        run: |
+          npm ci
+          npm run build
+
+      - name: semantic-release (extension)
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          working_directory: clients/vscode
+          extra_plugins: |
+            @semantic-release/exec
+            @semantic-release/git
+            semantic-release-monorepo
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
