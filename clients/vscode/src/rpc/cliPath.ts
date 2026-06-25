@@ -16,6 +16,16 @@ export function resolveCliPath(extensionRoot: string, override: string): string 
   const ext = platform === 'win32' ? '.exe' : '';
   const bundled = path.join(extensionRoot, 'dist', 'bin', `${platform}-${arch}`, `tanrenai${ext}`);
   if (fs.existsSync(bundled)) {
+    // A .vsix is a zip, and extraction can drop the executable bit on
+    // Unix — spawning would then fail with EACCES. Restore it (best-effort).
+    if (platform !== 'win32') {
+      try {
+        fs.chmodSync(bundled, 0o755);
+      } catch {
+        /* non-fatal: fall through and try to spawn it anyway */
+      }
+    }
+
     return bundled;
   }
 
