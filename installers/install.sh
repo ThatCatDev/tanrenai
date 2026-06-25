@@ -25,9 +25,20 @@ esac
 
 echo "Detected: ${OS}/${ARCH}"
 
-# Get latest version
+# Get latest CLI version.
+#
+# The repo also publishes the VS Code extension on a SEPARATE tag line
+# (`vscode-v*`). GitHub's /releases/latest returns the most recent release of
+# ANY kind, so once a `vscode-v*` release is cut it becomes "latest" — and it
+# has no `tanrenai-cli-*` assets, which made this installer 404. Instead, list
+# releases (newest first) and pick the newest CLI tag (vMAJOR.MINOR...). Pin a
+# specific version with TANRENAI_VERSION=v1.2.3 to skip the lookup.
 echo "Fetching latest release..."
-VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"//;s/".*//')
+VERSION="${TANRENAI_VERSION:-$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=100" \
+  | grep '"tag_name"' \
+  | sed 's/.*"tag_name": *"//;s/".*//' \
+  | grep -E '^v[0-9]+\.[0-9]+' \
+  | head -n 1)}"
 
 if [ -z "$VERSION" ]; then
   echo "Error: could not determine latest version"

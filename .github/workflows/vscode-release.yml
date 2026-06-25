@@ -26,13 +26,18 @@ jobs:
         with:
           node-version: 22
 
-      # Install + build so `vsce publish` (run from semantic-release's exec
-      # step) has the bundled dist/ and the local @vscode/vsce binary.
-      - name: Install & build extension
+      # The publish step cross-compiles the CLI for every target, so we need the
+      # Go toolchain alongside Node.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: clients/cli/go.mod
+
+      # Install deps so the publish step has the local @vscode/vsce binary and
+      # esbuild. The per-target build + publish itself runs from
+      # scripts/publish-targets.sh during semantic-release's exec step.
+      - name: Install extension deps
         working-directory: clients/vscode
-        run: |
-          npm ci
-          npm run build
+        run: npm ci
 
       - name: semantic-release (extension)
         uses: cycjimmy/semantic-release-action@v4

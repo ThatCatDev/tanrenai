@@ -23,8 +23,12 @@ This downloads the latest release and installs to `~/.local/bin/`.
 **Debian/Ubuntu (.deb)**:
 
 ```bash
-# Download the .deb from the latest release
-curl -fsSLO https://github.com/ThatCatDev/tanrenai/releases/latest/download/tanrenai-<version>-amd64.deb
+# Resolve the latest CLI release (the repo also has a separate vscode-v* tag
+# line, so /releases/latest can't be used directly), then download its .deb:
+VER=$(curl -fsSL "https://api.github.com/repos/ThatCatDev/tanrenai/releases?per_page=100" \
+  | grep '"tag_name"' | sed 's/.*"tag_name": *"//;s/".*//' \
+  | grep -E '^v[0-9]+\.[0-9]+' | head -n 1)
+curl -fsSLO "https://github.com/ThatCatDev/tanrenai/releases/download/${VER}/tanrenai-${VER#v}-amd64.deb"
 sudo dpkg -i tanrenai-*-amd64.deb
 ```
 

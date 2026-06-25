@@ -1,4 +1,4 @@
-.PHONY: build install uninstall clean test vscode-bundle vscode-package
+.PHONY: build install uninstall clean test vscode-bundle vscode-package vscode-package-targets
 
 PREFIX ?= $(HOME)/.local
 
@@ -85,9 +85,16 @@ vscode-bundle:
 	done
 	@echo "Bundled CLI binaries into $(VSCODE_BIN)/"
 
-# Build a publishable .vsix that includes the bundled CLI binaries.
+# Build a single universal .vsix that includes ALL bundled CLI binaries.
+# Handy for local sideloading; the Marketplace release uses per-target packages
+# (see vscode-package-targets) so each download only carries its own binary.
 vscode-package: vscode-bundle
 	cd clients/vscode && npm install --no-audit --no-fund && npm run build && npx vsce package
+
+# Build per-platform .vsix files (one binary each) into clients/vscode/dist/ —
+# the same path CI publishes. No Marketplace tokens needed (PACKAGE_ONLY).
+vscode-package-targets:
+	cd clients/vscode && npm install --no-audit --no-fund && PACKAGE_ONLY=1 bash scripts/publish-targets.sh
 
 # ── Clean ────────────────────────────────────────────────────────────────
 

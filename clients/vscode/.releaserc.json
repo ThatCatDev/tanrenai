@@ -7,7 +7,7 @@
     "@semantic-release/release-notes-generator",
     ["@semantic-release/npm", { "npmPublish": false }],
     ["@semantic-release/exec", {
-      "publishCmd": "npm run build && npx vsce publish --no-dependencies -p \"$VSCE_PAT\" && sh -c 'if [ -n \"$OVSX_PAT\" ]; then npx --yes ovsx publish --no-dependencies -p \"$OVSX_PAT\"; else echo \"OVSX_PAT not set; skipping Open VSX\"; fi'"
+      "publishCmd": "bash scripts/publish-targets.sh"
     }],
     "@semantic-release/github"
   ]
