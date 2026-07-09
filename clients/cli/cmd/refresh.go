@@ -3,12 +3,19 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// errSessionExpired marks refresh failures where the stored refresh token
+// is genuinely dead (rotated away, revoked, or unknown to the platform) —
+// no retry will help; the user has to sign in again. Callers match with
+// errors.Is to render an actionable message instead of a raw status dump.
+var errSessionExpired = errors.New("session expired — run `tanrenai login` to sign in again")
 
 // refreshLeeway is how far ahead of expiry we refresh, to avoid losing
 // access mid-request.
@@ -56,6 +63,30 @@ func refreshCredentials(creds *Credentials) (*Credentials, error) {
 	if creds == nil || creds.RefreshToken == "" {
 		return creds, fmt.Errorf("no refresh token available")
 	}
+
+	// The platform rotates the refresh token on every use, so concurrent
+	// refreshes from processes sharing credentials.json (a CLI session plus
+	// an editor-spawned agent-rpc, two editor windows, ...) race: the loser
+	// presents an already-rotated token and gets "Already Used", which can
+	// revoke the whole token family. Serialize the read-modify-write under
+	// a cross-process lock. Best effort — on lock failure we proceed
+	// unlocked rather than refuse to refresh at all.
+	if unlock, err := lockCredentials(); err == nil {
+		defer unlock()
+	}
+
+	// Re-read from disk now that we hold the lock: another process may have
+	// rotated the pair while we were waiting (or before we were called with
+	// a stale in-memory copy). If the on-disk pair is newer and still
+	// valid, use it directly — no network round-trip, no wasted rotation.
+	if disk, derr := loadCredentials(); derr == nil && disk.RefreshToken != "" {
+		if disk.RefreshToken != creds.RefreshToken &&
+			!disk.ExpiresAt.IsZero() && time.Now().Before(disk.ExpiresAt.Add(-refreshLeeway)) {
+			return disk, nil
+		}
+		creds = disk
+	}
+
 	if creds.ServerURL == "" {
 		return creds, fmt.Errorf("credentials missing server URL, can't refresh")
 	}
@@ -90,6 +121,9 @@ func refreshCredentials(creds *Credentials) (*Credentials, error) {
 		if msg == "" {
 			msg = string(respBody)
 		}
+		if isDeadRefreshToken(resp.StatusCode, msg) {
+			return creds, fmt.Errorf("%w (refresh rejected with %d: %s)", errSessionExpired, resp.StatusCode, msg)
+		}
 		return creds, fmt.Errorf("refresh failed (%d): %s", resp.StatusCode, msg)
 	}
 
@@ -119,4 +153,18 @@ func refreshCredentials(creds *Credentials) (*Credentials, error) {
 		return creds, fmt.Errorf("save refreshed credentials: %w", err)
 	}
 	return fresh, nil
+}
+
+// isDeadRefreshToken reports whether a refresh rejection means the stored
+// refresh token is permanently unusable (as opposed to a transient server
+// problem). Supabase answers 400/401/403 with messages like "Invalid
+// Refresh Token: Already Used" or "Refresh Token Not Found".
+func isDeadRefreshToken(status int, msg string) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
+	default:
+		return false
+	}
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "refresh token") || strings.Contains(m, "refresh_token")
 }

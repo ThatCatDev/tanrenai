@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -16,6 +17,10 @@ var rootCmd = &cobra.Command{
 	Use:   "tanrenai",
 	Short: "Tanrenai — AI assistant client",
 	Long:  "Tanrenai (鍛錬AI) client — connects to the tanrenai backend for LLM inference, memory, and tool use.",
+	// Runtime failures (auth, network, model load) are not usage errors —
+	// dumping the flag list after them buries the actual message, and the
+	// VS Code extension surfaces the stderr tail to the user verbatim.
+	SilenceUsage: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Environment variable fallback: flag wins if explicitly set
 		if !cmd.Flags().Changed("server-url") {
@@ -37,7 +42,11 @@ var rootCmd = &cobra.Command{
 		}
 		refreshed, rerr := maybeRefreshCredentials(creds)
 		if rerr != nil {
-			fmt.Fprintf(os.Stderr, "warning: token refresh failed: %v (continuing with existing token)\n", rerr)
+			if errors.Is(rerr, errSessionExpired) {
+				fmt.Fprintf(os.Stderr, "warning: %v\n", rerr)
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: token refresh failed: %v (continuing with existing token)\n", rerr)
+			}
 		}
 		if refreshed != nil {
 			authToken = refreshed.AccessToken

@@ -34,8 +34,12 @@ func loadCredentials() (*Credentials, error) {
 }
 
 // saveCredentials writes credentials to disk with restricted permissions.
+// The write is atomic (temp file + rename) so a concurrent reader never
+// sees a truncated file and a crash mid-write never clobbers the previous
+// (still valid) pair.
 func saveCredentials(creds *Credentials) error {
-	dir := filepath.Dir(credentialsPath())
+	path := credentialsPath()
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
@@ -43,7 +47,52 @@ func saveCredentials(creds *Credentials) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(credentialsPath(), data, 0600)
+	tmp, err := os.CreateTemp(dir, ".credentials-*.json")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op after a successful rename
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// lockCredentials takes an exclusive advisory lock serializing the
+// credential refresh read-modify-write across processes (CLI sessions,
+// editor-spawned agent-rpc instances). The platform rotates the refresh
+// token on every use, so two processes racing to refresh the same token
+// means the loser gets "Invalid Refresh Token: Already Used" — and can get
+// the whole token family revoked. Blocks until the lock is available;
+// returns an unlock func. Best effort: callers may proceed unlocked on
+// error (the lock reduces a race, it doesn't guard correctness of a
+// single process).
+func lockCredentials() (func(), error) {
+	dir := filepath.Dir(credentialsPath())
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "credentials.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := flockExclusive(f); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = flockUnlock(f)
+		_ = f.Close()
+	}, nil
 }
 
 // deleteCredentials removes the credentials file.
