@@ -31,6 +31,7 @@ import {
   OutboundMsg,
 } from './rpc/messages';
 import { ProposedContentProvider } from './diff/proposedProvider';
+import { looksLikeAuthError, SESSION_EXPIRED_MESSAGE } from './errorMessages';
 import * as platform from './platform';
 import { readSettings } from './settings';
 import { dispatchTool, interceptedToolNames } from './tools/registry';
@@ -169,6 +170,13 @@ export class Controller implements ChatViewListener {
       cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     });
 
+    // The CLI reports its real failure as a fatal NDJSON error before it
+    // exits (e.g. "setup failed: authentication failed — your session has
+    // expired…"). Remember it: the subsequent process exit would otherwise
+    // overwrite that message with the generic "exited before ready" plus a
+    // stderr tail.
+    let lastFatalError: string | undefined;
+
     rpc.on('stderr', (chunk: string) => this.logChannel.append(chunk));
     rpc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
       this.log(`agent-rpc exited (code=${code}, signal=${signal})`);
@@ -180,9 +188,17 @@ export class Controller implements ChatViewListener {
         return; // we asked it to stop
       }
       const tail = rpc.recentStderr();
-      const detail = tail
-        ? `CLI subprocess exited unexpectedly. Last log:\n${truncate(tail, 400)}`
-        : 'CLI subprocess exited unexpectedly. Use Reconnect.';
+      let detail: string;
+      if (looksLikeAuthError(lastFatalError) || looksLikeAuthError(tail)) {
+        detail = SESSION_EXPIRED_MESSAGE;
+        this.promptSignIn();
+      } else if (lastFatalError) {
+        detail = lastFatalError;
+      } else if (tail) {
+        detail = `CLI subprocess exited unexpectedly. Last log:\n${truncate(tail, 400)}`;
+      } else {
+        detail = 'CLI subprocess exited unexpectedly. Use Reconnect.';
+      }
       this.view.setState({ status: 'error', message: detail });
     });
 
@@ -244,6 +260,7 @@ export class Controller implements ChatViewListener {
     rpc.on('error', (m: ErrorMsg) => {
       this.log(`error: ${m.message}`);
       if (m.fatal) {
+        lastFatalError = m.message;
         this.view.setState({ status: 'error', message: m.message });
       }
     });
@@ -274,12 +291,23 @@ export class Controller implements ChatViewListener {
         message =
           `Could not find the tanrenai CLI at "${cliPath}". ` +
           'Run `make vscode-bundle` from the repo root, or set "tanrenai.cliPath" to your CLI binary.';
+      } else if (
+        looksLikeAuthError(lastFatalError) ||
+        looksLikeAuthError((err as Error).message) ||
+        looksLikeAuthError(tail)
+      ) {
+        message = SESSION_EXPIRED_MESSAGE;
+        this.promptSignIn();
       } else if (looksLikeHtmlResponseError(tail) || looksLikeHtmlResponseError((err as Error).message)) {
         message =
           `The backend at ${serverUrl} responded with an HTML page instead of API data.\n\n` +
           `That usually means tanrenai.serverUrl is pointing at the web frontend, not your ` +
           `tanrenai-server. Update it in VS Code settings to your backend URL ` +
           `(e.g. http://100.64.x.x:8080 for a vast.ai + tailnet setup).`;
+      } else if (lastFatalError) {
+        // The CLI told us exactly what went wrong over NDJSON before it
+        // exited — that beats "exited before ready" + a raw stderr tail.
+        message = lastFatalError;
       } else if (tail) {
         message = `${(err as Error).message}\n${truncate(tail, 400)}`;
       } else {
@@ -827,6 +855,22 @@ export class Controller implements ChatViewListener {
   }
 
   // ── Command handlers ──────────────────────────────────────────────
+
+  /**
+   * Toast a session-expired notification with a Sign In action. Used when
+   * the CLI subprocess fails with an auth error — the chat view shows
+   * SESSION_EXPIRED_MESSAGE and this gives the user a one-click path to
+   * re-run the login flow (which reconnects on success).
+   */
+  private promptSignIn(): void {
+    void vscode.window
+      .showErrorMessage('Tanrenai: your session has expired — please sign in again.', 'Sign In')
+      .then((choice) => {
+        if (choice === 'Sign In') {
+          void this.login();
+        }
+      });
+  }
 
   async login(): Promise<void> {
     const serverUrl = await this.resolveBackendUrl();
