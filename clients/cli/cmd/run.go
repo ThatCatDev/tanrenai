@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -911,6 +913,13 @@ func setupSession(ctx context.Context, p runParams, log *startupLog) (*sessionDe
 
 	loadResp, err := loadModelWithProgress(ctx, client, mode, modelToLoad, log)
 	if err != nil {
+		// A 401 that survived the transport's refresh-and-retry means the
+		// stored credentials are dead — "is the backend running?" would be
+		// misleading. Tell the user the one thing that fixes it.
+		var se *apiclient.StatusError
+		if errors.As(err, &se) && se.Code == http.StatusUnauthorized {
+			return nil, fmt.Errorf("authentication failed — your session has expired; run `tanrenai login` to sign in again (%w)", err)
+		}
 		return nil, fmt.Errorf("failed to load model (is the backend running?): %w", err)
 	}
 	// In hosted mode the user may have passed an empty model so the platform
