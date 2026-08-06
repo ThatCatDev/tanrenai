@@ -6,6 +6,8 @@
 
 <p align="center">A local AI assistant with agentic tool use, context windowing, and memory/RAG.<br>Download a single binary, pull a model, and start chatting.</p>
 
+<p align="center"><strong><a href="https://tanrenai.com">tanrenai.com</a></strong></p>
+
 ## Install
 
 Each release bundles `llama-server` (the inference engine) — no extra downloads needed.
