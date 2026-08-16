@@ -1,0 +1,40 @@
+# Maintainer: ThatCatDev <https://github.com/ThatCatDev/tanrenai>
+pkgname=tanrenai-bin
+pkgver=1.33.4
+pkgrel=1
+pkgdesc="Local AI assistant with agentic tool use, context windowing, and memory/RAG (prebuilt binary)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/ThatCatDev/tanrenai"
+license=('MIT')
+# llama-server links against these; the CLI itself is a static Go binary.
+depends=('gcc-libs' 'glibc' 'openssl' 'zlib' 'brotli' 'zstd')
+provides=('tanrenai')
+conflicts=('tanrenai')
+options=('!strip')
+install="${pkgname}.install"
+
+source_x86_64=("tanrenai-cli-${pkgver}-x86_64.tar.gz::${url}/releases/download/v${pkgver}/tanrenai-cli-linux-amd64.tar.gz")
+source_aarch64=("tanrenai-cli-${pkgver}-aarch64.tar.gz::${url}/releases/download/v${pkgver}/tanrenai-cli-linux-arm64.tar.gz")
+
+sha256sums_x86_64=('b8c32cdeae22cce9d623db1e861415355135cde78c7775a4f0612304cc877328')
+sha256sums_aarch64=('b901493a9b2f5e4602067dab25d1ebaf5d172e79b0251a370bd75ea77fb8f132')
+
+_srcdirname() {
+  case "$CARCH" in
+    x86_64)  echo "tanrenai-cli-linux-amd64" ;;
+    aarch64) echo "tanrenai-cli-linux-arm64" ;;
+  esac
+}
+
+package() {
+  local _d
+  _d="$(_srcdirname)"
+
+  install -Dm755 "${srcdir}/${_d}/tanrenai-cli" "${pkgdir}/usr/bin/tanrenai"
+
+  # The bundled llama-server and its ggml shared libraries. These land in
+  # /usr/share so the package stays self-contained; post_install links them
+  # into the per-user data dir, which is the only place the CLI looks.
+  install -dm755 "${pkgdir}/usr/share/tanrenai/bin"
+  install -m755 "${srcdir}/${_d}/bin/"* "${pkgdir}/usr/share/tanrenai/bin/"
+}

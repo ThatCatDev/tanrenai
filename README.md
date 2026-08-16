@@ -34,15 +34,53 @@ curl -fsSLO "https://github.com/ThatCatDev/tanrenai/releases/download/${VER}/tan
 sudo dpkg -i tanrenai-*-amd64.deb
 ```
 
+**Arch Linux**:
+
+The one-line installer above works on Arch as-is. To manage tanrenai with
+`pacman` instead, build the package from the PKGBUILD in this repo:
+
+```bash
+git clone https://github.com/ThatCatDev/tanrenai.git
+cd tanrenai/installers/arch
+makepkg -si
+```
+
+This installs `/usr/bin/tanrenai` plus the bundled `llama-server` under
+`/usr/share/tanrenai/bin`. The CLI only looks for the inference engine in its
+per-user data dir, so link it once per user:
+
+```bash
+mkdir -p ~/.local/share/tanrenai/bin
+ln -sf /usr/share/tanrenai/bin/* ~/.local/share/tanrenai/bin/
+```
+
+To bump the package to a newer release, edit `pkgver` in the PKGBUILD and run
+`updpkgsums` (from `pacman-contrib`) to refresh the checksums.
+
 **Manual**:
 
 ```bash
 tar xzf tanrenai-cli-linux-amd64.tar.gz
 cd tanrenai-cli-linux-amd64
-chmod +x tanrenai-cli bin/llama-server
-sudo cp tanrenai-cli /usr/local/bin/tanrenai
-sudo mkdir -p /usr/local/share/tanrenai/bin
-sudo cp bin/llama-server /usr/local/share/tanrenai/bin/
+chmod +x tanrenai-cli bin/*
+mkdir -p ~/.local/bin ~/.local/share/tanrenai/bin
+cp tanrenai-cli ~/.local/bin/tanrenai
+cp bin/* ~/.local/share/tanrenai/bin/
+```
+
+> The CLI resolves `llama-server` from `~/.local/share/tanrenai/bin` (override
+> the parent with `TANRENAI_DATA_DIR`). Copying it to a system path such as
+> `/usr/local/share` will not be picked up.
+
+**PATH**: the installer puts the binary in `~/.local/bin`. If that's not on your
+PATH yet:
+
+```bash
+# bash / zsh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc   # or ~/.zshrc
+
+# fish
+fish_add_path ~/.local/bin
 ```
 
 ### macOS
@@ -83,7 +121,11 @@ cp bin/* ~/.local/share/tanrenai/bin/
 \* **Linux NVIDIA GPU users:** The bundled `llama-server` is CPU-only. To enable CUDA acceleration, build llama.cpp from source and replace the bundled binary:
 
 ```bash
+# Debian/Ubuntu
 sudo apt install -y build-essential cmake libcurl4-openssl-dev nvidia-cuda-toolkit
+# Arch
+sudo pacman -S --needed base-devel cmake curl cuda
+
 git clone https://github.com/ggerganov/llama.cpp.git /tmp/llama.cpp
 cd /tmp/llama.cpp
 cmake -B build -DGGML_CUDA=ON
@@ -91,6 +133,46 @@ cmake --build build --config Release -j$(nproc)
 cp /tmp/llama.cpp/build/bin/llama-server ~/.local/share/tanrenai/bin/
 cp /tmp/llama.cpp/build/bin/*.so* ~/.local/share/tanrenai/bin/
 ```
+
+On Arch, `nvcc` is installed to `/opt/cuda/bin`, which is not on PATH by
+default — prefix the `cmake` calls with `PATH=/opt/cuda/bin:$PATH` if the CUDA
+build can't find it.
+
+### Troubleshooting
+
+**`connection refused` on 127.0.0.1:8080 after logging in.** `tanrenai login`
+takes the platform API URL from `--platform-url`, then `TANRENAI_SERVER_URL`,
+then `--server-url` — which defaults to `http://127.0.0.1:8080`. Logging in
+without any of them records *localhost* as your platform, and every later
+command inherits it from the stored credentials. Check what got saved:
+
+```bash
+grep -o '"server_url": *"[^"]*"' ~/.local/share/tanrenai/credentials.json
+```
+
+If that isn't your platform, log in again with both URLs set:
+
+```bash
+tanrenai login \
+  --web-url https://dev.tanrenai.com \
+  --platform-url https://api.dev.tanrenai.com
+```
+
+Setting `TANRENAI_SERVER_URL` alone will not repair an existing bad login — the
+stored `server_url` overrides it. Only an explicit `--server-url` wins.
+
+**`tanrenai` errors with a 404, or HTML from some other web app.** Same default
+of `http://127.0.0.1:8080`, but something else is answering on it — port 8080 is
+widely claimed. Check what owns it with `ss -ltnp | grep :8080`, then either use
+single-binary mode or point at the right backend:
+
+```bash
+tanrenai --local list                             # embedded GPU + backend
+tanrenai --server-url http://127.0.0.1:9090 list  # a backend elsewhere
+```
+
+**`command not found: tanrenai`.** `~/.local/bin` isn't on your PATH — see the
+PATH note under [Linux](#linux).
 
 ## Quick Start
 
