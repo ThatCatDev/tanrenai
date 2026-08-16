@@ -1,0 +1,29 @@
+_link_hint() {
+  cat <<'EOF'
+
+tanrenai is installed at /usr/bin/tanrenai.
+
+The bundled inference engine lives in /usr/share/tanrenai/bin, but the CLI only
+looks in its per-user data dir. Link it once, per user:
+
+  mkdir -p ~/.local/share/tanrenai/bin
+  ln -sf /usr/share/tanrenai/bin/* ~/.local/share/tanrenai/bin/
+
+Then:
+
+  tanrenai --local pull hf://unsloth/Qwen3-8B-GGUF/Q4_K_M
+  tanrenai --local run Qwen3-8B-Q4_K_M
+
+Note: without --local the CLI talks to a backend on http://127.0.0.1:8080. If
+something else already owns that port, pass --server-url or use --local.
+
+EOF
+}
+
+post_install() {
+  _link_hint
+}
+
+post_upgrade() {
+  _link_hint
+}
